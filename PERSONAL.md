@@ -63,7 +63,7 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 - Compaction: prune old tool output **on by default**; advertised 1M contexts compact around a **256k** working set (`overflow.ts` / `compaction.ts`).
 - PDF Read: extract text (`pdftotext` / python); **never** inline `data:application/pdf;base64,…`.
 - File watcher: skip `/` and `$HOME`. Launching OpenCode from the home directory is intentional (NAS paths live outside cwd). Do not “fix” that by requiring `cd` into a project.
-- Keybinds: `tui.json` sets `app_exit: none` (Ctrl+C does not quit) and `mouse: false`. Exit with `/exit` or `/quit`. Runtime copy: `~/.config/opencode/tui.json`.
+- Keybinds: Ctrl+C / Ctrl+D do not exit; `app_exit` none. Exit with `/exit` or `/quit`. Mouse stays on (default). Session paging must work without PgUp/PgDn: `ctrl+up`/`ctrl+down` and `alt+up`/`alt+down` (Mac Option+arrows). Line scroll: `ctrl+shift+up`/`ctrl+shift+down`. Do not bind bare arrows — those stay prompt cursor/history. Runtime copy: `~/.config/opencode/tui.json` (installed by sync).
 - `bun run sync-upstream` itself (`script/sync-upstream.ts`).
 
 ## Config outside git

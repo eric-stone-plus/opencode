@@ -1,7 +1,10 @@
 {
   "$schema": "https://opencode.ai/tui.json",
   "keybinds": {
-    "app_exit": "none"
-  },
-  "mouse": false
+    "app_exit": "none",
+    "messages_page_up": "pageup,ctrl+up,alt+up,ctrl+alt+b",
+    "messages_page_down": "pagedown,ctrl+down,alt+down,ctrl+alt+f",
+    "messages_line_up": "ctrl+alt+y,ctrl+shift+up",
+    "messages_line_down": "ctrl+alt+e,ctrl+shift+down"
+  }
 }
