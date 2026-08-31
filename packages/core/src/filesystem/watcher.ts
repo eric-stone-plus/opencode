@@ -6,6 +6,7 @@ import type ParcelWatcher from "@parcel/watcher"
 import { makeLocationNode } from "../effect/app-node"
 import { Cause, Context, Effect, Layer } from "effect"
 import { FileSystemWatcher } from "@opencode-ai/schema/filesystem-watcher"
+import os from "os"
 import path from "path"
 import { Config } from "../config"
 import { EventV2 } from "../event"
@@ -91,7 +92,16 @@ const layer = Layer.effect(
       }
     }
 
+    const isBroadRoot = (directory: string) => {
+      const resolved = path.resolve(directory)
+      const home = path.resolve(os.homedir())
+      return resolved === "/" || resolved === home
+    }
+
     const subscribe = (directory: string, ignore: string[]) => {
+      if (isBroadRoot(directory)) {
+        return Effect.logInfo("skipping file watcher on home or filesystem root", { directory })
+      }
       const pending = w.subscribe(directory, callback, { ignore, backend })
       return Effect.promise(() => pending).pipe(
         Effect.tap((subscription) => Effect.sync(() => subscriptions.push(subscription))),

@@ -405,6 +405,23 @@ describe("session.compaction.isOverflow", () => {
   )
 
   it.live(
+    "compacts advertised 1M windows around a Claude-sized working set",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        const model = createModel({ context: 983_616, output: 131_072 })
+        const tokens = {
+          input: 6,
+          output: 827,
+          reasoning: 0,
+          cache: { read: 230_000, write: 678 },
+        }
+        expect(yield* compact.isOverflow({ tokens, model })).toBe(true)
+      }),
+    ),
+  )
+
+  it.live(
     "includes cache.read in token count",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

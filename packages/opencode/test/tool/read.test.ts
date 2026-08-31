@@ -606,3 +606,22 @@ describe("tool.read binary detection", () => {
     }),
   )
 })
+
+describe("tool.read pdf", () => {
+  it.live("does not attach raw PDF bytes into the model context", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const pdf = Buffer.concat([
+        Buffer.from("%PDF-1.1\n%\xE2\xE3\xCF\xD3\n"),
+        Buffer.alloc(64 * 1024, 0x41),
+      ])
+      const filePath = path.join(dir, "scan.pdf")
+      yield* put(filePath, pdf)
+
+      const result = yield* exec(dir, { filePath })
+      expect(JSON.stringify(result)).not.toContain("data:application/pdf")
+      expect(result.attachments ?? []).toEqual([])
+      expect(result.output).toMatch(/pdf|pdftotext|OCR|extract/i)
+    }),
+  )
+})

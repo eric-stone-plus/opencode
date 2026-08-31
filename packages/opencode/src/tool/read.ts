@@ -9,6 +9,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Instruction } from "../session/instruction"
 import { isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { extractPdfText } from "./pdf-text"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -303,9 +304,40 @@ export const ReadTool = Tool.define<
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
 
-      if (isImage || isPdfAttachment(mime)) {
+      if (isPdfAttachment(mime)) {
+        const text = yield* Effect.promise(() => extractPdfText(filepath))
+        if (text) {
+          const preview = text.slice(0, 400)
+          return {
+            title,
+            output: [`<path>${filepath}</path>`, `<type>pdf</type>`, `<content>`, text, `</content>`].join("\n"),
+            metadata: {
+              preview,
+              truncated: text.endsWith("[truncated]"),
+              loaded: loaded.map((item) => item.filepath),
+            },
+          }
+        }
+        const size = Number(stat.size)
+        const msg = [
+          `PDF has no extractable text layer (${size} bytes): ${filepath}`,
+          "Do not attach the raw PDF into the model context.",
+          "Extract text with pdftotext/OCR, or read a LTC/xls/csv next to it.",
+        ].join("\n")
+        return {
+          title,
+          output: msg,
+          metadata: {
+            preview: msg,
+            truncated: false,
+            loaded: loaded.map((item) => item.filepath),
+          },
+        }
+      }
+
+      if (isImage) {
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        const msg = "Image read successfully"
         return {
           title,
           output: msg,

@@ -74,6 +74,7 @@ import { useTuiConfig } from "../../config"
 import { useClipboard } from "../../context/clipboard"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
 import { getScrollAcceleration } from "../../util/scroll"
+import { applyRenderBudget } from "../../util/render-budget"
 import { collapseToolOutput } from "../../util/collapse-tool-output"
 import { usePluginRuntime } from "../../plugin/runtime"
 import { DialogRetryAction } from "../../component/dialog-retry-action"
@@ -353,6 +354,12 @@ export function Session() {
   const keymap = useOpencodeKeymap()
   const dialog = useDialog()
   const renderer = useRenderer()
+
+  createEffect(() => {
+    const status = sync.data.session_status[route.sessionID]
+    applyRenderBudget(renderer, Boolean(status && status.type !== "idle"))
+  })
+  onCleanup(() => applyRenderBudget(renderer, false))
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
