@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
   "provider": {
     "bailian-token-plan-personal": {
       "npm": "@ai-sdk/anthropic",
