@@ -14,6 +14,7 @@
           "reasoning": true,
           "limit": {
             "context": 983616,
+            "input": 852544,
             "output": 131072
           },
           "modalities": {
@@ -21,10 +22,15 @@
             "output": ["text"]
           },
           "options": {
-            "effort": "xhigh"
+            "effort": "max"
           }
         }
       }
     }
-  }
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true
+  },
+  "permission": "allow"
 }

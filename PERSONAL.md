@@ -68,12 +68,18 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 
 ## Config outside git
 
-`~/.config/opencode/opencode.jsonc` currently has:
+`~/.config/opencode/opencode.jsonc` must match repo-root `opencode.jsonc` (provider `bailian-token-plan-personal` / model `qwen3.8-max`). The full-power tuning in it is intentional:
 
-- provider `bailian-token-plan-personal` / model `qwen3.8-max`
-- `"compaction": { "auto": true, "prune": true }`
+- `limit`: context 983616 / input 852544 / output 131072 (`input` keeps the 256k working window intact when the output cap grows)
+- model `options`: `"effort": "max"` — travels as `output_config.effort`; bailian supports low/medium/high/xhigh/max. Do not downgrade unless asked.
+- `"compaction": { "auto": true, "prune": true }` — do not revert prune unless asked.
+- `"permission": "allow"` — full auto-approve, intentional. Do not revert.
 
-Do not revert prune unless asked.
+If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/opencode.jsonc` from the repo root.
+
+`~/.config/opencode/env` (600, outside git) needs, besides `QIANWEN_TP_PERSONAL_KEY`:
+
+- `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536` — raises the max_tokens cap from the 32k default; bailian accepts up to 131072.
 
 `~/.config/opencode/tui.json` must match repo `tui.json` (`app_exit: none`). If Ctrl+C quits the TUI, the runtime file is missing — copy it:
 
