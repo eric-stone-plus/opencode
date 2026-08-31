@@ -11,6 +11,9 @@ import { Session } from "./session"
 import PROMPT_PLAN from "./prompt/plan.txt"
 import BUILD_SWITCH from "./prompt/build-switch.txt"
 import PLAN_MODE from "./prompt/plan-mode.txt"
+import PROMPT_GOAL_REMINDER from "./prompt/goal-reminder.txt"
+
+const GOAL_REMINDER_MAX = 8000
 
 export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   messages: SessionV1.WithParts[]
@@ -22,6 +25,21 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const sessions = yield* Session.Service
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage) return input.messages
+
+  const ctx = yield* InstanceState.context
+  const goalPath = Session.goal(input.session, ctx)
+  const goal = (yield* fsys.readFileStringSafe(goalPath).pipe(Effect.orElseSucceed(() => undefined)))?.trim()
+  if (goal) {
+    const text = goal.length > GOAL_REMINDER_MAX ? goal.slice(0, GOAL_REMINDER_MAX) + "\n(truncated)" : goal
+    userMessage.parts.push({
+      id: PartID.ascending(),
+      messageID: userMessage.info.id,
+      sessionID: userMessage.info.sessionID,
+      type: "text",
+      text: PROMPT_GOAL_REMINDER.replace("${goal}", () => text).replace("${path}", () => goalPath),
+      synthetic: true,
+    })
+  }
 
   if (!flags.experimentalPlanMode) {
     if (input.agent.name === "plan") {
@@ -50,7 +68,6 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
 
   const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
   if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
-    const ctx = yield* InstanceState.context
     const plan = Session.plan(input.session, ctx)
     const exists = yield* fsys.existsSafe(plan)
     const part = yield* sessions.updatePart({
@@ -69,7 +86,6 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
 
   if (input.agent.name !== "plan" || assistantMessage?.info.agent === "plan") return input.messages
 
-  const ctx = yield* InstanceState.context
   const plan = Session.plan(input.session, ctx)
   const exists = yield* fsys.existsSafe(plan)
   if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))

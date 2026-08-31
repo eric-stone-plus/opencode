@@ -1369,6 +1369,16 @@ const layer = Layer.effect(
       }
       const agentName = cmd.agent ?? input.agent
 
+      if (input.command === Command.Default.GOAL) {
+        const text = input.arguments.trim()
+        if (text) {
+          const ctx = yield* InstanceState.context
+          const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+          const cleared = /^(clear|none|remove)$/i.test(text)
+          yield* fsys.writeWithDirs(Session.goal(session, ctx), cleared ? "" : text).pipe(Effect.orDie)
+        }
+      }
+
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
       const templateCommand = yield* Effect.promise(async () => cmd.template)

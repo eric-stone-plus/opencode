@@ -1,0 +1,8 @@
+<system-reminder>
+This session has a goal. Keep it in view: let it steer what you work on and how you prioritize.
+
+Session goal:
+${goal}
+
+The goal is stored at ${path}. If the user's latest message conflicts with this goal, ask which one to follow instead of silently dropping either. Do not let unrelated side work drift the session away from the goal.
+</system-reminder>
