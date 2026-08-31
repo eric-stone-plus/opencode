@@ -106,6 +106,14 @@ if (!push.ok) {
   process.exit(push.code || 1)
 }
 
+const tuiSrc = path.join(ROOT, "tui.json")
+const tuiDest = path.join(homedir(), ".config", "opencode", "tui.json")
+if (existsSync(tuiSrc)) {
+  await $`mkdir -p ${path.dirname(tuiDest)}`
+  await $`cp ${tuiSrc} ${tuiDest}`
+  console.log(`installed ${tuiDest} (app_exit none)`)
+}
+
 if (noRebuild) {
   console.log("done (rebuild skipped)")
   process.exit(0)

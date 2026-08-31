@@ -13,6 +13,7 @@ Owner always delegates git/build/sync to an agent. Follow this file.
 | Official upstream | `upstream` → `https://github.com/anomalyco/opencode.git` **`dev`** |
 | Runtime binary | `~/.opencode/bin/opencode` |
 | User config (not in this repo) | `~/.config/opencode/opencode.jsonc` |
+| TUI keybinds (repo + runtime) | repo `tui.json` → **must** be `~/.config/opencode/tui.json` |
 
 There is no `dev` on the fork. Do not create extra branches unless asked.
 
@@ -52,7 +53,7 @@ chmod +x ~/.opencode/bin/opencode
 1. All custom work lands as commits on **`main`**, stacked on top of `upstream/dev`.
 2. Commit prefix for overlay work: `eric: …` (matches existing history).
 3. Do **not** edit files only on a side branch and forget to rebase.
-4. `~/.config/opencode/opencode.jsonc` is local-only; sync-upstream will not touch it.
+4. `~/.config/opencode/opencode.jsonc` (provider/model) is local-only. `tui.json` is in the repo; `sync-upstream` copies it to `~/.config/opencode/tui.json`. Launching from `$HOME` does **not** read the repo-root file.
 
 If a rebase conflict hits a file you patched, keep the personal behavior unless the owner says otherwise.
 
@@ -62,7 +63,7 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 - Compaction: prune old tool output **on by default**; advertised 1M contexts compact around a **256k** working set (`overflow.ts` / `compaction.ts`).
 - PDF Read: extract text (`pdftotext` / python); **never** inline `data:application/pdf;base64,…`.
 - File watcher: skip `/` and `$HOME`. Launching OpenCode from the home directory is intentional (NAS paths live outside cwd). Do not “fix” that by requiring `cd` into a project.
-- Keybinds: Ctrl+C / Ctrl+D do not exit; mouse off; `app_exit` none. Exit with `/exit` or `/quit`.
+- Keybinds: `tui.json` sets `app_exit: none` (Ctrl+C does not quit) and `mouse: false`. Exit with `/exit` or `/quit`. Runtime copy: `~/.config/opencode/tui.json`.
 - `bun run sync-upstream` itself (`script/sync-upstream.ts`).
 
 ## Config outside git
@@ -73,6 +74,12 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 - `"compaction": { "auto": true, "prune": true }`
 
 Do not revert prune unless asked.
+
+`~/.config/opencode/tui.json` must match repo `tui.json` (`app_exit: none`). If Ctrl+C quits the TUI, the runtime file is missing — copy it:
+
+```bash
+cp ~/Private/opencode-repo/tui.json ~/.config/opencode/tui.json
+```
 
 ## Agent rules for this fork
 
