@@ -1,0 +1,44 @@
+diff --git a/chunk-bun-tkm837n2.js b/chunk-bun-tkm837n2.js
+index e5e5874f758a2e8c622ca8e9301f20c60c245546..26d888963e97bbe59a4ce05b2ef97eb9e8af8118 100644
+--- a/chunk-bun-tkm837n2.js
++++ b/chunk-bun-tkm837n2.js
+@@ -9651,7 +9651,7 @@ Captured external output:
+           }
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+@@ -9665,7 +9665,7 @@ Captured external output:
+           const overallFrameTime = performance.now() - overallStart;
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+diff --git a/chunk-node-51kpf0mz.js b/chunk-node-51kpf0mz.js
+index 4a2cb78c73179cc55c06dad549345a3145680120..e8650ede987b7eef4f19cec64b54bbdbd35157d1 100644
+--- a/chunk-node-51kpf0mz.js
++++ b/chunk-node-51kpf0mz.js
+@@ -9650,7 +9650,7 @@ Captured external output:
+           }
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+@@ -9664,7 +9664,7 @@ Captured external output:
+           const overallFrameTime = performance.now() - overallStart;
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;

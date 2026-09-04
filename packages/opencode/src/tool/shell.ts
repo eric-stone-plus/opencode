@@ -446,6 +446,19 @@ export const ShellTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
+      let metaAt = 0
+
+      // Throttle live output pushes: one cross-thread part update per chunk spins the TUI render loop.
+      const pushMeta = (force = false) => {
+        const now = Date.now()
+        if (!force && now - metaAt < 100) return Effect.void
+        metaAt = now
+        return ctx.metadata({
+          metadata: {
+            output: last,
+          },
+        })
+      }
 
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
@@ -511,22 +524,12 @@ export const ShellTool = Tool.define(
                         full = ""
                       }),
                     ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                        },
-                      }),
-                    ),
+                    Effect.andThen(pushMeta(true)),
                   )
                 }
               }
 
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                },
-              })
+              return pushMeta()
             }),
           )
 

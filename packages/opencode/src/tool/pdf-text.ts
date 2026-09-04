@@ -4,7 +4,8 @@ const PDFTEXT_MAX_CHARS = 200_000
 async function run(command: string, args: string[]) {
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
-    stderr: "pipe",
+    // piped stderr is never read here; a chatty child would deadlock past the 64KB pipe buffer
+    stderr: "ignore",
   })
   const timer = setTimeout(() => proc.kill(), PDFTEXT_TIMEOUT_MS)
   try {
