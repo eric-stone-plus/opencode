@@ -442,6 +442,13 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
+        title: "Force send",
+        name: "session.force_send",
+        category: "Session",
+        hidden: true,
+        run: () => void forceSend(),
+      },
+      {
         title: "Open editor",
         category: "Session",
         name: "prompt.editor",
@@ -595,6 +602,7 @@ export function Prompt(props: PromptProps) {
       "prompt.stash.list",
       "prompt.skills",
       "session.interrupt",
+      "session.force_send",
       "workspace.set",
       "session.move",
     ]),
@@ -947,6 +955,18 @@ export function Prompt(props: PromptProps) {
       bindings: tuiConfig.keybinds.get("prompt.history.next"),
     }
   })
+
+  // Force send: when busy, interrupt the active run and send the composer
+  // draft as a fresh turn right away — a hard attention boundary instead of
+  // mid-run injection. When idle it is identical to a normal submit.
+  async function forceSend() {
+    if (auto()?.visible) return false
+    if (status().type === "idle" || !props.sessionID) return submit()
+    if (!store.prompt.input && store.prompt.parts.length === 0) return false
+    await sdk.client.session.abort({ sessionID: props.sessionID })
+    setStore("interrupt", 0)
+    return submit()
+  }
 
   let submitting = false
   async function submit() {
