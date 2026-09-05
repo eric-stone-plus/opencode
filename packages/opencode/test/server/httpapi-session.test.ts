@@ -24,7 +24,7 @@ import * as HttpSessionError from "../../src/server/routes/instance/httpapi/hand
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
-import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
+import { MessageID, PartID, SessionID, type MessageID as MessageIDType, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -88,6 +88,31 @@ function createTextMessage(sessionID: SessionIDType, text: string) {
       text,
     })
     return { info, part }
+  })
+}
+
+function createAssistantMessage(
+  sessionID: SessionIDType,
+  parentID: MessageIDType,
+  time?: { created: number; completed?: number },
+) {
+  return Effect.gen(function* () {
+    const svc = yield* Session.Service
+    const test = yield* TestInstance
+    return yield* svc.updateMessage({
+      id: MessageID.ascending(),
+      role: "assistant",
+      sessionID,
+      parentID,
+      mode: "build",
+      agent: "build",
+      providerID: ProviderV2.ID.make("test"),
+      modelID: ModelV2.ID.make("test"),
+      path: { cwd: test.directory, root: test.directory },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: time ?? { created: Date.now() },
+    })
   })
 }
 
@@ -1026,20 +1051,17 @@ describe("session HttpApi", () => {
         const session = yield* createSession({ title: "withdraw" })
         const answered = yield* createTextMessage(session.id, "answered")
         const svc = yield* Session.Service
-        // assistant reply attached to the first user message marks it answered
-        yield* svc.updateMessage({
-          id: MessageID.ascending(),
-          role: "assistant",
+        // assistant reply with rendered text marks the first user message answered
+        const reply = yield* createAssistantMessage(session.id, answered.info.id, {
+          created: Date.now(),
+          completed: Date.now(),
+        })
+        yield* svc.updatePart({
+          id: PartID.ascending(),
           sessionID: session.id,
-          parentID: answered.info.id,
-          mode: "build",
-          agent: "build",
-          providerID: ProviderV2.ID.make("test"),
-          modelID: ModelV2.ID.make("test"),
-          path: { cwd: test.directory, root: test.directory },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: Date.now() },
+          messageID: reply.id,
+          type: "text",
+          text: "the answer",
         })
         const queued = yield* createTextMessage(session.id, "queued draft")
 
@@ -1057,6 +1079,68 @@ describe("session HttpApi", () => {
         expect(remaining.some((msg) => msg.info.id === answered.info.id)).toBe(true)
 
         // the newest user message is now the answered one — withdraw must refuse
+        const conflict = yield* request(pathFor(SessionPaths.withdraw, { sessionID: session.id }), {
+          method: "POST",
+          headers,
+        })
+        expect(conflict.status).toBe(409)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "withdraws a just-started reply that has rendered nothing yet",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "withdraw fresh" })
+        const sent = yield* createTextMessage(session.id, "instant regret")
+        const svc = yield* Session.Service
+        // the runner picked the message up but only wrote structural parts
+        const reply = yield* createAssistantMessage(session.id, sent.info.id)
+        yield* svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: reply.id,
+          type: "step-start",
+        })
+
+        const withdrawn = yield* requestJson<SessionV1.WithParts>(
+          pathFor(SessionPaths.withdraw, { sessionID: session.id }),
+          { method: "POST", headers },
+        )
+        expect(withdrawn.info.id).toBe(sent.info.id)
+
+        // both the empty reply and the user message are retracted
+        const remaining = yield* requestJson<SessionV1.WithParts[]>(
+          pathFor(SessionPaths.messages, { sessionID: session.id }),
+          { headers },
+        )
+        expect(remaining.some((msg) => msg.info.id === sent.info.id)).toBe(false)
+        expect(remaining.some((msg) => msg.info.id === reply.id)).toBe(false)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "refuses to withdraw once the fresh reply rendered text",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "withdraw produced" })
+        const sent = yield* createTextMessage(session.id, "too late")
+        const svc = yield* Session.Service
+        const reply = yield* createAssistantMessage(session.id, sent.info.id)
+        yield* svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: reply.id,
+          type: "text",
+          text: "partial answer",
+        })
+
         const conflict = yield* request(pathFor(SessionPaths.withdraw, { sessionID: session.id }), {
           method: "POST",
           headers,
