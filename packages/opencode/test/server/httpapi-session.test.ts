@@ -1018,6 +1018,55 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
+    "withdraws the queued user message and refuses answered ones",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "withdraw" })
+        const answered = yield* createTextMessage(session.id, "answered")
+        const svc = yield* Session.Service
+        // assistant reply attached to the first user message marks it answered
+        yield* svc.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: session.id,
+          parentID: answered.info.id,
+          mode: "build",
+          agent: "build",
+          providerID: ProviderV2.ID.make("test"),
+          modelID: ModelV2.ID.make("test"),
+          path: { cwd: test.directory, root: test.directory },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: Date.now() },
+        })
+        const queued = yield* createTextMessage(session.id, "queued draft")
+
+        const withdrawn = yield* requestJson<SessionV1.WithParts>(
+          pathFor(SessionPaths.withdraw, { sessionID: session.id }),
+          { method: "POST", headers },
+        )
+        expect(withdrawn.info.id).toBe(queued.info.id)
+
+        const remaining = yield* requestJson<SessionV1.WithParts[]>(
+          pathFor(SessionPaths.messages, { sessionID: session.id }),
+          { headers },
+        )
+        expect(remaining.some((msg) => msg.info.id === queued.info.id)).toBe(false)
+        expect(remaining.some((msg) => msg.info.id === answered.info.id)).toBe(true)
+
+        // the newest user message is now the answered one — withdraw must refuse
+        const conflict = yield* request(pathFor(SessionPaths.withdraw, { sessionID: session.id }), {
+          method: "POST",
+          headers,
+        })
+        expect(conflict.status).toBe(409)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
     "rejects part updates whose path and body ids disagree",
     () =>
       Effect.gen(function* () {

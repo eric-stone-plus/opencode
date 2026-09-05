@@ -36,7 +36,7 @@ import {
   SummarizePayload,
   UpdatePayload,
 } from "../groups/session"
-import { PermissionNotFoundError } from "../errors"
+import { ConflictError, PermissionNotFoundError, notFound } from "../errors"
 import * as SessionError from "./session-errors"
 
 const tryParseJson = (text: string) =>
@@ -359,6 +359,20 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return yield* SessionError.mapBusy(revertSvc.unrevert({ sessionID: ctx.params.sessionID }))
     })
 
+    const withdraw = Effect.fn("SessionHttpApi.withdraw")(function* (ctx: { params: { sessionID: SessionID } }) {
+      yield* requireSession(ctx.params.sessionID)
+      const msgs = yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
+      const queued = msgs.findLast((msg) => msg.info.role === "user")
+      if (!queued) return yield* notFound("No queued message to withdraw")
+      // Once the runner picks the message up it creates an assistant reply with
+      // parentID pointing at it; withdrawing then would orphan the reply, so
+      // refuse and let the client fall back to undo/revert.
+      if (msgs.some((msg) => msg.info.role === "assistant" && msg.info.parentID === queued.info.id))
+        return yield* new ConflictError({ message: "Message is already answered; use undo instead" })
+      yield* session.removeMessage({ sessionID: ctx.params.sessionID, messageID: queued.info.id })
+      return queued
+    })
+
     const permissionRespond = Effect.fn("SessionHttpApi.permissionRespond")(function* (ctx: {
       params: { sessionID: SessionID; permissionID: PermissionV1.ID }
       payload: typeof PermissionResponsePayload.Type
@@ -434,6 +448,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("shell", shell)
       .handle("revert", revert)
       .handle("unrevert", unrevert)
+      .handle("withdraw", withdraw)
       .handle("permissionRespond", permissionRespond)
       .handle("deleteMessage", deleteMessage)
       .handle("deletePart", deletePart)

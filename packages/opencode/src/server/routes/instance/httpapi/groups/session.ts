@@ -20,7 +20,7 @@ import {
   WorkspaceRoutingQuery,
   WorkspaceRoutingQueryFields,
 } from "../middleware/workspace-routing"
-import { ApiNotFoundError, PermissionNotFoundError, SessionBusyError } from "../errors"
+import { ApiNotFoundError, ConflictError, PermissionNotFoundError, SessionBusyError } from "../errors"
 import { described } from "./metadata"
 import { QueryBoolean } from "./query"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -98,6 +98,7 @@ export const SessionPaths = {
   shell: `${root}/:sessionID/shell`,
   revert: `${root}/:sessionID/revert`,
   unrevert: `${root}/:sessionID/unrevert`,
+  withdraw: `${root}/:sessionID/withdraw`,
   permissions: `${root}/:sessionID/permissions/:permissionID`,
   deleteMessage: `${root}/:sessionID/message/:messageID`,
   deletePart: `${root}/:sessionID/message/:messageID/part/:partID`,
@@ -390,6 +391,19 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.unrevert",
             summary: "Restore reverted messages",
             description: "Restore all previously reverted messages in a session.",
+          }),
+        ),
+        HttpApiEndpoint.post("withdraw", SessionPaths.withdraw, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          success: described(SessionV1.WithParts, "Withdrawn message with its parts"),
+          error: [ApiNotFoundError, ConflictError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.withdraw",
+            summary: "Withdraw queued message",
+            description:
+              "Withdraw the newest user message the runner has not answered yet (still queued behind the active run) and return it with its parts so the client can restore the draft.",
           }),
         ),
         HttpApiEndpoint.post("permissionRespond", SessionPaths.permissions, {

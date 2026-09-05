@@ -122,6 +122,7 @@ const sessionBindingCommands = [
   "session.unshare",
   "session.undo",
   "session.redo",
+  "session.queued_prompts",
   "session.sidebar.toggle",
   "session.toggle.conceal",
   "session.toggle.timestamps",
@@ -674,6 +675,38 @@ export function Session() {
           sessionID: route.sessionID,
           messageID: message.id,
         })
+      },
+    },
+    {
+      title: "Withdraw queued message",
+      value: "session.queued_prompts",
+      category: "Session",
+      slash: {
+        name: "withdraw",
+      },
+      run: async () => {
+        dialog.clear()
+        const result = await sdk.client.session.withdraw({ sessionID: route.sessionID })
+        if (result.error || !result.data) {
+          toast.show({
+            message: "No queued message to withdraw",
+            variant: "warning",
+            duration: 3000,
+          })
+          return
+        }
+        prompt?.set(
+          result.data.parts.reduce(
+            (agg, part) => {
+              if (part.type === "text") {
+                if (!part.synthetic) agg.input += part.text
+              }
+              if (part.type === "file") agg.parts.push(part)
+              return agg
+            },
+            { input: "", parts: [] as PromptInfo["parts"] },
+          ),
+        )
       },
     },
     {
