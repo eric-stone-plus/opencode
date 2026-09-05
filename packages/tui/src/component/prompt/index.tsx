@@ -416,6 +416,27 @@ export function Prompt(props: PromptProps) {
               sessionID: props.sessionID,
             })
             setStore("interrupt", 0)
+          } else if (!store.prompt.input && store.prompt.parts.length === 0) {
+            // First press: peel a queued message back into the composer before
+            // (or instead of) only arming the double-esc interrupt. Skipped
+            // when the composer holds a draft so it is never clobbered;
+            // /withdraw remains the explicit override.
+            const sessionID = props.sessionID
+            void sdk.client.session.withdraw({ sessionID }).then((result) => {
+              if (result.error || !result.data) return
+              const draft = result.data.parts.reduce(
+                (agg, part) => {
+                  if (part.type === "text" && !part.synthetic) agg.input += part.text
+                  if (part.type === "file") agg.parts.push(part)
+                  return agg
+                },
+                { input: "", parts: [] as PromptInfo["parts"] },
+              )
+              input.setText(draft.input)
+              setStore("prompt", draft)
+              restoreExtmarksFromParts(draft.parts)
+              input.gotoBufferEnd()
+            })
           }
           dialog.clear()
         },
