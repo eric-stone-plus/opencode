@@ -87,6 +87,66 @@ If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/op
 cp ~/Private/opencode-repo/tui.json ~/.config/opencode/tui.json
 ```
 
+## Idle CPU spin / frozen TUI (open)
+
+Symptom: TUI stops answering and the process burns 100%+ CPU with no session in
+flight. 2026-09-10 instance: last log line 10:54:32, restarted 12:40:42 — 106
+minutes of total silence, no crash report in `~/Library/Logs/DiagnosticReports`,
+memory 84% free.
+
+The `eric: fix idle CPU spin` overlay **is** in the running binary. Binary mtime
+is `Sep 4 15:08`, the commit is `15:10:35`; the tell is that the
+`@opencode-ai/plugin@0.0.0-main-…` install WARN stops appearing from the first
+launch after that rebuild. So 2026-09-10 is a recurrence *after* the fix.
+
+Ruled out:
+
+- **File watcher.** `OPENCODE_EXPERIMENTAL_FILEWATCHER` defaults to `false`,
+  `$HOME` is not a git repo so the `.git` subscription never arms, and the
+  `isBroadRoot` overlay skips `/` and `$HOME` anyway. The log contains zero
+  `skipping file watcher` and zero `failed to subscribe` lines — no subscription
+  ever happened. `watcher.ignore` in config is therefore a **no-op** in this
+  setup. Do not chase idle CPU through watcher ignores, and do not "fix" it by
+  requiring a `cd` into a project.
+- **Memory / OOM.** Free at the time, no crash report.
+
+Signal worth chasing: `sample(1)` keeps showing a thread parked in opentui's
+stdout path — `renderer-output.StdoutOutput.write` → `fs.File.Writer.drain` →
+`writev`/`pwrite` against `/dev/ttysNNN`, nested two levels deep, plus a large
+`syscall_thread_switch` count in the top-of-stack histogram. The Sep 4 patch
+only floored the rerender *scheduler* (`Math.max(1 → 16)` in `@opentui/core`);
+nothing touches the drain path. A terminal tab that stops draining its pty
+would make that loop retry forever.
+
+Not yet evidence: a capture taken while the instance was genuinely idle. The
+2026-09-10 capture was taken against a live streaming session, so its CPU is
+partly legitimate render load.
+
+### Instrumentation
+
+```bash
+bun run cpu-probe                       # sampler, auto-captures on idle spin
+bun run cpu-probe -- --exclude <pid>    # measure a pid but never sample it
+bun run cpu-probe -- --no-capture      # TSV only
+bun run freeze-capture                  # one-shot snapshot of a frozen TUI
+bun run freeze-capture -- --pid <n> --seconds 10
+```
+
+Output goes to `logs/` (gitignored): `logs/cpu-probe/probe-YYYYMMDD.tsv`,
+`logs/cpu-probe/spin-*.txt`, `logs/freeze/<stamp>/SUMMARY.txt`.
+
+Rules when using them:
+
+- Every opencode instance on the box shares one
+  `~/.local/share/opencode/log/opencode.log`, so cpu-probe's idle gate is
+  **global**, not per pid. Run it when only the suspect instance is up, or pass
+  `--exclude` for the busy one.
+- `sample(1)` **suspends the target's threads** while it walks stacks. Never aim
+  it at a session doing real work without asking the owner first. `ps` and
+  `lsof` are read-only and always safe.
+- `pgrep(1)` returns nothing under some sandboxed shells; both scripts discover
+  pids through `ps -axo pid=,comm=` instead.
+
 ## Agent rules for this fork
 
 - Default branch for diffs and PRs against **this** repo is `main`, not `dev`.
