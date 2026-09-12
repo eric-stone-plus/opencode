@@ -119,7 +119,7 @@ if (noRebuild) {
   process.exit(0)
 }
 
-console.log("rebuilding darwin binary…")
+console.log(`rebuilding ${process.platform}-${process.arch} binary…`)
 const pkg = path.join(ROOT, "packages/opencode")
 const build = await $`bun run script/build.ts --single --skip-install`.cwd(pkg).nothrow()
 if (build.exitCode !== 0) {

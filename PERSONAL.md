@@ -19,10 +19,11 @@ There is no `dev` on the fork. Do not create extra branches unless asked.
 
 ## Everyday commands
 
+All commands run from the repo root — wherever it is checked out on that machine.
+
 Catch up to official (fetch `upstream/dev`, rebase personal commits, push `origin/main`, rebuild binary):
 
 ```bash
-cd ~/Private/opencode-repo
 bun run sync-upstream
 ```
 
@@ -35,18 +36,19 @@ bun run sync-upstream --continue
 ```
 
 - Git only, skip compile: `bun run sync-upstream --no-rebuild`
+- Machine can't reach GitHub directly? Set the proxy repo-locally (lives in `.git/config`, per machine, not in this doc): `git config http.proxy http://127.0.0.1:PORT && git config https.proxy http://127.0.0.1:PORT`
 
 After any source change that should hit the TUI, rebuild if you skipped it:
 
 ```bash
-cd ~/Private/opencode-repo/packages/opencode
+cd packages/opencode
 bun run script/build.ts --single --skip-install
-cp dist/opencode-darwin-x64/bin/opencode ~/.opencode/bin/opencode
+cp dist/opencode-*/bin/opencode ~/.opencode/bin/opencode
 chmod +x ~/.opencode/bin/opencode
 ~/.opencode/bin/opencode --version
 ```
 
-(This machine is darwin/x64. On arm64 the dist dir is `opencode-darwin-arm64`.)
+`--single` builds only the current platform, so exactly one `opencode-<platform>-<arch>` dir exists (`darwin-arm64`, `darwin-x64`, `linux-x64`, …) and the glob picks it up.
 
 ## How to keep personal patches
 
@@ -84,13 +86,13 @@ If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/op
 `~/.config/opencode/tui.json` must match repo `tui.json` (`app_exit: none`). If Ctrl+C quits the TUI, the runtime file is missing — copy it:
 
 ```bash
-cp ~/Private/opencode-repo/tui.json ~/.config/opencode/tui.json
+cp tui.json ~/.config/opencode/tui.json   # from the repo root
 ```
 
 ## Idle CPU spin / frozen TUI (open)
 
 Symptom: TUI stops answering and the process burns 100%+ CPU with no session in
-flight. 2026-09-10 instance: last log line 10:54:32, restarted 12:40:42 — 106
+flight. 2026-09-10 instance (macOS): last log line 10:54:32, restarted 12:40:42 — 106
 minutes of total silence, no crash report in `~/Library/Logs/DiagnosticReports`,
 memory 84% free.
 
@@ -134,6 +136,10 @@ bun run freeze-capture -- --pid <n> --seconds 10
 
 Output goes to `logs/` (gitignored): `logs/cpu-probe/probe-YYYYMMDD.tsv`,
 `logs/cpu-probe/spin-*.txt`, `logs/freeze/<stamp>/SUMMARY.txt`.
+
+Platform note: stack capture shells out to macOS `sample(1)`. The `ps`-based
+measurement and TSV output work on Linux too, but the capture step will fail
+there until ported (e.g. `perf` or `gdb -batch -ex 'thread apply all bt'`).
 
 Rules when using them:
 
