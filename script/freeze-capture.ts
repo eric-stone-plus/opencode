@@ -2,9 +2,9 @@
 /**
  * Snapshot a frozen opencode TUI before killing it.
  *
- *   bun run freeze-capture                     find the opencode pid, sample 5s
+ *   bun run freeze-capture                     find the opencode pid, capture stacks
  *   bun run freeze-capture -- --pid 61429
- *   bun run freeze-capture -- --seconds 10
+ *   bun run freeze-capture -- --seconds 10     (sample duration; macOS only)
  *
  * Writes logs/freeze/<stamp>/ (gitignored) and prints the headline. Threads are
  * sorted into three states because "blocked" alone hides the interesting case:
@@ -16,47 +16,24 @@
  *   PARKED   futex/condvar/kevent waits. Normal for idle Bun pool and GC
  *            threads.
  *
- * Bun compiles the JS into the binary, so JS frames arrive as unsymbolicated
- * ??? and only the Zig stdlib / opentui / libsystem frames are readable. The
- * raw sample-<pid>.txt in the output directory is the authoritative capture.
+ * Stack capture is platform-specific (see script/stack-capture.ts): sample(1)
+ * on macOS, eu-stack/gdb on Linux with a ps -L + wchan fallback. Bun compiles
+ * the JS into the binary, so JS frames arrive unsymbolicated and only the
+ * native frames are readable. The raw stacks-<pid>.txt in the output directory
+ * is the authoritative capture.
  */
 import { $ } from "bun"
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "fs"
 import { homedir } from "os"
 import path from "path"
+import { captureThreads, threadTableArgs } from "./stack-capture"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const OUT_ROOT = path.join(ROOT, "logs", "freeze")
 const PROBE_DIR = path.join(ROOT, "logs", "cpu-probe")
 const OPENCODE_LOG = path.join(homedir(), ".local", "share", "opencode", "log", "opencode.log")
 const TARGET = "opencode"
-
-const PARKING = [
-  "kevent64",
-  "kevent",
-  "kevent_id",
-  "kevent_qos",
-  "mach_msg2_trap",
-  "mach_msg_trap",
-  "mach_msg_overwrite_trap",
-  "semaphore_wait_trap",
-  "semaphore_timedwait_trap",
-  "__psynch_cvwait",
-  "__psynch_mutexwait",
-  "__psynch_rw_rdwait",
-  "__psynch_rw_wrwait",
-  "__ulock_wait",
-  "__ulock_wait2",
-  "__workq_kernreturn",
-  "__semwait_signal",
-  "syscall_thread_switch",
-  "swtch",
-  "swtch_pri",
-  "poll",
-  "select",
-]
-
-const TTY_IO = ["pwrite", "pwritev", "write", "writev", "ioctl", "read", "readv", "recvmsg", "sendmsg", "fsync"]
+const IS_MAC = process.platform === "darwin"
 
 function strArg(name: string) {
   const at = process.argv.indexOf(`--${name}`)
@@ -99,38 +76,6 @@ async function discoverPids() {
     .map((entry) => entry.pid)
 }
 
-// sample(1) prints the call graph root-first, then a "Total number in stack"
-// tally and a "Sort by top of stack" histogram. Only the first section is a
-// per-thread tree; the other two are flat symbol lists.
-function threadBlocks(text: string) {
-  const graph = text.split(/^Total number in stack/m)[0] ?? ""
-  return graph
-    .split("\n")
-    .reduce<{ name: string; frames: string[] }[]>((blocks, line) => {
-      const head = /^\s*\d+\s+(Thread_\d+)\s*(.*)$/.exec(line)
-      if (head) return [...blocks, { name: `${head[1]} ${head[2].trim()}`.trim(), frames: [] }]
-      if (blocks.length === 0) return blocks
-      const frame = /\d+\s+(\S.*?)\s+\(in\s+([^)]+)\)/.exec(line)
-      if (!frame) return blocks
-      const symbol = frame[1].trim()
-      if (symbol.startsWith("???")) return blocks
-      blocks[blocks.length - 1].frames.push(`${symbol} (${frame[2].trim()})`)
-      return blocks
-    }, [])
-}
-
-function classify(frames: string[]) {
-  const symbols = frames.map((frame) => frame.split(" (")[0] ?? "")
-  if (symbols.some((symbol) => TTY_IO.includes(symbol))) return "IO_WAIT"
-  if (symbols.some((symbol) => PARKING.includes(symbol))) return "PARKED"
-  return "RUNNING"
-}
-
-function topOfStack(text: string) {
-  const section = text.split(/^Sort by top of stack/m)[1] ?? ""
-  return (section.split(/^Binary Images:/m)[0] ?? "").split("\n").map((line) => line.trim()).filter(Boolean)
-}
-
 async function tail(file: string, lines: number) {
   if (!existsSync(file)) return `(missing: ${file})`
   return (await Bun.file(file).text()).split("\n").slice(-lines).join("\n")
@@ -159,34 +104,31 @@ for (const pid of pids) {
   const fields = ps.text.trim().split(/\s+/)
   save(outDir, `ps-${pid}.txt`, ps.text)
   await saveCmd(outDir, `lstart-${pid}.txt`, ["ps", "-o", "lstart=", "-p", String(pid)])
-  await saveCmd(outDir, `ps-M-${pid}.txt`, ["ps", "-M", String(pid)])
+  await saveCmd(outDir, `threads-${pid}.txt`, threadTableArgs(pid))
   await saveCmd(outDir, `stdio-${pid}.txt`, ["lsof", "-a", "-p", String(pid), "-d", "0,1,2"])
-  await saveCmd(outDir, `top-${pid}.txt`, [
-    "top",
-    "-l",
-    "3",
-    "-pid",
-    String(pid),
-    "-stats",
-    "pid,cpu,th,mem,pstate,time,command",
-  ])
+  await saveCmd(
+    outDir,
+    `top-${pid}.txt`,
+    IS_MAC
+      ? ["top", "-l", "3", "-pid", String(pid), "-stats", "pid,cpu,th,mem,pstate,time,command"]
+      : ["top", "-b", "-n", "1", "-H", "-p", String(pid)],
+  )
 
-  const sample = await $`sample ${pid} ${SECONDS}`.nothrow().quiet()
-  const sampleText = sample.text()
-  save(outDir, `sample-${pid}.txt`, sampleText)
+  const capture = await captureThreads(pid, SECONDS)
+  save(outDir, `stacks-${pid}.txt`, capture.raw)
 
   const lsof = await sh(["lsof", "-p", String(pid)])
   const fds = lsof.text.split("\n")
   save(outDir, `lsof-${pid}.txt`, `# total fds: ${fds.length}\n${fds.slice(0, 3000).join("\n")}`)
 
-  const threads = threadBlocks(sampleText).map((block) => ({ ...block, state: classify(block.frames) }))
+  const threads = capture.threads
   const ioWait = threads.filter((thread) => thread.state === "IO_WAIT")
   const running = threads.filter((thread) => thread.state === "RUNNING")
 
   summary.push(
     `pid ${pid}: ${ps.text.trim().split("\n")[0] ?? "(ps failed)"}`,
     `  cpu=${fields[4] ?? "?"}% cputime=${fields[3] ?? "?"} elapsed=${fields[2] ?? "?"} rss_kb=${fields[5] ?? "?"} state=${fields[6] ?? "?"} tty=${fields[7] ?? "?"}`,
-    `  threads=${threads.length} IO_WAIT=${ioWait.length} RUNNING=${running.length} PARKED=${threads.length - ioWait.length - running.length}`,
+    `  capture_tool=${capture.tool} threads=${threads.length} IO_WAIT=${ioWait.length} RUNNING=${running.length} PARKED=${threads.length - ioWait.length - running.length}`,
     `  lsof fds=${fds.length}`,
     "",
     "  IO_WAIT threads (tty backpressure — the usual freeze):",
@@ -202,16 +144,21 @@ for (const pid of pids) {
     summary.push(`    ${thread.name}`)
     thread.frames.slice(-10).forEach((frame) => summary.push(`      ${frame}`))
   })
-  summary.push("", "  sample(1) top-of-stack histogram:")
-  topOfStack(sampleText)
+  summary.push("", `  ${capture.tool} top-of-stack histogram:`)
+  capture.histogram
     .slice(0, 20)
     .forEach((line) => summary.push(`    ${line}`))
   summary.push("")
 }
 
-await saveCmd(outDir, "vm_stat.txt", ["vm_stat"])
-await saveCmd(outDir, "memory_pressure.txt", ["memory_pressure"])
-await saveCmd(outDir, "loadavg.txt", ["sysctl", "vm.loadavg", "vm.swapusage", "kern.boottime"])
+if (IS_MAC) {
+  await saveCmd(outDir, "vm_stat.txt", ["vm_stat"])
+  await saveCmd(outDir, "memory_pressure.txt", ["memory_pressure"])
+  await saveCmd(outDir, "loadavg.txt", ["sysctl", "vm.loadavg", "vm.swapusage", "kern.boottime"])
+} else {
+  save(outDir, "meminfo.txt", await Bun.file("/proc/meminfo").text())
+  save(outDir, "loadavg.txt", `$ cat /proc/loadavg\n${await Bun.file("/proc/loadavg").text()}\n$ cat /proc/uptime\n${await Bun.file("/proc/uptime").text()}`)
+}
 await saveCmd(outDir, "uname.txt", ["uname", "-a"])
 save(outDir, "opencode-log-tail.txt", await tail(OPENCODE_LOG, 5000))
 

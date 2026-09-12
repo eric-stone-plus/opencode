@@ -4,22 +4,23 @@
  *
  *   bun run cpu-probe                        5s ticks, auto stack dump on idle spin
  *   bun run cpu-probe -- --interval 2
- *   bun run cpu-probe -- --no-capture        TSV only, never run sample(1)
- *   bun run cpu-probe -- --exclude 62796     measure a pid but never sample it
+ *   bun run cpu-probe -- --no-capture        TSV only, never capture stacks
+ *   bun run cpu-probe -- --exclude 62796     measure a pid but never capture it
  *   bun run cpu-probe -- --duration 3600     stop after an hour
  *
  * A tick counts as idle when ~/.local/share/opencode/log/opencode.log has not
  * moved for --idle-seconds. Idle plus --cpu-threshold percent CPU for --strikes
- * consecutive ticks is the spin, and that is when sample(1) gets captured, so
- * the stack trace exists even when nobody is looking at the terminal.
+ * consecutive ticks is the spin, and that is when a stack capture fires (see
+ * script/stack-capture.ts: sample(1) on macOS, eu-stack/gdb on Linux), so the
+ * trace exists even when nobody is looking at the terminal.
  *
  * Caveat: every opencode instance on this machine shares that one log file, so
  * the idle gate is global, not per pid. With a second instance busy the probe
  * never fires; run it when only the suspect instance is up, or pass --exclude
- * for the busy one so it still gets measured but is never sampled.
+ * for the busy one so it still gets measured but is never captured.
  *
- * sample(1) suspends the target's threads while it walks stacks. ps(1) does
- * not, so measurement is always safe; capture is not.
+ * Stack capture suspends the target's threads while it walks stacks. ps(1)
+ * does not, so measurement is always safe; capture is not.
  *
  * Output (gitignored):
  *   logs/cpu-probe/probe-YYYYMMDD.tsv
@@ -29,6 +30,7 @@
  * through ps(1) instead.
  */
 import { $ } from "bun"
+import { captureThreads } from "./stack-capture"
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "fs"
 import { homedir } from "os"
 import path from "path"
@@ -71,8 +73,8 @@ const COOLDOWN = numArg("cooldown", 600)
 const REPORT_EVERY = Math.max(1, numArg("report", 12))
 const DURATION = numArg("duration", 0)
 const CAPTURE = !process.argv.includes("--no-capture")
-// sample(1) suspends the target's threads while it walks stacks, so pids doing
-// real work must stay measurable (ps is read-only) but never sampled.
+// Stack capture suspends the target's threads while it walks stacks, so pids
+// doing real work must stay measurable (ps is read-only) but never captured.
 const EXCLUDE = new Set(
   (strArg("exclude") ?? "")
     .split(",")
@@ -121,9 +123,17 @@ async function processRssMb(pid: number) {
   return Number.isFinite(kb) ? Math.round(kb / 1024) : -1
 }
 
-// ps -M prints the process row first and one row per thread after it, so
-// dropping the header leaves every row's own STIME+UTIME.
+// macOS ps -M prints the process row first and one row per thread after it, so
+// dropping the header leaves every row's own STIME+UTIME. Linux ps -L prints
+// one row per thread with a single cumulative TIME each.
 async function threadCpu(pid: number) {
+  if (process.platform !== "darwin") {
+    const text = await sh(["ps", "-L", "-o", "time=", "-p", String(pid)])
+    return text
+      .split("\n")
+      .map((line) => cpuSeconds(line.trim()))
+      .filter((value) => Number.isFinite(value))
+  }
   const text = await sh(["ps", "-M", String(pid)])
   return text
     .split("\n")
@@ -149,18 +159,16 @@ function tsvFile() {
 
 async function captureSpin(pid: number, cpuPct: number, idleFor: number) {
   const file = path.join(OUT_DIR, `spin-${stamp()}-${pid}.txt`)
+  const capture = await captureThreads(pid, 3)
   const head = [
     "# idle CPU spin capture",
     `# pid=${pid} cpu_pct=${cpuPct.toFixed(1)} log_idle_s=${idleFor.toFixed(0)}`,
     `# captured_at=${new Date().toISOString()}`,
-    `# ps -M ${pid}`,
-    await sh(["ps", "-M", String(pid)]),
-    `# sample ${pid} 3`,
+    `# stack_tool=${capture.tool}`,
     "",
   ].join("\n")
-  const sampled = await $`sample ${pid} 3`.nothrow().quiet()
-  writeFileSync(file, `${head}\n${sampled.text()}`)
-  return sampled.exitCode === 0 ? file : `${file} (sample exit ${sampled.exitCode})`
+  writeFileSync(file, `${head}\n${capture.raw}`)
+  return `${file} (tool=${capture.tool})`
 }
 
 const prevTotal = new Map<number, { at: number; seconds: number }>()

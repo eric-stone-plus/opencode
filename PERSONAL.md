@@ -137,9 +137,13 @@ bun run freeze-capture -- --pid <n> --seconds 10
 Output goes to `logs/` (gitignored): `logs/cpu-probe/probe-YYYYMMDD.tsv`,
 `logs/cpu-probe/spin-*.txt`, `logs/freeze/<stamp>/SUMMARY.txt`.
 
-Platform note: stack capture shells out to macOS `sample(1)`. The `ps`-based
-measurement and TSV output work on Linux too, but the capture step will fail
-there until ported (e.g. `perf` or `gdb -batch -ex 'thread apply all bt'`).
+Platform note: measurement (`ps`, TSV) is cross-platform. Stack capture uses
+`sample(1)` on macOS and `eu-stack -p` (elfutils) on Linux, with fallbacks to
+`gdb -batch -ex 'thread apply all bt'` and finally to the bare ps/wchan thread
+table (states still classified, no frames). Linux attach needs ptrace access:
+fine when `kernel.yama.ptrace_scope=0`; with scope=1 only the process parent
+may attach. The Linux thread table also names Bun's threads (HeapHelper,
+JITWorker, Bun Pool N), which sample(1) does not.
 
 Rules when using them:
 
@@ -147,9 +151,9 @@ Rules when using them:
   `~/.local/share/opencode/log/opencode.log`, so cpu-probe's idle gate is
   **global**, not per pid. Run it when only the suspect instance is up, or pass
   `--exclude` for the busy one.
-- `sample(1)` **suspends the target's threads** while it walks stacks. Never aim
-  it at a session doing real work without asking the owner first. `ps` and
-  `lsof` are read-only and always safe.
+- Stack capture **suspends the target's threads** (sample(1) on macOS,
+  eu-stack/gdb attach on Linux). Never aim it at a session doing real work
+  without asking the owner first. `ps` and `lsof` are read-only and always safe.
 - `pgrep(1)` returns nothing under some sandboxed shells; both scripts discover
   pids through `ps -axo pid=,comm=` instead.
 
