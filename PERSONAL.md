@@ -176,10 +176,17 @@ Two distinct signatures — do not confuse them:
    `/exit` shows the tail after the prompt; with the fix it does not.
 
 Fix (both): the `opencode()` wrapper in `~/.bashrc` (per machine, outside git) —
-- `_oc_tty_reset`: idempotent disable sequences, printed **before launch**
+- `_oc_tty_reset`: idempotent disable sequences (mouse `?1003l/?1002l/?1000l/?1006l`,
+  paste `?2004l`, `?2031l`, `>4;0m`, cursor visible), printed **before launch**
   (clears stale leaks from an earlier hard death in the same tab) and **after
   the binary returns** (covers hard death of this run). `[[ -t 1 ]]`-guarded so
   `opencode run` pipes stay clean; exit code preserved.
+  **Never put `?1049l` in the wrapper**: both VTE and tmux restore the cursor
+  from the stale `?1049h` save slot when they receive `?1049l` while already on
+  the main screen, which draws the next prompt on an old line above and shuffles
+  the visible line order (reproduced in tmux 2026-09-18). VTE leaves the alt
+  screen by itself when the child dies; the rare tmux stuck-in-alt case after a
+  hard kill is repaired manually with `printf '\e[?1049l'` or `reset`.
 - `_oc_tty_flush_input`: `tcflush(TCIFLUSH)` on `/dev/tty` via python3 after
   exit — drops queued mouse reports (signature 2). Millisecond in-flight
   reports can still slip through; that residue is cosmetic.
