@@ -157,6 +157,27 @@ Rules when using them:
 - `pgrep(1)` returns nothing under some sandboxed shells; both scripts discover
   pids through `ps -axo pid=,comm=` instead.
 
+## Mouse garbage in shell after hard kill (fixed via wrapper)
+
+Symptom: after opencode exits, clicking or scrolling in the shell prints SGR mouse
+report tails like `35;112;35M` and normal click/scroll is broken.
+
+Root cause: the TUI enables mouse tracking (`?1000/?1002/?1003` + SGR `?1006`),
+bracketed paste (`?2004`) and alt screen (`?1049`) at startup. All clean exit paths
+(`/exit` idle or mid-stream, SIGTERM, SIGHUP) emit the full disable sequences —
+verified by pty byte capture and by tmux `mouse_any_flag`/`mouse_sgr_flag` before/after.
+Only a hard death (kill -9, crash, or killing a frozen instance — see the idle-spin
+issue above) leaves the modes on; neither VTE/Ptyxis nor tmux resets them when the
+child dies.
+
+Fix: the `opencode()` wrapper in `~/.bashrc` (per machine, outside git) prints the
+idempotent disable sequences after the binary returns — works even when the process
+was killed from another tab, guarded by `[[ -t 1 ]]`, preserves the exit code.
+Repair an already-broken terminal with `reset` or:
+`printf '\e[?1003l\e[?1002l\e[?1000l\e[?1006l\e[?2004l\e[?1049l\e[?25h'`
+
+Do not "fix" this by disabling mouse in the TUI — in-app click/scroll is intentional.
+
 ## Agent rules for this fork
 
 - Default branch for diffs and PRs against **this** repo is `main`, not `dev`.
