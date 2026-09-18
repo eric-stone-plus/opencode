@@ -171,10 +171,17 @@ issue above) leaves the modes on; neither VTE/Ptyxis nor tmux resets them when t
 child dies.
 
 Fix: the `opencode()` wrapper in `~/.bashrc` (per machine, outside git) prints the
-idempotent disable sequences after the binary returns — works even when the process
-was killed from another tab, guarded by `[[ -t 1 ]]`, preserves the exit code.
+idempotent disable sequences both **before launch** (clears stale leaks from an
+earlier hard death in the same tab) and **after the binary returns** — works even
+when the process was killed from another tab, guarded by `[[ -t 1 ]]`, preserves
+the exit code. Tabs whose bash predates the fix still run the old function:
+`source ~/.bashrc` or open a new tab.
 Repair an already-broken terminal with `reset` or:
 `printf '\e[?1003l\e[?1002l\e[?1000l\e[?1006l\e[?2004l\e[?1049l\e[?25h'`
+
+Note: a pre-TUI startup death (crash/Ctrl+C before the renderer is created) never
+enables mouse modes and needs no cleanup; the leak always comes from a TUI that
+got past renderer init and then died hard.
 
 Do not "fix" this by disabling mouse in the TUI — in-app click/scroll is intentional.
 
