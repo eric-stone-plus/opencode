@@ -159,24 +159,33 @@ Rules when using them:
 
 ## Mouse garbage in shell after hard kill (fixed via wrapper)
 
-Symptom: after opencode exits, clicking or scrolling in the shell prints SGR mouse
-report tails like `35;112;35M` and normal click/scroll is broken.
+Two distinct signatures — do not confuse them:
 
-Root cause: the TUI enables mouse tracking (`?1000/?1002/?1003` + SGR `?1006`),
-bracketed paste (`?2004`) and alt screen (`?1049`) at startup. All clean exit paths
-(`/exit` idle or mid-stream, SIGTERM, SIGHUP) emit the full disable sequences —
-verified by pty byte capture and by tmux `mouse_any_flag`/`mouse_sgr_flag` before/after.
-Only a hard death (kill -9, crash, or killing a frozen instance — see the idle-spin
-issue above) leaves the modes on; neither VTE/Ptyxis nor tmux resets them when the
-child dies.
+1. **Continuous** garbage on every click/move after exit = mouse modes left ON.
+   Only a hard death does this (kill -9, crash, or killing a frozen instance —
+   see the idle-spin issue above); clean exits (`/exit` idle or mid-stream,
+   SIGTERM, SIGHUP) all emit the full disable sequences — verified by pty byte
+   capture and by tmux `mouse_any_flag`/`mouse_sgr_flag` before/after. Neither
+   VTE/Ptyxis nor tmux resets the modes when the child dies.
+2. **One-shot** tail like `35;54;13M` right after the prompt, even on a clean
+   `/exit` of a fresh session = queued-input residue, not a mode leak. During
+   the exit window (renderer detached stdin, terminal has not yet applied the
+   disable sequences) a mouse move report lands in the pty input queue; bash
+   readline later echoes it and it pollutes the next typed command. Reproduced
+   deterministically: `tmux send-keys -l $'\e[<35;54;13M'` at the moment of
+   `/exit` shows the tail after the prompt; with the fix it does not.
 
-Fix: the `opencode()` wrapper in `~/.bashrc` (per machine, outside git) prints the
-idempotent disable sequences both **before launch** (clears stale leaks from an
-earlier hard death in the same tab) and **after the binary returns** — works even
-when the process was killed from another tab, guarded by `[[ -t 1 ]]`, preserves
-the exit code. Tabs whose bash predates the fix still run the old function:
-`source ~/.bashrc` or open a new tab.
-Repair an already-broken terminal with `reset` or:
+Fix (both): the `opencode()` wrapper in `~/.bashrc` (per machine, outside git) —
+- `_oc_tty_reset`: idempotent disable sequences, printed **before launch**
+  (clears stale leaks from an earlier hard death in the same tab) and **after
+  the binary returns** (covers hard death of this run). `[[ -t 1 ]]`-guarded so
+  `opencode run` pipes stay clean; exit code preserved.
+- `_oc_tty_flush_input`: `tcflush(TCIFLUSH)` on `/dev/tty` via python3 after
+  exit — drops queued mouse reports (signature 2). Millisecond in-flight
+  reports can still slip through; that residue is cosmetic.
+
+Tabs whose bash predates the fix still run the old function: `source ~/.bashrc`
+or open a new tab. Repair an already-broken terminal with `reset` or:
 `printf '\e[?1003l\e[?1002l\e[?1000l\e[?1006l\e[?2004l\e[?1049l\e[?25h'`
 
 Note: a pre-TUI startup death (crash/Ctrl+C before the renderer is created) never
