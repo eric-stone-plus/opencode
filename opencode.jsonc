@@ -6,8 +6,7 @@
       "npm": "@ai-sdk/anthropic",
       "name": "Alibaba Cloud Model Studio",
       "options": {
-        "baseURL": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
-        "apiKey": "{env:QIANWEN_TP_PERSONAL_KEY}"
+        "baseURL": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1"
       },
       "models": {
         "qwen3.8-max": {

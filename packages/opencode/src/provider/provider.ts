@@ -1778,7 +1778,17 @@ const layer = Layer.effect(
         })
 
         if (baseURL !== undefined) options["baseURL"] = baseURL
-        if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
+        const apiKey = options["apiKey"]
+        // Config env substitution yields "" for a missing {env:VAR}, and plugin config() hooks can
+        // inject the raw placeholder after substitution ran; both must yield to the auth-store key.
+        const broken = typeof apiKey === "string" && (apiKey === "" || apiKey.includes("{env:"))
+        if (broken && provider.key)
+          Effect.runSync(
+            Effect.logWarning("config apiKey is unusable, falling back to auth store credential", {
+              providerID: model.providerID,
+            }),
+          )
+        if ((apiKey === undefined || broken) && provider.key) options["apiKey"] = provider.key
         if (model.headers)
           options["headers"] = {
             ...options["headers"],

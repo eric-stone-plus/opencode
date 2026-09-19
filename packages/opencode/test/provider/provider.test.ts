@@ -84,6 +84,9 @@ const paid = (providers: Record<string, { models: Record<string, { cost: { input
 
 const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
 
+const languageAuthorization = (language: unknown) =>
+  (language as { config: { headers: () => { authorization?: string } } }).config.headers().authorization
+
 const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node])))
 const experimentalModels = testEffect(providerLayer({ enableExperimentalModels: true }))
 
@@ -2115,4 +2118,59 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     expect(none).toBe(0)
     expect(keyedCount).toBeGreaterThan(0)
   }).pipe(provideMultiInstance),
+)
+
+const authFallbackConfig = (options: Record<string, unknown>) => ({
+  provider: {
+    "custom-provider": {
+      name: "Custom Provider",
+      npm: "@ai-sdk/openai-compatible",
+      api: "https://api.custom.com/v1",
+      models: {
+        "active-model": {
+          name: "Active Model",
+        },
+      },
+      options,
+    },
+  },
+})
+
+const writeAuthFile = (content: unknown) =>
+  Effect.gen(function* () {
+    const authPath = path.join(Global.Path.data, "auth.json")
+    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
+    yield* Effect.acquireRelease(Effect.promise(() => Filesystem.write(authPath, JSON.stringify(content))), () =>
+      Effect.promise(async () => {
+        if (original !== undefined) await Filesystem.write(authPath, original)
+        else await unlink(authPath).catch(() => undefined)
+      }),
+    )
+  })
+
+it.instance(
+  "empty config apiKey falls back to auth store credential",
+  Effect.gen(function* () {
+    yield* writeAuthFile({ "custom-provider": { type: "api", key: "auth-store-key" } })
+    const provider = yield* Provider.Service
+    const model = yield* provider.getModel(ProviderV2.ID.make("custom-provider"), ModelV2.ID.make("active-model"))
+    const language = yield* provider.getLanguage(model)
+    expect(languageAuthorization(language)).toBe("Bearer auth-store-key")
+  }),
+  { config: authFallbackConfig({ apiKey: "" }) },
+)
+
+it.instance(
+  "unsubstituted env placeholder apiKey falls back to auth store credential",
+  Effect.gen(function* () {
+    yield* writeAuthFile({ "custom-provider": { type: "api", key: "auth-store-key" } })
+    const provider = yield* Provider.Service
+    // Stands in for a plugin config() hook injecting options after env substitution ran.
+    const configured = yield* provider.getProvider(ProviderV2.ID.make("custom-provider"))
+    configured.options.apiKey = "{env:OPENCODE_TEST_UNSET}"
+    const model = yield* provider.getModel(ProviderV2.ID.make("custom-provider"), ModelV2.ID.make("active-model"))
+    const language = yield* provider.getLanguage(model)
+    expect(languageAuthorization(language)).toBe("Bearer auth-store-key")
+  }),
+  { config: authFallbackConfig({}) },
 )

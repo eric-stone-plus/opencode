@@ -80,6 +80,23 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 
 If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/opencode.jsonc` from the repo root.
 
+The provider block deliberately has **no** `apiKey` line. The key comes from `~/.local/share/opencode/auth.json` (600, outside git): `{"bailian-token-plan-personal": {"type": "api", "key": "sk-sp-…"}}`. Do **not** re-add `"apiKey": "{env:QIANWEN_TP_PERSONAL_KEY}"` — see "API key lost after upgrade" below. Re-seed auth.json after a reinstall or key rotation (key never printed):
+
+```bash
+python3 - <<'EOF'
+import json, re, os
+from pathlib import Path
+key = re.search(r'QIANWEN_TP_PERSONAL_KEY=(.+)',
+                Path.home().joinpath('.config/opencode/env').read_text()
+                ).group(1).strip().strip('"').strip("'")
+p = Path.home() / '.local/share/opencode/auth.json'
+data = json.loads(p.read_text()) if p.exists() else {}
+data['bailian-token-plan-personal'] = {'type': 'api', 'key': key}
+p.write_text(json.dumps(data, indent=2) + '\n')
+os.chmod(p, 0o600)
+EOF
+```
+
 `~/.config/opencode/env` (600, outside git) needs, besides `QIANWEN_TP_PERSONAL_KEY`:
 
 - `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536` — raises the max_tokens cap from the 32k default; bailian accepts up to 131072.
@@ -89,6 +106,42 @@ If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/op
 ```bash
 cp tui.json ~/.config/opencode/tui.json   # from the repo root
 ```
+
+## API key lost after upgrade (fixed via auth.json + resolveSDK guard)
+
+Symptom (2026-09-19, first TUI after upgrading to `0.0.0-main-202609190148`):
+`Unauthorized: Invalid API-key provided` from Alibaba Model Studio. The key
+itself was never lost — `~/.config/opencode/env` still held it, and a direct
+Anthropic-protocol call (`POST …/apps/anthropic/v1/messages` with `x-api-key` +
+`anthropic-version: 2023-06-01`) returned HTTP 200. Reproduced headlessly:
+`env -u QIANWEN_TP_PERSONAL_KEY opencode run …` → `Unauthorized: No API-key
+provided` (same hole, different wording depending on code path).
+
+Mechanism: config env substitution turns `{env:MISSING}` into `""` before JSONC
+parsing (`config/variable.ts`), and `resolveSDK` (`provider/provider.ts`) only
+fell back to the auth-store key when `options.apiKey` was `undefined` — the
+empty string won over the valid credential and the request went out keyless.
+The var lives in the systemd `--user` manager environment
+(`QIANWEN_TP_PERSONAL_KEY` / `QIANWEN_TP_PERSONAL_BASE_URL`), so any terminal
+or tmux server started before it was set never inherits it — that's the TUI
+that failed.
+
+Fix (two layers, both intentional — do not revert either):
+
+1. **Config**: no `apiKey` line in `opencode.jsonc` at all; the key lives in
+   `~/.local/share/opencode/auth.json` (re-seed: see "Config outside git").
+   Runtime backup of the pre-fix file: `~/.config/opencode/opencode.jsonc.bak-authfix`.
+2. **Code constraint** (`packages/opencode/src/provider/provider.ts`,
+   `resolveSDK`): an apiKey that is `""` or still contains `{env:` (plugin
+   `config()` hooks inject after substitution ran) is treated as missing and
+   yields to the auth-store credential, logging
+   `config apiKey is unusable, falling back to auth store credential`.
+   Regression tests: `test/provider/provider.test.ts`, two
+   "falls back to auth store credential" cases (verified red pre-patch).
+   Known noise: the warning fires on every resolve including SDK-cache hits;
+   if it ever gets loud, dedup with a per-instance warned set.
+
+Verify: `env -u QIANWEN_TP_PERSONAL_KEY opencode run -m bailian-token-plan-personal/qwen3.8-max "reply with exactly: ok"` → `ok`.
 
 ## Idle CPU spin / frozen TUI (open)
 
