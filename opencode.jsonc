@@ -22,7 +22,8 @@
             "output": ["text"]
           },
           "options": {
-            "effort": "max"
+            "effort": "max",
+            "maxOutputTokens": 65536
           }
         }
       }

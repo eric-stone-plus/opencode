@@ -330,7 +330,9 @@ export const RunCommand = effectCmd({
 
       const replay = args.replay === false ? false : args.replay || args["replay-limit"] !== undefined
 
-      const root = Filesystem.resolve(process.env.PWD ?? process.cwd())
+      // Subprocess launchers can change cwd without updating the inherited PWD.
+      // Match the instance directory chosen by effectCmd before resolving files/tools.
+      const root = Filesystem.resolve(process.cwd())
       const directory = (() => {
         if (!args.dir) return args.attach ? undefined : root
         if (args.attach) return args.dir

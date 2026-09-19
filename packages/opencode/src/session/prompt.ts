@@ -42,7 +42,7 @@ import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
-import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import { Cause, Effect, Exit, Fiber, Latch, Layer, Option, Scope, Context, Schema, Semaphore, Types } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -99,8 +99,24 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   return part.state.status === "error" && part.state.metadata?.interrupted === true
 }
 
+function answered(messages: SessionV1.WithParts[], userID: MessageID) {
+  const replies = messages.filter((msg) => msg.info.role === "assistant" && msg.info.parentID === userID)
+  return (
+    replies.length > 1 ||
+    replies.some((msg) =>
+      msg.parts.some((part) => {
+        if (part.type === "step-start" || part.type === "step-finish") return false
+        if (part.type === "text") return !part.synthetic && part.text.trim().length > 0
+        if (part.type === "reasoning") return part.text.trim().length > 0
+        return true
+      }),
+    )
+  )
+}
+
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly withdraw: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts, WithdrawError>
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
@@ -109,6 +125,11 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
+
+export class WithdrawError extends Schema.TaggedErrorClass<WithdrawError>()("SessionWithdrawError", {
+  reason: Schema.Literals(["empty", "answered"]),
+  message: Schema.String,
+}) {}
 
 const layer = Layer.effect(
   Service,
@@ -141,6 +162,30 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
+    // Admission, runner selection and withdrawal share a short per-session gate.
+    // The provider call stays outside it so a queued prompt can be withdrawn
+    // without interrupting the preceding turn.
+    const turns = yield* InstanceState.make(() =>
+      Effect.sync(
+        () =>
+          new Map<
+            SessionID,
+            {
+              gate: Semaphore.Semaphore
+              active?: { messageID: MessageID; owner: object; interrupt: Effect.Effect<void> }
+              withdrawn?: SessionV1.WithParts
+            }
+          >(),
+      ),
+    )
+    const turn = Effect.fnUntraced(function* (sessionID: SessionID) {
+      const entries = yield* InstanceState.get(turns)
+      const existing = entries.get(sessionID)
+      if (existing) return existing
+      const next: NonNullable<ReturnType<typeof entries.get>> = { gate: Semaphore.makeUnsafe(1) }
+      entries.set(sessionID, next)
+      return next
+    })
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
@@ -152,6 +197,37 @@ const layer = Layer.effect(
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* Effect.logInfo("cancel", { "session.id": sessionID })
       yield* state.cancel(sessionID)
+    })
+
+    const withdraw = Effect.fn("SessionPrompt.withdraw")(function* (sessionID: SessionID) {
+      const current = yield* turn(sessionID)
+      return yield* current.gate.withPermits(1)(
+        Effect.gen(function* () {
+          const messages = yield* sessions.messages({ sessionID }).pipe(Effect.orDie)
+          const queued = messages.findLast((msg) => msg.info.role === "user")
+          if (!queued) return yield* new WithdrawError({ reason: "empty", message: "No queued message to withdraw" })
+          const conflict = () =>
+            new WithdrawError({
+              reason: "answered",
+              message: "Message is already answered; use undo instead",
+            })
+          if (answered(messages, queued.info.id)) return yield* conflict()
+          // Claiming the parent happens before any provider/agent lookup. A reply
+          // need not exist yet for the runner to have consumed this prompt.
+          // Interrupt only the owner we observed. A session-wide lookup after an
+          // asynchronous cancellation can hit a newer shell waiting on this gate.
+          if (current.active?.messageID === queued.info.id) yield* current.active.interrupt
+          const after = yield* sessions.messages({ sessionID }).pipe(Effect.orDie)
+          if (answered(after, queued.info.id)) return yield* conflict()
+          yield* Effect.forEach(
+            after.filter((msg) => msg.info.role === "assistant" && msg.info.parentID === queued.info.id),
+            (reply) => sessions.removeMessage({ sessionID, messageID: reply.info.id }),
+          )
+          yield* sessions.removeMessage({ sessionID, messageID: queued.info.id })
+          current.withdrawn = queued
+          return queued
+        }),
+      )
     })
 
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
@@ -517,7 +593,10 @@ const layer = Layer.effect(
             }
             yield* sessions.updatePart(part)
             return { msg, part, cwd: ctx.directory }
-          }).pipe(Effect.ensuring(markReady))
+          }).pipe(
+            (work) => Effect.flatMap(turn(input.sessionID), (current) => current.gate.withPermits(1)(work)),
+            Effect.ensuring(markReady),
+          )
 
           const cfg = yield* config.get()
           const sh = Shell.preferred(cfg.shell)
@@ -1043,8 +1122,13 @@ const layer = Layer.effect(
         })
       }
 
-      yield* sessions.updateMessage(info)
-      for (const part of parts) yield* sessions.updatePart(part)
+      const admission = yield* turn(input.sessionID)
+      yield* admission.gate.withPermits(1)(
+        Effect.gen(function* () {
+          yield* sessions.updateMessage(info)
+          for (const part of parts) yield* sessions.updatePart(part)
+        }),
+      )
 
       return { info, parts }
     }, Effect.scoped)
@@ -1067,7 +1151,7 @@ const layer = Layer.effect(
       }
 
       if (input.noReply === true) return message
-      return yield* loop({ sessionID: input.sessionID })
+      return yield* loop({ sessionID: input.sessionID }, message)
     })
 
     const lastAssistant = Effect.fnUntraced(function* (sessionID: SessionID) {
@@ -1075,12 +1159,22 @@ const layer = Layer.effect(
       if (Option.isSome(match)) return match.value
       const msgs = yield* sessions.messages({ sessionID, limit: 1 }).pipe(Effect.orDie)
       if (msgs.length > 0) return msgs[0]
+      const current = yield* turn(sessionID)
+      if (current.withdrawn) return current.withdrawn
       throw new Error("Impossible")
     })
 
-    const runLoop: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.run")(
-      function* (sessionID: SessionID) {
+    const runLoop: (sessionID: SessionID, admitted?: SessionV1.WithParts) => Effect.Effect<SessionV1.WithParts> =
+      Effect.fn("SessionPrompt.run")(function* (sessionID: SessionID, admitted?: SessionV1.WithParts) {
         const ctx = yield* InstanceState.context
+        const current = yield* turn(sessionID)
+        const owner = {}
+        const interrupt = yield* Effect.withFiber((fiber) => Effect.succeed(Fiber.interrupt(fiber).pipe(Effect.asVoid)))
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (current.active?.owner === owner) current.active = undefined
+          }),
+        )
         let structured: unknown
         let step = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
@@ -1089,13 +1183,35 @@ const layer = Layer.effect(
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 
-          let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
-            Effect.provideService(Database.Service, database),
+          let msgs = yield* current.gate.withPermits(1)(
+            Effect.gen(function* () {
+              const messages = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+                Effect.provideService(Database.Service, database),
+              )
+              // An admitted prompt can be withdrawn before ensureRunning starts.
+              // Do not use that delayed wakeup to replay an earlier turn.
+              const latest = MessageV2.latest(messages).user
+              if (
+                step === 0 &&
+                admitted &&
+                !messages.some((msg) => msg.info.id === admitted.info.id) &&
+                (!latest ||
+                  latest.time.created < admitted.info.time.created ||
+                  (latest.time.created === admitted.info.time.created && latest.id < admitted.info.id))
+              )
+                return []
+              current.active = latest ? { messageID: latest.id, owner, interrupt } : undefined
+              return messages
+            }),
           )
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
-          if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+          if (!lastUser) {
+            if (admitted) return admitted
+            if (current.withdrawn) return current.withdrawn
+            throw new Error("No user message found in stream. This should never happen.")
+          }
 
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -1337,13 +1453,14 @@ const layer = Layer.effect(
 
         yield* compaction.prune({ sessionID }).pipe(Effect.ignore, Effect.forkIn(scope))
         return yield* lastAssistant(sessionID)
-      },
-    )
+      }, Effect.scoped)
 
-    const loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.loop")(function* (
-      input: LoopInput,
-    ) {
-      return yield* state.ensureRunning(input.sessionID, lastAssistant(input.sessionID), runLoop(input.sessionID))
+    const loop = Effect.fn("SessionPrompt.loop")(function* (input: LoopInput, admitted?: SessionV1.WithParts) {
+      return yield* state.ensureRunning(
+        input.sessionID,
+        lastAssistant(input.sessionID),
+        runLoop(input.sessionID, admitted),
+      )
     })
 
     const shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError> = Effect.fn(
@@ -1492,6 +1609,7 @@ const layer = Layer.effect(
 
     return Service.of({
       cancel,
+      withdraw,
       prompt,
       loop,
       shell,

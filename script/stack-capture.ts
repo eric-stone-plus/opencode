@@ -18,6 +18,7 @@ export interface ThreadSnap {
   name: string
   state: ThreadState
   frames: string[]
+  wchan?: string
 }
 
 export interface Capture {
@@ -155,11 +156,13 @@ const LINUX_PARKING = [
   "rcu_gp",
 ].map(boundary)
 
-function linuxClassify(hints: string[]): ThreadState {
+function linuxClassify(hints: string[], state: string): ThreadState {
   const hay = hints.filter(Boolean)
   if (hay.some((hint) => LINUX_TTY_IO.some((token) => token.test(hint)))) return "IO_WAIT"
   if (hay.some((hint) => LINUX_PARKING.some((token) => token.test(hint)))) return "PARKED"
-  return "RUNNING"
+  // Without ptrace access Linux often reports only wchan=0. The ps state
+  // still distinguishes a runnable thread from one sleeping or stopped.
+  return state === "R" ? "RUNNING" : "PARKED"
 }
 
 interface LinuxThreadRow {
@@ -180,7 +183,7 @@ async function linuxThreadTable(pid: number) {
       (fields): LinuxThreadRow => ({
         tid: Number(fields[1]),
         state: fields[2],
-        wchan: fields[3] === "-" ? "" : fields[3],
+        wchan: fields[3] === "-" || fields[3] === "0" ? "" : fields[3],
         time: fields[4],
         comm: fields.slice(5).join(" "),
       }),
@@ -252,8 +255,9 @@ async function captureLinux(pid: number): Promise<Capture> {
     const own = frames.get(row.tid) ?? []
     return {
       name: `TID ${row.tid} ${row.comm} state=${row.state} wchan=${row.wchan || "-"}`,
-      state: linuxClassify([row.wchan, ...own]),
+      state: linuxClassify([row.wchan, ...own], row.state),
       frames: own,
+      wchan: row.wchan,
     }
   })
 

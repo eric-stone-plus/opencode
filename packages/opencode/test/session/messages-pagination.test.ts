@@ -2,10 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { Database } from "@opencode-ai/core/database/database"
 import { Effect, Option } from "effect"
+import { SqlClient } from "effect/unstable/sql/SqlClient"
+import { EffectDrizzleSqlite } from "../../../effect-drizzle-sqlite/src"
 import { Session as SessionNs } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID, type SessionID } from "../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 
 import { NotFoundError } from "@/storage/storage"
 import { testEffect } from "../lib/effect"
@@ -59,14 +62,14 @@ const fill = Effect.fn("Test.fill")(function* (
   return ids
 })
 
-const addUser = Effect.fn("Test.addUser")(function* (sessionID: SessionID, text?: string) {
+const addUser = Effect.fn("Test.addUser")(function* (sessionID: SessionID, text?: string, created = Date.now()) {
   const session = yield* SessionNs.Service
   const id = MessageID.ascending()
   yield* session.updateMessage({
     id,
     sessionID,
     role: "user",
-    time: { created: Date.now() },
+    time: { created },
     agent: "test",
     model: { providerID: "test", modelID: "test" },
     tools: {},
@@ -87,7 +90,7 @@ const addUser = Effect.fn("Test.addUser")(function* (sessionID: SessionID, text?
 const addAssistant = Effect.fn("Test.addAssistant")(function* (
   sessionID: SessionID,
   parentID: MessageID,
-  opts?: { summary?: boolean; finish?: string; error?: SessionV1.Assistant["error"] },
+  opts?: { summary?: boolean; finish?: string; error?: SessionV1.Assistant["error"]; created?: number },
 ) {
   const session = yield* SessionNs.Service
   const id = MessageID.ascending()
@@ -95,7 +98,7 @@ const addAssistant = Effect.fn("Test.addAssistant")(function* (
     id,
     sessionID,
     role: "assistant",
-    time: { created: Date.now() },
+    time: { created: opts?.created ?? Date.now() },
     parentID,
     modelID: ModelV2.ID.make("test"),
     providerID: ProviderV2.ID.make("test"),
@@ -125,6 +128,19 @@ const addCompactionPart = Effect.fn("Test.addCompactionPart")(function* (
     auto: true,
     tail_start_id: tailStartID,
   } as any)
+})
+
+const traceQueries = Effect.fn("Test.traceQueries")(function* () {
+  const database = yield* Database.Service
+  const queries: { sql: string; params: unknown[] }[] = []
+  const db = yield* EffectDrizzleSqlite.make().pipe(
+    Effect.provideService(SqlClient, database.db.$client),
+    Effect.provideService(EffectDrizzleSqlite.EffectLogger, {
+      logQuery: (sql, params) => Effect.sync(() => void queries.push({ sql, params })),
+    }),
+    Effect.provide(EffectDrizzleSqlite.DefaultServices),
+  )
+  return { db, queries }
 })
 
 describe("MessageV2.page", () => {
@@ -966,6 +982,184 @@ describe("MessageV2.filterCompacted", () => {
     expect(result).toHaveLength(1)
     expect(result[0].info.id).toBe(id)
   })
+})
+
+describe("MessageV2.filterCompactedEffect", () => {
+  it.instance("does not hydrate the compacted archive on every turn", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const archive = yield* fill(sessionID, 1000, (i: number) => i)
+        const marker = yield* addUser(sessionID, undefined, 2000)
+        yield* addCompactionPart(sessionID, marker)
+        const summary = yield* addAssistant(sessionID, marker, {
+          summary: true,
+          finish: "end_turn",
+          created: 3000,
+        })
+        const recent = yield* fill(sessionID, 4, (i: number) => 4000 + i)
+        const trace = yield* traceQueries()
+        const result = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+          Effect.provideService(Database.Service, trace),
+        )
+
+        expect(result.map((item) => item.info.id)).toEqual([marker, summary, ...recent])
+        // One message page and its parts, independent of the 1,000 archived messages.
+        expect(trace.queries).toHaveLength(2)
+        const hydrated = trace.queries
+          .filter((query) => query.sql.includes('from "part"'))
+          .flatMap((query) => query.params)
+        expect(hydrated).toHaveLength(50)
+        expect(hydrated).not.toContain(archive[0])
+        expect(hydrated).not.toContain(archive[950])
+      }),
+    ),
+  )
+
+  for (const count of [48, 49, 50]) {
+    it.instance(`preserves a legacy compaction boundary with ${count} newer messages`, () =>
+      withSession(({ sessionID }) =>
+        Effect.gen(function* () {
+          yield* fill(sessionID, 120, () => 1000)
+          const marker = yield* addUser(sessionID, undefined, 1000)
+          yield* addCompactionPart(sessionID, marker)
+          const summary = yield* addAssistant(sessionID, marker, {
+            summary: true,
+            finish: "end_turn",
+            created: 1000,
+          })
+          const recent = yield* fill(sessionID, count, () => 1000)
+
+          const result = yield* MessageV2.filterCompactedEffect(sessionID)
+          expect(result.map((item) => item.info.id)).toEqual([marker, summary, ...recent])
+          expect(result).toEqual(MessageV2.filterCompacted(yield* MessageV2.stream(sessionID)))
+        }),
+      ),
+    )
+  }
+
+  it.instance("retains an assistant tail across pages and older compaction boundaries", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const archive = yield* fill(sessionID, 120, () => 1000)
+        const tail = yield* addAssistant(sessionID, archive.at(-1)!, { finish: "tool-calls", created: 2000 })
+        const retained = yield* fill(sessionID, 70, (i: number) => 3000 + i)
+        yield* addCompactionPart(sessionID, retained[30])
+        const olderSummary = yield* addAssistant(sessionID, retained[30], {
+          summary: true,
+          finish: "end_turn",
+          created: 4000,
+        })
+        const marker = yield* addUser(sessionID, undefined, 5000)
+        yield* addCompactionPart(sessionID, marker, tail)
+        const summary = yield* addAssistant(sessionID, marker, {
+          summary: true,
+          finish: "end_turn",
+          created: 6000,
+        })
+        const recent = yield* fill(sessionID, 49, () => 7000.5)
+        const trace = yield* traceQueries()
+        const result = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+          Effect.provideService(Database.Service, trace),
+        )
+
+        expect(result.map((item) => item.info.id)).toEqual([
+          marker,
+          summary,
+          tail,
+          ...retained,
+          olderSummary,
+          ...recent,
+        ])
+        expect(result).toEqual(MessageV2.filterCompacted(yield* MessageV2.stream(sessionID)))
+        expect(trace.queries).toHaveLength(6)
+      }),
+    ),
+  )
+
+  it.instance("reads all pages when a retained tail is missing", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const archive = yield* fill(sessionID, 120, (i: number) => 1000.5 + i)
+        const marker = yield* addUser(sessionID, undefined, 2000)
+        yield* addCompactionPart(sessionID, marker, MessageID.ascending())
+        const summary = yield* addAssistant(sessionID, marker, {
+          summary: true,
+          finish: "end_turn",
+          created: 3000,
+        })
+
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result.map((item) => item.info.id)).toEqual([...archive, marker, summary])
+      }),
+    ),
+  )
+
+  it.instance("stops when the retained tail is the compaction marker itself", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        yield* fill(sessionID, 60, () => 1000)
+        const marker = yield* addUser(sessionID, undefined, 2000)
+        yield* addCompactionPart(sessionID, marker, marker)
+        const summary = yield* addAssistant(sessionID, marker, {
+          summary: true,
+          finish: "end_turn",
+          created: 3000,
+        })
+
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result.map((item) => item.info.id)).toEqual([marker, summary])
+      }),
+    ),
+  )
+
+  it.instance("keeps history across failed and unfinished summaries", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const archive = yield* fill(sessionID, 60, () => 1000)
+        const failedMarker = yield* addUser(sessionID, undefined, 2000)
+        yield* addCompactionPart(sessionID, failedMarker)
+        const failedSummary = yield* addAssistant(sessionID, failedMarker, {
+          summary: true,
+          finish: "end_turn",
+          error: new SessionV1.APIError({ message: "retry", isRetryable: true }).toObject(),
+          created: 3000,
+        })
+        const pendingMarker = yield* addUser(sessionID, undefined, 4000)
+        yield* addCompactionPart(sessionID, pendingMarker)
+        const pendingSummary = yield* addAssistant(sessionID, pendingMarker, { summary: true, created: 5000 })
+        const recent = yield* fill(sessionID, 50, (i: number) => 6000 + i)
+
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result.map((item) => item.info.id)).toEqual([
+          ...archive,
+          failedMarker,
+          failedSummary,
+          pendingMarker,
+          pendingSummary,
+          ...recent,
+        ])
+      }),
+    ),
+  )
+
+  it.instance("preserves all messages without compaction, including timestamp ties", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const ids = yield* fill(sessionID, 137, (i: number) => 1000.5 + Math.floor(i / 3))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result.map((item) => item.info.id)).toEqual(ids)
+      }),
+    ),
+  )
+
+  it.instance("returns empty history for empty and missing sessions", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        expect(yield* MessageV2.filterCompactedEffect(sessionID)).toEqual([])
+        expect(yield* MessageV2.filterCompactedEffect(SessionID.create())).toEqual([])
+      }),
+    ),
+  )
 })
 
 describe("MessageV2.cursor", () => {

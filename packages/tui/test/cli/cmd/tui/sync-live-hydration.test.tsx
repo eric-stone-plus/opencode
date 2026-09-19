@@ -33,6 +33,59 @@ function global(payload: GlobalEvent["payload"]): GlobalEvent {
   return { directory: "/tmp/other", project: "proj_test", payload }
 }
 
+test.each(["message.removed", "message.part.removed"] as const)(
+  "%s for an unloaded session does not interrupt later events",
+  async (type) => {
+    await using tmp = await tmpdir()
+    await Bun.write(`${tmp.path}/kv.json`, "{}")
+    const { app, emit, sync } = await mount(undefined, tmp.path)
+
+    try {
+      expect(() =>
+        emit(
+          global(
+            type === "message.removed"
+              ? { id: "evt_removed_unloaded", type, properties: { sessionID, messageID } }
+              : { id: "evt_removed_unloaded", type, properties: { sessionID, messageID, partID } },
+          ),
+        ),
+      ).not.toThrow()
+      emit(global({ id: "evt_after_remove", type: "message.updated", properties: { sessionID, info: assistant } }))
+      await wait(() => sync.data.message[sessionID]?.length === 1)
+      expect(sync.data.message[sessionID][0].id).toBe(messageID)
+    } finally {
+      app.renderer.destroy()
+    }
+  },
+)
+
+test("removing a loaded message also releases its cached parts", async () => {
+  await using tmp = await tmpdir()
+  await Bun.write(`${tmp.path}/kv.json`, "{}")
+  const { app, emit, sync } = await mount(undefined, tmp.path)
+
+  try {
+    emit(global({ id: "evt_message", type: "message.updated", properties: { sessionID, info: assistant } }))
+    emit(
+      global({
+        id: "evt_part",
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          time: 2,
+          part: { id: partID, sessionID, messageID, type: "text", text: "withdrawn content" },
+        },
+      }),
+    )
+    await wait(() => sync.data.part[messageID]?.length === 1)
+    emit(global({ id: "evt_removed", type: "message.removed", properties: { sessionID, messageID } }))
+    await wait(() => sync.data.message[sessionID]?.length === 0)
+    expect(sync.data.part[messageID]).toBeUndefined()
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 test("live messages use creation time with an ID tie-break", async () => {
   await using tmp = await tmpdir()
   await Bun.write(`${tmp.path}/kv.json`, "{}")

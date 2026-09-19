@@ -250,6 +250,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         !(
           AbortedError.isInstance(msg.info.error) &&
           msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
+        ) &&
+        !(
+          APIError.isInstance(msg.info.error) && msg.info.error.data.metadata?.retryStopped === "tool_execution_started"
         )
       ) {
         continue
@@ -520,27 +523,33 @@ export const get = Effect.fn("MessageV2.get")(function* (input: { sessionID: Ses
 
 export function filterCompacted(msgs: Iterable<WithParts>) {
   const result = [] as WithParts[]
-  const completed = new Set<string>()
-  let retain: MessageID | undefined
+  const stop = compactionBoundary()
   for (const msg of msgs) {
     result.push(msg)
-    if (retain) {
-      if (msg.info.id === retain) break
-      continue
-    }
+    if (stop(msg)) break
+  }
+  return orderCompacted(result)
+}
+
+function compactionBoundary() {
+  const completed = new Set<string>()
+  let retain: MessageID | undefined
+  return (msg: WithParts) => {
+    if (retain) return msg.info.id === retain
     if (msg.info.role === "user" && completed.has(msg.info.id)) {
       const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
-      if (!part) continue
-      if (!part.tail_start_id) break
+      if (!part) return false
+      if (!part.tail_start_id) return true
       retain = part.tail_start_id
-      if (msg.info.id === retain) break
-      continue
+      return msg.info.id === retain
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id) && msg.parts.some((part) => part.type === "compaction"))
-      break
     if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
       completed.add(msg.info.parentID)
+    return false
   }
+}
+
+function orderCompacted(result: WithParts[]) {
   result.reverse()
   const compactionIndex = result.findLastIndex(
     (msg) =>
@@ -572,7 +581,25 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
 }
 
 export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
-  return filterCompacted(yield* stream(sessionID))
+  const result: WithParts[] = []
+  const stop = compactionBoundary()
+  let before: string | undefined
+  // Stop loading archived tool results once the active compaction's retained tail is complete.
+  while (true) {
+    const next = yield* page({ sessionID, limit: 50, before }).pipe(
+      Effect.catchTag("NotFoundError", () =>
+        Effect.succeed({ items: [] as WithParts[], more: false, cursor: undefined }),
+      ),
+    )
+    for (let i = next.items.length - 1; i >= 0; i--) {
+      const msg = next.items[i]
+      result.push(msg)
+      if (stop(msg)) return orderCompacted(result)
+    }
+    if (!next.more || !next.cursor) break
+    before = next.cursor
+  }
+  return orderCompacted(result)
 })
 
 // filterCompacted reorders messages for model consumption

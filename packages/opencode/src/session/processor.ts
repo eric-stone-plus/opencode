@@ -610,14 +610,26 @@ const layer = Layer.effect(
         yield* session.updateMessage(ctx.assistantMessage)
       })
 
-      const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown) {
+      const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown, toolsStarted = false) {
         yield* Effect.logError("process", {
           "session.id": input.sessionID,
           messageID: input.assistantMessage.id,
           error: errorMessage(e),
           stack: e instanceof Error ? e.stack : undefined,
         })
-        const error = parse(e)
+        const parsed = parse(e)
+        const error =
+          toolsStarted && SessionRetry.retryable(parsed, input.model.providerID)
+            ? new SessionV1.APIError({
+                ...(SessionV1.APIError.isInstance(parsed) ? parsed.data : {}),
+                message: `${errorMessage(e)}\n\nAutomatic retry stopped because a tool already started executing. Continue the session to proceed from the saved history.`,
+                isRetryable: false,
+                metadata: {
+                  ...(SessionV1.APIError.isInstance(parsed) ? parsed.data.metadata : {}),
+                  retryStopped: "tool_execution_started",
+                },
+              }).toObject()
+            : parsed
         if (SessionV1.ContextOverflowError.isInstance(error)) {
           if ((yield* config.get()).compaction?.auto === false && !ctx.assistantMessage.summary) {
             ctx.assistantMessage.error = error
@@ -645,16 +657,38 @@ const layer = Layer.effect(
         })
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        let toolsStarted = false
+        const tools = Object.fromEntries(
+          Object.entries(streamInput.tools).map(([name, item]) => {
+            const execute = item.execute
+            if (!execute) return [name, item]
+            return [
+              name,
+              {
+                ...item,
+                execute: (...args: Parameters<typeof execute>) => {
+                  // SDKs can invoke tools before their stream events are consumed.
+                  // Retrying this request would replay history without those effects.
+                  toolsStarted = true
+                  return execute.apply(item, args)
+                },
+              },
+            ]
+          }),
+        )
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            const stream = llm.stream({ ...streamInput, tools })
 
             yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
+              Stream.tap((event) => {
+                if (event.type === "tool-call") toolsStarted = true
+                return handleEvent(event)
+              }),
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
@@ -671,8 +705,9 @@ const layer = Layer.effect(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (cause) => Effect.fail(Cause.squash(cause)),
             ),
-            Effect.retry(
-              SessionRetry.policy({
+            Effect.retry({
+              while: () => !toolsStarted,
+              schedule: SessionRetry.policy({
                 provider: input.model.providerID,
                 parse,
                 set: (info) => {
@@ -685,8 +720,8 @@ const layer = Layer.effect(
                   })
                 },
               }),
-            ),
-            Effect.catch(halt),
+            }),
+            Effect.catch((error) => halt(error, toolsStarted)),
             Effect.ensuring(cleanup()),
           )
 

@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Schedule, Semaphore, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -446,19 +446,16 @@ export const ShellTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
-      let metaAt = 0
-
-      // Throttle live output pushes: one cross-thread part update per chunk spins the TUI render loop.
-      const pushMeta = (force = false) => {
-        const now = Date.now()
-        if (!force && now - metaAt < 100) return Effect.void
-        metaAt = now
-        return ctx.metadata({
-          metadata: {
-            output: last,
-          },
-        })
-      }
+      let published = ""
+      const publishing = Semaphore.makeUnsafe(1)
+      const pushMeta = publishing.withPermits(1)(
+        Effect.gen(function* () {
+          if (last === published) return
+          const output = last
+          yield* ctx.metadata({ metadata: { output } })
+          published = output
+        }),
+      )
 
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
@@ -496,6 +493,11 @@ export const ShellTool = Tool.define(
           yield* Effect.addFinalizer(closeSink)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
 
+          // Publish the first chunk immediately, then sample at 100ms. A trailing
+          // flush is essential when a burst is followed by a long-running job
+          // that emits nothing else (a chunk-only throttle loses that tail).
+          yield* Effect.forkScoped(pushMeta.pipe(Effect.repeat(Schedule.spaced("100 millis"))))
+
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
@@ -524,12 +526,12 @@ export const ShellTool = Tool.define(
                         full = ""
                       }),
                     ),
-                    Effect.andThen(pushMeta(true)),
+                    Effect.andThen(() => (published ? Effect.void : pushMeta)),
                   )
                 }
               }
 
-              return pushMeta()
+              return published ? Effect.void : pushMeta
             }),
           )
 
@@ -559,7 +561,7 @@ export const ShellTool = Tool.define(
 
           return exit.kind === "exit" ? exit.code : null
         }),
-      ).pipe(Effect.orDie)
+      ).pipe(Effect.ensuring(pushMeta), Effect.orDie)
 
       const meta: string[] = []
       if (expired) {

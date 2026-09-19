@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import type { Event, GlobalEvent } from "@opencode-ai/sdk/v2"
-import { onMount } from "solid-js"
+import { createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ProjectProvider, useProject } from "../../../src/context/project"
 import { SDKProvider } from "../../../src/context/sdk"
 import { useEvent } from "../../../src/context/event"
@@ -101,6 +101,60 @@ function Probe(props: {
 }
 
 describe("useEvent", () => {
+  test("releases disposed component subscriptions and preserves live subscribers", async () => {
+    const events = createEventSource()
+    const requests = createFetch()
+    const [visible, setVisible] = createSignal(true)
+    const received: string[] = []
+    let created = 0
+    let disposed = 0
+
+    function Persistent() {
+      const event = useEvent()
+      event.on("installation.update-available", () => received.push("live"))
+      const release = event.subscribe(() => received.push("manually cancelled"))
+      release()
+      release()
+      return <box />
+    }
+
+    function Transient() {
+      const id = ++created
+      useEvent().on("installation.update-available", () => received.push(`transient ${id}`))
+      onCleanup(() => disposed++)
+      return <box />
+    }
+
+    const app = await testRender(() => (
+      <SDKProvider url="http://test" directory={directory} fetch={requests.fetch} events={events.source}>
+        <Persistent />
+        <Show when={visible()}>
+          <Transient />
+        </Show>
+      </SDKProvider>
+    ))
+
+    try {
+      for (let i = 0; i < 20; i++) {
+        setVisible(false)
+        setVisible(true)
+      }
+      expect(created).toBe(21)
+      expect(disposed).toBe(20)
+      events.emit(event(update("1.2.3"), { directory }))
+      await wait(() => received.length > 0)
+      expect(received).toEqual(["live", "transient 21"])
+
+      setVisible(false)
+      received.length = 0
+      events.emit(event(update("1.2.4"), { directory }))
+      await wait(() => received.length > 0)
+      expect(received).toEqual(["live"])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
   test("delivers events for the current project", async () => {
     const { app, emit, seen, workspaces } = await mount()
 

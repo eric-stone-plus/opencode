@@ -86,6 +86,7 @@ import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
 import { destroyRenderer } from "./util/renderer"
 import { cliErrorMessage, errorFormat } from "./util/error"
+import { IDLE_FPS } from "./util/render-budget"
 
 registerOpencodeSpinner()
 
@@ -193,7 +194,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
           try: () =>
             createCliRenderer({
               externalOutputMode: "passthrough",
-              targetFps: 8,
+              targetFps: IDLE_FPS,
+              maxFps: IDLE_FPS,
               gatherStats: false,
               exitOnCtrlC: false,
               useKittyKeyboard: {},

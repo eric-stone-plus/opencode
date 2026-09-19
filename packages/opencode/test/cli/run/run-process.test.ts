@@ -5,10 +5,30 @@
 // `OPENCODE_CONFIG_CONTENT` providing the test provider config inline.
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
+import path from "node:path"
 import { reply } from "../../lib/llm-server"
 import { cliIt } from "../../lib/cli-process"
 
 describe("opencode run (non-interactive subprocess)", () => {
+  cliIt.concurrent(
+    "runs tools in the actual cwd when an inherited PWD is stale",
+    ({ home, llm, opencode }) =>
+      Effect.gen(function* () {
+        yield* llm.push(reply().tool("bash", { command: "pwd", description: "Report the working directory" }))
+        yield* llm.text("done")
+        const result = yield* opencode.run("report the working directory", {
+          format: "json",
+          env: { PWD: path.dirname(home) },
+          extraArgs: ["--dangerously-skip-permissions"],
+        })
+        opencode.expectExit(result, 0)
+        expect(opencode.parseJsonEvents(result.stdout).find((event) => event.type === "tool_use")?.part).toEqual(
+          expect.objectContaining({ state: expect.objectContaining({ output: home + "\n" }) }),
+        )
+      }),
+    60_000,
+  )
+
   // Happy path: prompt completes, output reaches stdout, process exits 0.
   // If this fails, all the others likely will too — debug here first.
   cliIt.concurrent(

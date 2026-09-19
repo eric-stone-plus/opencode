@@ -21,7 +21,7 @@ There is no `dev` on the fork. Do not create extra branches unless asked.
 
 All commands run from the repo root — wherever it is checked out on that machine.
 
-Catch up to official (fetch `upstream/dev`, rebase personal commits, push `origin/main`, rebuild binary):
+Catch up to official (fetch `upstream/dev`, rebase personal commits, install locked dependencies, build, push `origin/main`, install binary):
 
 ```bash
 bun run sync-upstream
@@ -36,6 +36,7 @@ bun run sync-upstream --continue
 ```
 
 - Git only, skip compile: `bun run sync-upstream --no-rebuild`
+- `--continue` requires a clean `main` containing `upstream/dev`; it refuses unfinished rebases, including linked worktrees. Dependency or build failures stop before pushing.
 - Machine can't reach GitHub directly? Set the proxy repo-locally (lives in `.git/config`, per machine, not in this doc): `git config http.proxy http://127.0.0.1:PORT && git config https.proxy http://127.0.0.1:PORT`
 
 After any source change that should hit the TUI, rebuild if you skipped it:
@@ -43,8 +44,8 @@ After any source change that should hit the TUI, rebuild if you skipped it:
 ```bash
 cd packages/opencode
 bun run script/build.ts --single --skip-install
-cp dist/opencode-*/bin/opencode ~/.opencode/bin/opencode
-chmod +x ~/.opencode/bin/opencode
+oc_stage=$(mktemp ~/.opencode/bin/.opencode-install.XXXXXX)
+cp dist/opencode-*/bin/opencode "$oc_stage" && chmod +x "$oc_stage" && mv "$oc_stage" ~/.opencode/bin/opencode
 ~/.opencode/bin/opencode --version
 ```
 
@@ -77,6 +78,7 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 
 - `limit`: context 983616 / input 852544 / output 131072 (`input` keeps the 256k working window intact when the output cap grows)
 - model `options`: `"effort": "max"` — travels as `output_config.effort`; bailian supports low/medium/high/xhigh/max. Do not downgrade unless asked.
+- model `options.maxOutputTokens`: **65536**, persisted in config so terminals and daemons do not depend on inheriting a newly exported environment variable. The provider capability remains 131072; the default request budget deliberately leaves that ceiling unused for stability. This is a ceiling, not a target response length. Keep the 256k working context cap and pruning.
 - `"compaction": { "auto": true, "prune": true }` — do not revert prune unless asked.
 - `"permission": "allow"` — full auto-approve, intentional. Do not revert.
 
@@ -101,7 +103,7 @@ EOF
 
 `~/.config/opencode/env` (600, outside git) needs, besides `QIANWEN_TP_PERSONAL_KEY`:
 
-- `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536` — raises the max_tokens cap from the 32k default; bailian accepts up to 131072.
+- `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536` — optional process-wide override. It takes precedence over per-model `options.maxOutputTokens` **only when inherited by the process**. Merely writing the env file does not change an already running terminal or daemon. The persisted model setting now supplies the same budget without this override.
 
 `~/.config/opencode/tui.json` must match repo `tui.json` (`app_exit: none`). If Ctrl+C quits the TUI, the runtime file is missing — copy it:
 
@@ -146,6 +148,11 @@ Fix (two layers, both intentional — do not revert either):
 Verify: `env -u QIANWEN_TP_PERSONAL_KEY opencode run -m bailian-token-plan-personal/qwen3.8-max "reply with exactly: ok"` → `ok`.
 
 ## Idle CPU spin / frozen TUI (open)
+
+2026-09-19 stability audit: see [STABILITY_AUDIT.md](STABILITY_AUDIT.md) for
+reproduced fixes, validation and remaining boundaries. The audit fixes event
+subscription leaks and missing-cache deletion crashes, but does not establish
+the root cause of the historical terminal-output spin below.
 
 Symptom: TUI stops answering and the process burns 100%+ CPU with no session in
 flight. 2026-09-10 instance (macOS): last log line 10:54:32, restarted 12:40:42 — 106

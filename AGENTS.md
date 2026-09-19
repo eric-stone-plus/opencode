@@ -4,6 +4,7 @@ This is **eric-stone-plus/opencode**, not a stock clone. **Read `PERSONAL.md` fi
 Only branch is `main`. Official OpenCode is `upstream` (`anomalyco/opencode`, branch `dev`).
 Catch-up command: `bun run sync-upstream`.
 
+- Write repository documentation, code comments, commit messages, and PR text in English. This applies to both private and public repositories.
 - To regenerate the legacy JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - After changing the public Protocol or Server `HttpApi`, run `bun run generate` from `packages/client`. Do not edit `src/generated` or `src/generated-effect` directly.
 - Keep runtime dependencies directed from Schema to Core and Protocol, then from Core and Protocol to Server. Client runtime code may depend on Schema and Protocol but never Core or Server; `sdk-next` composes Client, Core, and Server.

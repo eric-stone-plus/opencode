@@ -32,7 +32,7 @@ import { promptOffsetWidth } from "../../prompt/display"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { usePromptHistory, type PromptInfo } from "../../prompt/history"
 import { computePromptTraits } from "../../prompt/traits"
-import { expandPastedTextPlaceholders, expandTrackedPastedText } from "../../prompt/part"
+import { expandPastedTextPlaceholders, expandTrackedPastedText, stripPromptPartIDs } from "../../prompt/part"
 import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -143,6 +143,8 @@ let stashed: { prompt: PromptInfo; cursor: number } | undefined
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
   let anchor: BoxRenderable
+  let revision = 0
+  let disposed = false
   const [inputTarget, setInputTarget] = createSignal<TextareaRenderable | undefined>()
 
   const leader = useLeaderActive()
@@ -302,6 +304,7 @@ export function Prompt(props: PromptProps) {
     on(
       () => props.sessionID,
       () => {
+        revision++
         setStore("placeholder", randomIndex(list().length))
       },
       { defer: true },
@@ -416,27 +419,8 @@ export function Prompt(props: PromptProps) {
               sessionID: props.sessionID,
             })
             setStore("interrupt", 0)
-          } else if (!store.prompt.input && store.prompt.parts.length === 0) {
-            // First press: peel a queued message back into the composer before
-            // (or instead of) only arming the double-esc interrupt. Skipped
-            // when the composer holds a draft so it is never clobbered;
-            // /withdraw remains the explicit override.
-            const sessionID = props.sessionID
-            void sdk.client.session.withdraw({ sessionID }).then((result) => {
-              if (result.error || !result.data) return
-              const draft = result.data.parts.reduce(
-                (agg, part) => {
-                  if (part.type === "text" && !part.synthetic) agg.input += part.text
-                  if (part.type === "file") agg.parts.push(part)
-                  return agg
-                },
-                { input: "", parts: [] as PromptInfo["parts"] },
-              )
-              input.setText(draft.input)
-              setStore("prompt", draft)
-              restoreExtmarksFromParts(draft.parts)
-              input.gotoBufferEnd()
-            })
+          } else {
+            void withdraw(false)
           }
           dialog.clear()
         },
@@ -446,7 +430,21 @@ export function Prompt(props: PromptProps) {
         name: "session.force_send",
         category: "Session",
         hidden: true,
-        run: () => void forceSend(),
+        run: () => {
+          if (!input.focused) return
+          void submit(true)
+        },
+      },
+      {
+        title: "Withdraw queued message",
+        name: "session.queued_prompts",
+        category: "Session",
+        enabled: Boolean(props.sessionID),
+        slashName: "withdraw",
+        run: async () => {
+          dialog.clear()
+          await withdraw(true)
+        },
       },
       {
         title: "Open editor",
@@ -603,6 +601,7 @@ export function Prompt(props: PromptProps) {
       "prompt.skills",
       "session.interrupt",
       "session.force_send",
+      "session.queued_prompts",
       "workspace.set",
       "session.move",
     ]),
@@ -622,12 +621,14 @@ export function Prompt(props: PromptProps) {
       input.blur()
     },
     set(prompt) {
+      revision++
       input.setText(prompt.input)
       setStore("prompt", prompt)
       restoreExtmarksFromParts(prompt.parts)
       input.gotoBufferEnd()
     },
     reset() {
+      revision++
       input.clear()
       input.extmarks.clear()
       setStore("prompt", {
@@ -654,6 +655,8 @@ export function Prompt(props: PromptProps) {
   })
 
   onCleanup(() => {
+    disposed = true
+    revision++
     if (store.prompt.input) {
       stashed = { prompt: unwrap(store.prompt), cursor: input.cursorOffset }
     }
@@ -956,36 +959,81 @@ export function Prompt(props: PromptProps) {
     }
   })
 
-  // Force send: when busy, interrupt the active run and send the composer
-  // draft as a fresh turn right away — a hard attention boundary instead of
-  // mid-run injection. When idle it is identical to a normal submit.
-  async function forceSend() {
-    if (auto()?.visible) return false
-    if (status().type === "idle" || !props.sessionID) return submit()
-    if (!store.prompt.input && store.prompt.parts.length === 0) return false
-    await sdk.client.session.abort({ sessionID: props.sessionID })
-    setStore("interrupt", 0)
-    return submit()
+  function draftState() {
+    return JSON.stringify({ input: input.plainText, parts: unwrap(store.prompt.parts), mode: store.mode })
+  }
+
+  let withdrawing = false
+  async function withdraw(explicit: boolean) {
+    if (disposed || withdrawing || submitting || !props.sessionID) return false
+    if (!explicit && (input.plainText || store.prompt.parts.length > 0)) return false
+    const sessionID = props.sessionID
+    const version = revision
+    const before = draftState()
+    withdrawing = true
+    try {
+      const result = await sdk.client.session.withdraw({ sessionID })
+      if (result.error || !result.data) {
+        if (explicit && !disposed)
+          toast.show({
+            message: result.error ? errorMessage(result.error) : "No queued message to withdraw",
+            variant: "warning",
+            duration: 3000,
+          })
+        return false
+      }
+      const draft = result.data.parts.reduce(
+        (agg, part) => {
+          if (part.type === "text" && !part.synthetic) agg.input += part.text
+          if (part.type === "file") agg.parts.push(stripPromptPartIDs(part))
+          if (part.type === "agent") agg.parts.push(stripPromptPartIDs(part))
+          return agg
+        },
+        { input: "", parts: [] as PromptInfo["parts"] },
+      )
+      // The server has already removed the message. Preserve it even if the
+      // user typed a new draft, switched sessions, or closed this composer.
+      if (
+        disposed ||
+        input.isDestroyed ||
+        props.sessionID !== sessionID ||
+        revision !== version ||
+        draftState() !== before
+      ) {
+        stash.push(draft)
+        if (!renderer.isDestroyed) toast.show({ message: "Withdrawn message saved to prompt stash", variant: "info" })
+        return true
+      }
+      if (store.prompt.input || store.prompt.parts.length > 0) stash.push(store.prompt)
+      ref.set(draft)
+      setStore("mode", "normal")
+      return true
+    } catch (error) {
+      if (!disposed) toast.show({ message: errorMessage(error), variant: "error" })
+      return false
+    } finally {
+      withdrawing = false
+    }
   }
 
   let submitting = false
-  async function submit() {
+  async function submit(force = false) {
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
     // input's native onSubmit racing another dispatch). Without this guard,
     // a second call slips past the empty-input check before the first call
     // clears `store.prompt.input`, then awaits its own `session.create` and
     // ultimately reads the now-empty store — sending a phantom empty prompt
     // to a freshly created session.
-    if (submitting) return false
+    if (disposed || submitting || withdrawing) return false
     submitting = true
     try {
-      return await submitInner()
+      return await submitInner(force)
     } finally {
       submitting = false
     }
   }
 
-  async function submitInner() {
+  async function submitInner(force: boolean) {
     workspace.clearNotice()
 
     // IME: double-defer may fire before onContentChange flushes the last
@@ -1025,6 +1073,28 @@ export function Prompt(props: PromptProps) {
         />
       ))
       return false
+    }
+
+    if (force && props.sessionID && status().type !== "idle") {
+      const sessionID = props.sessionID
+      const version = revision
+      const before = draftState()
+      try {
+        await sdk.client.session.abort({ sessionID }, { throwOnError: true })
+      } catch (error) {
+        if (!disposed)
+          toast.show({ title: "Failed to interrupt session", message: errorMessage(error), variant: "error" })
+        return false
+      }
+      if (
+        disposed ||
+        input.isDestroyed ||
+        props.sessionID !== sessionID ||
+        revision !== version ||
+        draftState() !== before
+      )
+        return false
+      setStore("interrupt", 0)
     }
 
     const variant = local.model.variant.current()
@@ -1417,6 +1487,7 @@ export function Prompt(props: PromptProps) {
               maxHeight={maxHeight()}
               onContentChange={() => {
                 const value = input.plainText
+                if (value !== store.prompt.input) revision++
                 setStore("prompt", "input", value)
                 auto()?.onInput(value)
                 syncExtmarksWithPromptParts()

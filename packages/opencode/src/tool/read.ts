@@ -305,7 +305,7 @@ export const ReadTool = Tool.define<
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
 
       if (isPdfAttachment(mime)) {
-        const text = yield* Effect.promise(() => extractPdfText(filepath))
+        const text = yield* Effect.promise((signal) => extractPdfText(filepath, AbortSignal.any([signal, ctx.abort])))
         if (text) {
           const preview = text.slice(0, 400)
           return {

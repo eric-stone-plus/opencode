@@ -870,6 +870,180 @@ it.live("session.processor effect tests complete AI SDK tool calls when native f
   ),
 )
 
+it.live("session.processor does not replay completed tools after a stream failure", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const database = yield* Database.Service
+        const release = defer<void>()
+        const response = reply().tool("lookup", { query: "weather" }).item()
+        if (response.type !== "sse") throw new Error("expected stream response")
+        yield* llm.push(
+          raw({
+            head: [...response.head, ...response.tail.slice(0, -1)],
+            wait: release.promise,
+            tail: [{ error: { type: "server_error", message: "connection lost" } }],
+          }),
+        )
+        yield* llm.tool("lookup", { query: "weather" })
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "tool")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+        let calls = 0
+        const fiber = yield* handle
+          .process({
+            user: parent,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "tool" }],
+            tools: {
+              lookup: tool({
+                description: "Look up information",
+                inputSchema: z.object({ query: z.string() }),
+                execute: async (input) => {
+                  calls += 1
+                  return { title: "Lookup", output: `result:${input.query}`, metadata: {} }
+                },
+              }),
+            },
+          })
+          .pipe(Effect.forkChild)
+
+        yield* waitFor(
+          MessageV2.parts(msg.id).pipe(
+            Effect.map((parts) => parts.find((part) => part.type === "tool" && part.state.status === "completed")),
+            Effect.provideService(Database.Service, database),
+          ),
+          "tool did not complete before the stream failed",
+        )
+        release.resolve()
+        const value = yield* Fiber.join(fiber)
+        const parts = yield* MessageV2.parts(msg.id)
+
+        expect(calls).toBe(1)
+        expect(yield* llm.calls).toBe(1)
+        expect(value).toBe("stop")
+        expect(handle.message.error).toMatchObject({
+          name: "APIError",
+          data: { message: expect.stringContaining("Automatic retry stopped"), isRetryable: false },
+        })
+        expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
+        expect(parts.find((part) => part.type === "tool")?.state.status).toBe("completed")
+
+        const messages = yield* MessageV2.toModelMessagesEffect(
+          [
+            yield* MessageV2.get({ sessionID: chat.id, messageID: parent.id }),
+            yield* MessageV2.get({ sessionID: chat.id, messageID: msg.id }),
+          ],
+          mdl,
+        )
+        expect(messages).toContainEqual({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: "lookup",
+              output: { type: "text", value: "result:weather" },
+            },
+          ],
+        })
+
+        // A fresh turn includes the saved result and may retry its own request.
+        yield* llm.reset
+        yield* llm.error(503, { error: "server unavailable" })
+        yield* llm.text("continued from saved result")
+        const next = yield* processors.create({
+          assistantMessage: yield* assistant(chat.id, parent.id, path.resolve(dir)),
+          sessionID: chat.id,
+          model: mdl,
+        })
+        const resumed = yield* next.process({
+          user: parent,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages,
+          tools: {},
+        })
+        expect(resumed).toBe("continue")
+        expect(yield* llm.calls).toBe(2)
+        expect(calls).toBe(1)
+        expect(next.message.error).toBeUndefined()
+      }),
+    { config: (url) => providerCfg(url) },
+  ),
+)
+
+it.live("session.processor does not replay tools still running when a stream fails", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const started = defer<void>()
+        const aborted = defer<void>()
+        const response = reply().tool("lookup", { query: "weather" }).item()
+        if (response.type !== "sse") throw new Error("expected stream response")
+        yield* llm.push(
+          raw({
+            head: [...response.head, ...response.tail.slice(0, -1)],
+            wait: started.promise,
+            tail: [{ error: { type: "server_error", message: "connection lost" } }],
+          }),
+        )
+        yield* llm.tool("lookup", { query: "weather" })
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "tool")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+        let calls = 0
+        const value = yield* handle.process({
+          user: parent,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "tool" }],
+          tools: {
+            lookup: tool({
+              description: "Look up information",
+              inputSchema: z.object({ query: z.string() }),
+              execute: async (_, options) => {
+                calls += 1
+                options.abortSignal!.addEventListener("abort", () => aborted.resolve(), { once: true })
+                started.resolve()
+                await aborted.promise
+                return { title: "Lookup", output: "result", metadata: {} }
+              },
+            }),
+          },
+        })
+
+        yield* Effect.promise(() => aborted.promise)
+        const parts = yield* MessageV2.parts(msg.id)
+        expect(calls).toBe(1)
+        expect(yield* llm.calls).toBe(1)
+        expect(value).toBe("stop")
+        expect(handle.message.error).toMatchObject({
+          name: "APIError",
+          data: { message: expect.stringContaining("Automatic retry stopped"), isRetryable: false },
+        })
+        expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
+        expect(parts.find((part) => part.type === "tool")?.state.status).toBe("error")
+      }),
+    { config: (url) => providerCfg(url) },
+  ),
+)
+
 it.live("session.processor effect tests mark pending tools as aborted on cleanup", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

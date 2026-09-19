@@ -239,6 +239,22 @@ function makeHttpNoLLMServer(input?: { mcpInstructions?: MCP.ServerInstructions[
   return makePrompt(input)
 }
 
+const modelLookupStarted: Array<() => void> = []
+const beforeReply = testEffect(
+  LayerNode.compile(promptRoot, [
+    [SessionSummary.node, summary],
+    [LSP.node, lsp],
+    [MCP.node, makeMcp()],
+    [RuntimeFlags.node, runtimeFlags],
+    [
+      ProviderSvc.node,
+      Layer.mock(ProviderSvc.Service, {
+        getModel: () => Effect.sync(() => modelLookupStarted.shift()?.()).pipe(Effect.andThen(Effect.never)),
+      }),
+    ],
+  ]),
+)
+
 const it = testEffect(makeHttp())
 const noLLMServer = testEffect(makeHttpNoLLMServer())
 const raceNoLLMServer = testEffect(makeHttpNoLLMServer({ processor: "blocking" }))
@@ -1147,6 +1163,69 @@ it.instance(
 )
 
 // Cancel semantics
+
+beforeReply.instance("withdraw cancels a selected prompt before the assistant is created", () =>
+  Effect.gen(function* () {
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Withdraw during model lookup" })
+    const sent = yield* user(chat.id, "instant regret")
+    const ready = defer<void>()
+    modelLookupStarted.push(ready.resolve)
+    const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    yield* awaitWithTimeout(
+      Effect.promise(() => ready.promise),
+      "runner never reached model lookup",
+    )
+    expect((yield* sessions.messages({ sessionID: chat.id })).map((msg) => msg.info.role)).toEqual(["user"])
+
+    const withdrawn = yield* prompt.withdraw(chat.id)
+    expect(withdrawn.info.id).toBe(sent.id)
+    const exit = yield* awaitWithTimeout(Fiber.await(fiber), "withdraw left a runner processing a deleted parent")
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(yield* sessions.messages({ sessionID: chat.id })).toEqual([])
+  }),
+)
+
+it.instance("withdraw removes a queued prompt while the preceding run keeps streaming", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const status = yield* SessionStatus.Service
+    const chat = yield* sessions.create({ title: "Withdraw queue" })
+    yield* llm.hang
+    yield* user(chat.id, "keep working")
+    const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    yield* llm.wait(1)
+    const queued = yield* prompt.prompt({
+      sessionID: chat.id,
+      model: ref,
+      noReply: true,
+      parts: [{ type: "text", text: "withdraw this only" }],
+    })
+    expect((yield* prompt.withdraw(chat.id)).info.id).toBe(queued.info.id)
+    expect((yield* status.get(chat.id)).type).toBe("busy")
+    expect((yield* sessions.messages({ sessionID: chat.id })).some((msg) => msg.info.id === queued.info.id)).toBe(false)
+    yield* prompt.cancel(chat.id)
+    yield* Fiber.await(fiber)
+  }),
+)
+
+it.instance("concurrent withdrawals return each queued message only once", () =>
+  Effect.gen(function* () {
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Withdraw twice" })
+    const first = yield* user(chat.id, "first")
+    const second = yield* user(chat.id, "second")
+    const results = yield* Effect.all([prompt.withdraw(chat.id), prompt.withdraw(chat.id)], {
+      concurrency: "unbounded",
+    })
+    expect(new Set(results.map((msg) => msg.info.id))).toEqual(new Set([first.id, second.id]))
+    expect(yield* sessions.messages({ sessionID: chat.id })).toEqual([])
+  }),
+)
 
 it.instance("cancel interrupts loop and resolves with an assistant message", () =>
   Effect.gen(function* () {
@@ -2467,4 +2546,104 @@ noLLMServer.instance(
       }
     }),
   30_000,
+)
+
+unix(
+  "shell resumes a newer prompt after the first queued prompt is withdrawn",
+  () =>
+    withSh(() =>
+      Effect.gen(function* () {
+        const { dir, llm } = yield* useServerConfig(providerCfg)
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "Withdraw behind shell",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const release = path.join(dir, ".release-shell")
+        yield* llm.text("new prompt answered")
+
+        yield* Effect.gen(function* () {
+          const shell = yield* prompt
+            .shell({
+              sessionID: chat.id,
+              agent: "build",
+              model: ref,
+              command: "printf ready; while [ ! -f '.release-shell' ]; do sleep 0.01; done",
+            })
+            .pipe(Effect.forkChild)
+          yield* pollWithTimeout(
+            Effect.gen(function* () {
+              const messages = yield* sessions.messages({ sessionID: chat.id })
+              return messages.some((message) =>
+                message.parts.some(
+                  (part) =>
+                    part.type === "tool" && part.state.status === "running" && part.state.metadata?.output === "ready",
+                ),
+              )
+                ? true
+                : undefined
+            }),
+            "shell never published its readiness marker",
+          )
+
+          const firstID = MessageID.ascending()
+          const first = yield* prompt
+            .prompt({
+              sessionID: chat.id,
+              messageID: firstID,
+              model: ref,
+              parts: [{ type: "text", text: "withdraw the first prompt" }],
+            })
+            .pipe(Effect.forkChild)
+          yield* pollWithTimeout(
+            Effect.gen(function* () {
+              const messages = yield* sessions.messages({ sessionID: chat.id })
+              return messages.some((message) => message.info.id === firstID && message.parts.length > 0)
+                ? true
+                : undefined
+            }),
+            "first prompt was never admitted",
+          )
+          expect((yield* prompt.withdraw(chat.id)).info.id).toBe(firstID)
+
+          const secondID = MessageID.ascending()
+          const second = yield* prompt
+            .prompt({
+              sessionID: chat.id,
+              messageID: secondID,
+              model: ref,
+              parts: [{ type: "text", text: "answer the second prompt" }],
+            })
+            .pipe(Effect.forkChild)
+          yield* pollWithTimeout(
+            Effect.gen(function* () {
+              const messages = yield* sessions.messages({ sessionID: chat.id })
+              return messages.some((message) => message.info.id === secondID && message.parts.length > 0)
+                ? true
+                : undefined
+            }),
+            "second prompt was never admitted",
+          )
+          expect(yield* llm.calls).toBe(0)
+          yield* writeText(release, "")
+
+          yield* awaitWithTimeout(Fiber.join(shell), "shell never finished after release")
+          const [a, b] = yield* awaitWithTimeout(
+            Effect.all([Fiber.join(first), Fiber.join(second)]),
+            "queued prompt callers never resumed",
+          )
+          expect(a.info.id).toBe(b.info.id)
+          expect(b.info.role).toBe("assistant")
+          if (b.info.role === "assistant") expect(b.info.parentID).toBe(secondID)
+          expect(b.parts.some((part) => part.type === "text" && part.text === "new prompt answered")).toBe(true)
+          expect(yield* llm.calls).toBe(1)
+          const inputs = JSON.stringify(yield* llm.inputs)
+          expect(inputs).toContain("answer the second prompt")
+          expect(inputs).not.toContain("withdraw the first prompt")
+        }).pipe(Effect.ensuring(writeText(release, "").pipe(Effect.orDie)))
+      }),
+    ),
+  { git: true },
+  10_000,
 )

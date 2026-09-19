@@ -361,30 +361,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const withdraw = Effect.fn("SessionHttpApi.withdraw")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
-      const msgs = yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
-      const queued = msgs.findLast((msg) => msg.info.role === "user")
-      if (!queued) return yield* notFound("No queued message to withdraw")
-      // Once the reply renders visible output the turn is locked: retracting it
-      // would orphan that work, so refuse and let the client fall back to undo.
-      if (answered(msgs, queued.info.id))
-        return yield* new ConflictError({ message: "Message is already answered; use undo instead" })
-      const fresh = msgs.filter((msg) => msg.info.role === "assistant" && msg.info.parentID === queued.info.id)
-      if (fresh.length === 1) {
-        // The runner picked the message up but has rendered nothing yet (sent
-        // to an idle session, or promoted the instant the previous run ended):
-        // abort and retract the whole turn. Re-check afterwards because
-        // streaming can flush output between the first read and the abort.
-        yield* promptSvc.cancel(ctx.params.sessionID)
-        const after = yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
-        if (answered(after, queued.info.id))
-          return yield* new ConflictError({ message: "Message is already answered; use undo instead" })
-        yield* Effect.forEach(
-          after.filter((msg) => msg.info.role === "assistant" && msg.info.parentID === queued.info.id),
-          (reply) => session.removeMessage({ sessionID: ctx.params.sessionID, messageID: reply.info.id }),
+      return yield* promptSvc
+        .withdraw(ctx.params.sessionID)
+        .pipe(
+          Effect.mapError((error) =>
+            error.reason === "empty" ? notFound(error.message) : new ConflictError({ message: error.message }),
+          ),
         )
-      }
-      yield* session.removeMessage({ sessionID: ctx.params.sessionID, messageID: queued.info.id })
-      return queued
     })
 
     const permissionRespond = Effect.fn("SessionHttpApi.permissionRespond")(function* (ctx: {
@@ -469,22 +452,3 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("updatePart", updatePart)
   }),
 )
-
-function answered(msgs: SessionV1.WithParts[], userID: MessageID) {
-  const replies = msgs.filter((msg) => msg.info.role === "assistant" && msg.info.parentID === userID)
-  return replies.length > 1 || replies.some(producedOutput)
-}
-
-// Structural stream parts (step-start/step-finish) and empty text do not lock
-// the turn; anything else the reply has written counts as rendered output.
-// Deliberately parts-only: the abort that precedes the re-check stamps the
-// reply with error/completed, and an outputless failed turn stays retractable.
-function producedOutput(msg: SessionV1.WithParts) {
-  if (msg.info.role !== "assistant") return true
-  return msg.parts.some((part) => {
-    if (part.type === "step-start" || part.type === "step-finish") return false
-    if (part.type === "text") return !part.synthetic && part.text.trim().length > 0
-    if (part.type === "reasoning") return part.text.trim().length > 0
-    return true
-  })
-}

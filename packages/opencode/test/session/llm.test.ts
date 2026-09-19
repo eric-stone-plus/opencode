@@ -1846,6 +1846,90 @@ describe("session.llm.stream", () => {
     { config: () => openAIConfig(loadFixture("openai", "gpt-5.2").model, `${state.server!.url.origin}/v1`) },
   )
 
+  it.instance(
+    "preserves the persistent Qwen output budget and max effort on the Anthropic wire",
+    () =>
+      Effect.gen(function* () {
+        const request = waitRequest(
+          "/messages",
+          createEventResponse([
+            {
+              type: "message_start",
+              message: {
+                id: "msg-qwen",
+                model: "qwen3.8-max",
+                usage: { input_tokens: 3, output_tokens: 0 },
+              },
+            },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+            { type: "content_block_stop", index: 0 },
+            {
+              type: "message_delta",
+              delta: { stop_reason: "end_turn", stop_sequence: null },
+              usage: { output_tokens: 1 },
+            },
+            { type: "message_stop" },
+          ]),
+        )
+        const model = yield* Provider.use.getModel(
+          ProviderV2.ID.make("bailian-token-plan-personal"),
+          ModelV2.ID.make("qwen3.8-max"),
+        )
+        const sessionID = SessionID.make("session-test-qwen-budget")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        yield* drainWith(llmLayerWithExecutor({ flags: { outputTokenMax: undefined } }), {
+          user: {
+            id: MessageID.make("msg_user-qwen-budget"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: model.providerID, modelID: model.id },
+          },
+          sessionID,
+          model,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+        const capture = yield* Effect.promise(() => request)
+        expect(capture.url.pathname).toBe("/apps/anthropic/v1/messages")
+        expect(capture.body.model).toBe("qwen3.8-max")
+        expect(capture.body.max_tokens).toBe(65536)
+        expect(capture.body.output_config).toEqual({ effort: "max" })
+        expect(capture.body.thinking).toBeUndefined()
+        expect(capture.body.stream).toBe(true)
+        expect(capture.headers.get("x-api-key")).toBe("test-qwen-key")
+      }),
+    {
+      config: () => ({
+        enabled_providers: ["bailian-token-plan-personal"],
+        provider: {
+          "bailian-token-plan-personal": {
+            npm: "@ai-sdk/anthropic",
+            options: { apiKey: "test-qwen-key", baseURL: `${state.server!.url.origin}/apps/anthropic/v1` },
+            models: {
+              "qwen3.8-max": {
+                name: "Qwen3.8 Max",
+                reasoning: true,
+                limit: { context: 983616, input: 852544, output: 131072 },
+                modalities: { input: ["text", "image"], output: ["text"] },
+                options: { effort: "max", maxOutputTokens: 65536 },
+              },
+            },
+          },
+        },
+      }),
+    },
+  )
+
   const minimaxFixture = { providerID: "minimax", modelID: "MiniMax-M2.5" }
   it.instance(
     "sends messages API payload for Anthropic Compatible models",
