@@ -1,7 +1,18 @@
 diff --git a/chunk-bun-tkm837n2.js b/chunk-bun-tkm837n2.js
-index e5e5874f758a2e8c622ca8e9301f20c60c245546..26d888963e97bbe59a4ce05b2ef97eb9e8af8118 100644
+index e5e5874f758a2e8c622ca8e9301f20c60c245546..deb32a4d85e97eca1248fa483c1ec229ed755673 100644
 --- a/chunk-bun-tkm837n2.js
 +++ b/chunk-bun-tkm837n2.js
+@@ -3400,9 +3400,9 @@ class CodeRenderable extends TextBufferRenderable {
+         this.requestRender();
+         return;
+       }
+-      console.warn("Code highlighting failed, falling back to plain text:", error);
+       if (this.isDestroyed)
+         return;
++      console.warn("Code highlighting failed, falling back to plain text:", error);
+       this.textBuffer.setText(content);
+       this.setRenderedLineSources(undefined);
+       this._shouldRenderTextBuffer = true;
 @@ -9651,7 +9651,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
@@ -21,9 +32,20 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..26d888963e97bbe59a4ce05b2ef97eb9
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
 diff --git a/chunk-node-51kpf0mz.js b/chunk-node-51kpf0mz.js
-index 4a2cb78c73179cc55c06dad549345a3145680120..e8650ede987b7eef4f19cec64b54bbdbd35157d1 100644
+index 4a2cb78c73179cc55c06dad549345a3145680120..df82261e7eb812ca605ff22240cd48e4b22cbe60 100644
 --- a/chunk-node-51kpf0mz.js
 +++ b/chunk-node-51kpf0mz.js
+@@ -3399,9 +3399,9 @@ class CodeRenderable extends TextBufferRenderable {
+         this.requestRender();
+         return;
+       }
+-      console.warn("Code highlighting failed, falling back to plain text:", error);
+       if (this.isDestroyed)
+         return;
++      console.warn("Code highlighting failed, falling back to plain text:", error);
+       this.textBuffer.setText(content);
+       this.setRenderedLineSources(undefined);
+       this._shouldRenderTextBuffer = true;
 @@ -9650,7 +9650,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {

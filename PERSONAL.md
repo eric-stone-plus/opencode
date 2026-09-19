@@ -67,6 +67,7 @@ If a rebase conflict hits a file you patched, keep the personal behavior unless 
 - File watcher: skip `/` and `$HOME`. Launching OpenCode from the home directory is intentional (NAS paths live outside cwd). Do not “fix” that by requiring `cd` into a project.
 - Keybinds: Ctrl+C / Ctrl+D do not exit; `app_exit` none. Exit with `/exit` or `/quit`. Mouse stays on (default). Session paging must work without PgUp/PgDn: `ctrl+up`/`ctrl+down` and `alt+up`/`alt+down` (Mac Option+arrows). Line scroll: `ctrl+shift+up`/`ctrl+shift+down`. Do not bind bare arrows — those stay prompt cursor/history. Runtime copy: `~/.config/opencode/tui.json` (installed by sync).
 - `bun run sync-upstream` itself (`script/sync-upstream.ts`).
+- `patches/@opentui%2Fcore@0.4.5.patch`: rerender floor (`Math.max(16, …)` delay clamp) **and** the TreeSitter shutdown guard (below). Both live in the same patch file; regenerate together.
 
 ## Config outside git
 
@@ -200,6 +201,38 @@ enables mouse modes and needs no cleanup; the leak always comes from a TUI that
 got past renderer init and then died hard.
 
 Do not "fix" this by disabling mouse in the TUI — in-app click/scroll is intentional.
+
+## TreeSitter warning flood on exit (fixed via opentui patch)
+
+Symptom (2026-09-19, old pre-sync binary): exiting a code-heavy session view
+dumps dozens of `Code highlighting failed, falling back to plain text: warn:
+TreeSitter client destroyed` blocks with full stacks into the shell scrollback,
+interleaved with the next prompt.
+
+Mechanism: key-triggered exit → renderer destroy → `finalizeDestroy` →
+`destroyTreeSitterClient` → `rejectPendingRequests(new Error("TreeSitter client
+destroyed"))`. Every still-queued syntax-highlight request (one per visible
+code block) rejects; `CodeRenderable`'s catch logged `console.warn` **before**
+checking `this.isDestroyed`, so each rejection printed the stored destroy stack
+via the external-output passthrough.
+
+Forensics: the stack's chunk hashes (`chunk-2vn5v3v7`, `chunk-tx410jhg`,
+`chunk-x0hfdhs6`) exist only in the old build — not in `0.0.0-main-202609190133`
+or later. Not reproducible on new builds via tmux (ready-exit, mid-replay
+SIGTERM, 1MB session clone all exit clean), but the unguarded log path is
+version-independent, so the fix is kept as a belt-and-braces guard.
+
+Fix: in `patches/@opentui%2Fcore@0.4.5.patch`, the catch in `CodeRenderable`
+(`chunk-bun-tkm837n2.js` / `chunk-node-51kpf0mz.js`) checks `this.isDestroyed`
+**before** `console.warn` — teardown-time highlight failures are silent.
+Verify after install: `grep -c "Math.max(16, targetFrameTime"` and the
+isDestroyed-before-warn order in both chunk files under
+`packages/tui/node_modules/@opentui/core/`.
+
+Note: patch hunks are line-numbered against the pristine package. The
+highlight-guard hunk must come **before** the rerender-floor hunks per file
+(ascending line order); all hunks are net-zero line changes, so they never
+shift each other's line numbers.
 
 ## Agent rules for this fork
 
