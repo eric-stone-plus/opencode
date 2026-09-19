@@ -50,6 +50,8 @@ chmod +x ~/.opencode/bin/opencode
 
 `--single` builds only the current platform, so exactly one `opencode-<platform>-<arch>` dir exists (`darwin-arm64`, `darwin-x64`, `linux-x64`, …) and the glob picks it up.
 
+Replacing the binary while a TUI is running arms a delayed kill: the CLI daemon (`packages/cli/src/services/daemon.ts`, `start()` → `stopProcess()`) SIGKILLs any **registered** server whose version differs from the launching client's `InstallationVersion` — the old TUI then shows "Process Exited from Signal 9". Swap the binary when no TUI is running, or expect the next opencode launch to kill the old server. Install via temp file + `mv` (atomic rename): `cp` onto the live path can fail with ETXTBSY.
+
 ## How to keep personal patches
 
 1. All custom work lands as commits on **`main`**, stacked on top of `upstream/dev`.
@@ -254,6 +256,35 @@ enables mouse modes and needs no cleanup; the leak always comes from a TUI that
 got past renderer init and then died hard.
 
 Do not "fix" this by disabling mouse in the TUI — in-app click/scroll is intentional.
+
+## SIGKILL deaths from hermes cgroup_cleanup (fixed via guard)
+
+Symptom (2026-09-19, three times: 16:14 / 16:36 / 16:47, all on binary
+`0.0.0-main-202609190318`): TUI vanishes mid-work, banner "Process Exited from
+Signal 9", mouse garbage in bash afterwards. No ERROR in opencode.log, no
+coredump, no OOM (23 GiB free, systemd-oomd logged zero kills).
+
+Mechanism: the agent (working on the hermes gateway) ran
+`python -m gateway.cgroup_cleanup` as a bash tool call. That module is the
+gateway unit's `ExecStopPost=`: `reap_cgroup()` SIGKILLs every PID in the
+caller's **own cgroup** — inside the unit that's gateway leftovers, but from a
+tool shell it's the terminal scope (`ptyxis-spawn-….scope`) containing the
+opencode server itself. Evidence: db parts leave the bash call in `running`
+within ~2 s of each death; `/tmp/opencode/cgc.log`'s birth matches the 16:36
+call to the millisecond. `timeout 30` was useless — `timeout` died with the
+rest of the scope.
+
+Fix: the shared kill-guard now denies any live command segment containing
+`cgroup_cleanup` (both `~/.config/agent-hooks/block-unsafe-kill.sh` and
+`plugin/block-unsafe-kill.ts`; read-only and git-commit segments exempt).
+Documented in the global rules (`~/.config/opencode/AGENTS.md`). The root-cause
+fix belongs in hermes — `reap_cgroup()` should refuse to run outside the
+unit's cgroup — handed to the hermes session.
+
+Same day, different cause, undetermined: the 14:38 death (old binary
+`…0148`) followed two rapid Esc-cancels with no cgroup_cleanup in flight. It
+ran the pre-patch binary, so it cannot be attributed to the apiKey-fallback
+overlay.
 
 ## TreeSitter warning flood on exit (fixed via opentui patch)
 
