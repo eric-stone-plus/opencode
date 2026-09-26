@@ -1,4 +1,4 @@
-import { Effect, Schedule, Semaphore, Stream } from "effect"
+import { Effect, Fiber, Schedule, Semaphore, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -498,7 +498,7 @@ export const ShellTool = Tool.define(
           // that emits nothing else (a chunk-only throttle loses that tail).
           yield* Effect.forkScoped(pushMeta.pipe(Effect.repeat(Schedule.spaced("100 millis"))))
 
-          yield* Effect.forkScoped(
+          const reader = yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
               list.push({ text: chunk, size })
@@ -550,15 +550,20 @@ export const ShellTool = Tool.define(
             timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
           ])
 
+          // kill waits for the process to report exit; never let that wedge the tool.
+          const kill = handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie, Effect.timeout("5 seconds"), Effect.ignore)
           if (exit.kind === "abort") {
             aborted = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+            yield* kill
           }
           if (exit.kind === "timeout") {
             expired = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+            yield* kill
           }
 
+          // Output can still be in flight when the exit is reported. The reader ends
+          // at EOF, or when the spawner drops pipes held by detached descendants.
+          yield* Fiber.join(reader).pipe(Effect.timeout("2 seconds"), Effect.ignore)
           return exit.kind === "exit" ? exit.code : null
         }),
       ).pipe(Effect.ensuring(pushMeta), Effect.orDie)
