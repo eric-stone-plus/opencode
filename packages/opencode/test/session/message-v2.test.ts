@@ -1361,6 +1361,85 @@ describe("session.message-v2.toModelMessage", () => {
     const texts = (result[0].content as any[]).filter((p) => p.type === "text")
     expect(texts.map((t) => t.text)).toStrictEqual(["", "hello"])
   })
+
+  describe("reasoning from earlier user turns", () => {
+    const anthropicProtocol = (id: string, options: Record<string, unknown> = {}): Provider.Model => ({
+      ...model,
+      id: ModelV2.ID.make(id),
+      api: { ...model.api, id, npm: "@ai-sdk/anthropic" },
+      capabilities: { ...model.capabilities, reasoning: true },
+      options,
+    })
+
+    // Two user turns; the first ends with a reasoning-only step. Qwen saves
+    // thinking with an empty signature, which still counts as signed.
+    const history = (target: Provider.Model): SessionV1.WithParts[] => {
+      const meta = { providerID: target.providerID, modelID: target.api.id }
+      const reasoning = (messageID: string, id: string, text: string) => ({
+        ...basePart(messageID, id),
+        type: "reasoning" as const,
+        text,
+        time: { start: 0, end: 1 },
+        metadata: { anthropic: { signature: "" } },
+      })
+      return [
+        { info: userInfo("u1"), parts: [{ ...basePart("u1", "p1"), type: "text", text: "first" }] as SessionV1.Part[] },
+        {
+          info: assistantInfo("a1", "u1", undefined, meta),
+          parts: [
+            { ...basePart("a1", "p1"), type: "step-start" },
+            reasoning("a1", "p2", "old-thinking"),
+            { ...basePart("a1", "p3"), type: "text", text: "" },
+            { ...basePart("a1", "p4"), type: "text", text: "old answer" },
+          ] as SessionV1.Part[],
+        },
+        {
+          info: assistantInfo("a2", "u1", undefined, meta),
+          parts: [{ ...basePart("a2", "p1"), type: "step-start" }, reasoning("a2", "p2", "old-only-thinking")] as SessionV1.Part[],
+        },
+        { info: userInfo("u2"), parts: [{ ...basePart("u2", "p1"), type: "text", text: "second" }] as SessionV1.Part[] },
+        {
+          info: assistantInfo("a3", "u2", undefined, meta),
+          parts: [
+            { ...basePart("a3", "p1"), type: "step-start" },
+            reasoning("a3", "p2", "current-thinking"),
+            { ...basePart("a3", "p3"), type: "text", text: "current answer" },
+          ] as SessionV1.Part[],
+        },
+      ]
+    }
+
+    const thinking = (messages: Awaited<ReturnType<typeof MessageV2.toModelMessages>>) =>
+      messages.flatMap((msg) =>
+        Array.isArray(msg.content) ? msg.content.flatMap((part) => (part.type === "reasoning" ? [part.text] : [])) : [],
+      )
+
+    test("keeps only the current turn for Anthropic-protocol models other than Claude", async () => {
+      const qwen = anthropicProtocol("qwen3.8-max")
+      const result = ProviderTransform.message(await MessageV2.toModelMessages(history(qwen), qwen), qwen, {})
+
+      expect(thinking(result)).toStrictEqual(["current-thinking"])
+      // The earlier answer survives without its thinking or the empty separator,
+      // and the reasoning-only step disappears instead of becoming an empty message.
+      expect(result.map((msg) => msg.role)).toStrictEqual(["user", "assistant", "user", "assistant"])
+      expect(JSON.stringify(result[1].content)).toContain("old answer")
+      expect(result.every((msg) => typeof msg.content === "string" || msg.content.length > 0)).toBe(true)
+    })
+
+    test("leaves Claude history to the provider", async () => {
+      const claude = anthropicProtocol("claude-sonnet-5")
+      const result = await MessageV2.toModelMessages(history(claude), claude)
+
+      expect(thinking(result)).toStrictEqual(["old-thinking", "old-only-thinking", "current-thinking"])
+    })
+
+    test("replays all reasoning when the model sets sendReasoning", async () => {
+      const qwen = anthropicProtocol("qwen3.8-max", { sendReasoning: true })
+      const result = await MessageV2.toModelMessages(history(qwen), qwen)
+
+      expect(thinking(result)).toStrictEqual(["old-thinking", "old-only-thinking", "current-thinking"])
+    })
+  })
 })
 
 describe("session.message-v2.fromError", () => {

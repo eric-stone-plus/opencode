@@ -933,6 +933,91 @@ it.instance("glob tool keeps instance context during prompt runs", () =>
   }),
 )
 
+// Anthropic-compatible provider serving a non-Claude model, like Qwen on Bailian.
+const qwen = { providerID: ProviderV2.ID.make("bailian"), modelID: ModelV2.ID.make("qwen-test") }
+
+function anthropicCfg(url: string) {
+  return {
+    enabled_providers: ["bailian"],
+    provider: {
+      bailian: {
+        name: "Bailian",
+        npm: "@ai-sdk/anthropic",
+        env: [],
+        models: {
+          "qwen-test": {
+            id: "qwen-test",
+            name: "Qwen Test",
+            attachment: false,
+            reasoning: true,
+            temperature: false,
+            tool_call: true,
+            release_date: "2025-01-01",
+            limit: { context: 100000, output: 10000 },
+            cost: { input: 0, output: 0 },
+            options: {},
+          },
+        },
+        options: { apiKey: "test-key", baseURL: url },
+      },
+    },
+  }
+}
+
+// Model requests only; title generation also goes through the mock.
+const modelRequests = (hits: { body: Record<string, unknown> }[]) =>
+  hits.map((hit) => hit.body).filter((body) => !JSON.stringify(body).includes("Generate a title for this conversation"))
+
+const thinkingBlocks = (body: Record<string, unknown>) =>
+  (body.messages as { role: string; content: unknown }[]).flatMap((msg) =>
+    Array.isArray(msg.content)
+      ? msg.content.filter((block: { type: string }) => block.type === "thinking").map((block: { thinking: string }) => block.thinking)
+      : [],
+  )
+
+it.instance("loop drops thinking from earlier user turns on Anthropic-protocol models", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Reasoning replay",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "first" }],
+    })
+    yield* llm.push(reply().reason("think-one-a").tool("glob", { pattern: "**/*.txt" }))
+    yield* llm.push(reply().reason("think-one-b").text("done one").stop())
+    yield* prompt.loop({ sessionID: session.id })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "second" }],
+    })
+    yield* llm.push(reply().reason("think-two").text("done two").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(3)
+    expect(requests.every((body) => body.model === "qwen-test")).toBe(true)
+    // Inside the tool loop the previous step's thinking is still replayed.
+    expect(thinkingBlocks(requests[1])).toStrictEqual(["think-one-a"])
+    // After the next user message, none of the first turn's thinking is resent.
+    expect(thinkingBlocks(requests[2])).toStrictEqual([])
+    expect(JSON.stringify(requests[2].messages)).toContain("done one")
+    expect(result.parts.some((part) => part.type === "text" && part.text === "done two")).toBe(true)
+  }),
+)
+
 it.instance("loop continues when finish is stop but assistant has tool parts", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

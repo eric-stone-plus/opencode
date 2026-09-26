@@ -192,7 +192,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return { type: "json", value: output as never }
   }
 
-  for (const msg of input) {
+  // Anthropic strips thinking from earlier user turns before counting input tokens.
+  // Anthropic-compatible endpoints serving other models (e.g. Qwen on Bailian) bill
+  // every replayed block instead, so keep reasoning only for the current turn there.
+  // `sendReasoning: true` in the model options restores full replay.
+  const currentTurn =
+    model.api.npm === "@ai-sdk/anthropic" && !model.api.id.includes("claude") && model.options.sendReasoning !== true
+      ? input.findLastIndex((msg) => msg.info.role === "user")
+      : -1
+
+  for (const [index, msg] of input.entries()) {
     if (msg.parts.length === 0) continue
 
     if (msg.info.role === "user") {
@@ -273,8 +282,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       // here is the only safe replay point we have.
       // Use a single space so the separator survives replay without changing
       // the neighboring signed reasoning blocks.
+      const dropReasoning = index < currentTurn
       const hasSignedReasoning = msg.parts.some((part) => {
-        if (part.type !== "reasoning") return false
+        if (part.type !== "reasoning" || dropReasoning) return false
         return part.metadata?.anthropic?.signature != null
       })
       for (const part of msg.parts) {
@@ -363,6 +373,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
         }
         if (part.type === "reasoning") {
+          if (dropReasoning) continue
           if (differentModel) {
             if (part.text.trim().length > 0)
               assistantMessage.parts.push({
