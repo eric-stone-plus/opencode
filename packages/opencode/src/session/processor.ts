@@ -658,8 +658,9 @@ const layer = Layer.effect(
           "session.id": input.sessionID,
           messageID: input.assistantMessage.id,
         })
+        const cfg = yield* config.get()
         ctx.needsCompaction = false
-        ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
         let toolsStarted = false
         const tools = Object.fromEntries(
           Object.entries(streamInput.tools).map(([name, item]) => {
@@ -712,6 +713,7 @@ const layer = Layer.effect(
               while: () => !toolsStarted,
               schedule: SessionRetry.policy({
                 provider: input.model.providerID,
+                budget: cfg.retry,
                 parse,
                 set: (info) => {
                   return status.set(ctx.sessionID, {

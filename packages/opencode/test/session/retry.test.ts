@@ -4,7 +4,8 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { APICallError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Effect, Schedule, Schema } from "effect"
+import { Clock, Effect, Fiber, Schedule, Schema } from "effect"
+import { TestClock } from "effect/testing"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -144,6 +145,71 @@ describe("session.retry.delay", () => {
       )
 
       expect(attempts).toStrictEqual([1, 2, 3, 4, 5])
+    }),
+  )
+
+  // Drives the real schedule under TestClock and records each scheduled wait.
+  const runBudget = (budget: Parameters<typeof SessionRetry.policy>[0]["budget"], error = apiError()) =>
+    Effect.gen(function* () {
+      const waits: number[] = []
+      let last = 0
+      const fiber = yield* Effect.fail(error).pipe(
+        Effect.retry(
+          SessionRetry.policy({
+            provider: "test",
+            budget,
+            parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
+            set: (info) =>
+              Effect.gen(function* () {
+                const now = yield* Clock.currentTimeMillis
+                waits.push(info.next - now)
+                last = now
+              }),
+          }),
+        ),
+        Effect.exit,
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust("10 hours")
+      yield* Fiber.join(fiber)
+      return { waits, last }
+    })
+
+  it.effect("keeps the default of five retries capped at 30 seconds", () =>
+    Effect.gen(function* () {
+      const { waits } = yield* runBudget(undefined)
+      expect(waits).toHaveLength(5)
+      expect(Math.max(...waits)).toBeLessThanOrEqual(30_000)
+    }),
+  )
+
+  it.effect("retries until a 30 minute wall-clock budget runs out, 60 seconds apart at most", () =>
+    Effect.gen(function* () {
+      const { waits, last } = yield* runBudget({ max_elapsed_ms: 30 * 60_000, max_delay_ms: 60_000 })
+      const total = waits.reduce((sum, wait) => sum + wait, 0)
+      // Unlimited attempts under a time budget, never waiting longer than the cap.
+      expect(waits.length).toBeGreaterThan(5)
+      expect(Math.max(...waits)).toBeLessThanOrEqual(60_000)
+      expect(waits.at(-1)).toBe(60_000)
+      // The last retry fires inside the budget and the next one would overrun it.
+      expect(total).toBeLessThanOrEqual(30 * 60_000)
+      expect(total + 60_000).toBeGreaterThan(30 * 60_000)
+      expect(last).toBeLessThan(30 * 60_000)
+    }),
+  )
+
+  it.effect("applies max_attempts together with the wall-clock budget", () =>
+    Effect.gen(function* () {
+      const { waits } = yield* runBudget({ max_attempts: 3, max_elapsed_ms: 30 * 60_000 })
+      expect(waits).toHaveLength(3)
+    }),
+  )
+
+  it.effect("caps waits from retry headers at max_delay_ms", () =>
+    Effect.gen(function* () {
+      // A header-bearing error with no retry-after uses exponential backoff.
+      const { waits } = yield* runBudget({ max_attempts: 8, max_delay_ms: 60_000 }, apiError({}))
+      expect(Math.max(...waits)).toBe(60_000)
     }),
   )
 })

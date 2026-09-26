@@ -708,6 +708,41 @@ it.live("session.processor effect tests retry network_error finish reasons", () 
   ),
 )
 
+it.live("session.processor applies the configured retry budget", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+
+        // Default policy would retry both; max_attempts: 1 stops after one retry.
+        yield* llm.error(503, { error: "boom" })
+        yield* llm.error(503, { error: "boom" })
+        yield* llm.text("unreachable")
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "retry")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+
+        const value = yield* handle.process({
+          user: parent,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "retry" }],
+          tools: {},
+        })
+
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(2)
+        expect(handle.message.error).toMatchObject({ name: "APIError" })
+      }),
+    { config: (url) => ({ ...providerCfg(url), retry: { max_attempts: 1 } }) },
+  ),
+)
+
 it.live("session.processor effect tests publish retry status updates", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
