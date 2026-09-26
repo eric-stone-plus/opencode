@@ -2014,6 +2014,11 @@ export type Config = {
     max_lines?: number
     max_bytes?: number
   }
+  retry?: {
+    max_attempts?: number
+    max_elapsed_ms?: number
+    max_delay_ms?: number
+  }
   compaction?: {
     auto?: boolean
     prune?: boolean

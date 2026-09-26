@@ -146,6 +146,24 @@ export const Info = Schema.Struct({
     description:
       "Thresholds for truncating tool output. When output exceeds either limit, the full text is written to the truncation directory and a preview is returned.",
   }),
+  retry: Schema.optional(
+    Schema.Struct({
+      max_attempts: Schema.optional(PositiveInt).annotate({
+        description:
+          "Maximum automatic retries of a failed model request (default: 5, or unlimited when max_elapsed_ms is set)",
+      }),
+      max_elapsed_ms: Schema.optional(PositiveInt).annotate({
+        description:
+          "Stop retrying a failed model request once this many milliseconds have passed since its first failure. A retry whose wait would end past the budget is not scheduled.",
+      }),
+      max_delay_ms: Schema.optional(PositiveInt).annotate({
+        description:
+          "Longest backoff between retries when the provider sends no retry-after header, in milliseconds (default: 30000)",
+      }),
+    }),
+  ).annotate({
+    description: "Retry budget for transient model request failures such as rate limits, overloads and network errors",
+  }),
   compaction: Schema.optional(
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({

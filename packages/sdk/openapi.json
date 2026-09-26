@@ -21504,6 +21504,24 @@
             },
             "additionalProperties": false
           },
+          "retry": {
+            "type": "object",
+            "properties": {
+              "max_attempts": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "max_elapsed_ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "max_delay_ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
           "compaction": {
             "type": "object",
             "properties": {

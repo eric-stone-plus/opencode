@@ -1077,6 +1077,73 @@ describe("tool.shell abort", () => {
     15_000,
   )
 
+  // A background process that leaves the process group keeps stdout open after
+  // the shell exits. The tool used to wait for that pipe to close forever.
+  const setsid = `python3 -c "import os,time; os.setsid(); time.sleep(30)" & echo started`
+  // Prints once detached, so abort cannot race ahead of setsid().
+  const marked = `python3 -c "import os,time; os.setsid(); print('detached', flush=True); time.sleep(30)" &`
+  const detached = process.platform !== "win32" && Bun.which("python3") ? it.live : it.live.skip
+
+  detached(
+    "returns when a setsid background process still holds stdout",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const start = Date.now()
+          const result = yield* run({ command: setsid, timeout: 2000 })
+          expect(Date.now() - start).toBeLessThan(5000)
+          expect(result.output).toContain("started")
+          expect(result.metadata.exit).toBe(0)
+        }),
+      ),
+    15_000,
+  )
+
+  detached(
+    "times out while a setsid background process holds stdout",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const start = Date.now()
+          const result = yield* run({ command: `${setsid}; sleep 30`, timeout: 2000 })
+          expect(Date.now() - start).toBeLessThan(6000)
+          expect(result.output).toContain("started")
+          expect(result.output).toContain("shell tool terminated command after exceeding timeout")
+        }),
+      ),
+    15_000,
+  )
+
+  detached(
+    "aborts while a setsid background process holds stdout",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const controller = new AbortController()
+          const start = Date.now()
+          const result = yield* run(
+            { command: `${marked} sleep 30`, timeout: 60_000 },
+            {
+              ...ctx,
+              abort: controller.signal,
+              metadata: (input) =>
+                Effect.sync(() => {
+                  const output = (input.metadata as { output?: string })?.output
+                  if (output?.includes("detached") && !controller.signal.aborted) controller.abort()
+                }),
+            },
+          )
+          expect(Date.now() - start).toBeLessThan(6000)
+          expect(result.output).toContain("detached")
+          expect(result.output).toContain("User aborted the command")
+        }),
+      ),
+    15_000,
+  )
+
   if (process.platform !== "win32") {
     it.live("captures stderr in output", () =>
       runIn(

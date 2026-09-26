@@ -79,6 +79,11 @@ IMPORTANT:
 - Complete all necessary research and tool calls BEFORE calling this tool
 - This tool provides your final answer - no further actions are taken after calling it`
 
+// Automatic continuations after a stream failure that arrived once tools had
+// started, per user turn. Each continuation resends history with the saved
+// tool results, so no tool runs twice.
+const TOOL_STREAM_RESUME_MAX = 3
+
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
 function mcpResourceBase64Size(value: string) {
@@ -1177,6 +1182,7 @@ const layer = Layer.effect(
         )
         let structured: unknown
         let step = 0
+        let resumes = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1230,6 +1236,45 @@ const layer = Layer.effect(
             !hasToolCalls &&
             lastAssistant.parentID === lastUser.id
           ) {
+            // A reply cut at the output token limit is not a finished turn. Ask for
+            // the rest once with a follow-up user message (thinking models reject
+            // assistant prefill); if the continuation is cut off too, surface it.
+            if (lastAssistant.finish === "length" && !lastAssistant.error) {
+              const continued = msgs
+                .find((msg) => msg.info.id === lastUser.id)
+                ?.parts.some(
+                  (part) => part.type === "text" && part.synthetic && part.metadata?.output_length_continue === true,
+                )
+              if (!continued) {
+                const next = yield* sessions.updateMessage({
+                  id: MessageID.ascending(),
+                  role: "user",
+                  sessionID,
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: next.id,
+                  sessionID,
+                  type: "text",
+                  text: "Your previous response was cut off because it reached the output token limit. Continue exactly where it stopped, without repeating what you already wrote.",
+                  synthetic: true,
+                  metadata: { output_length_continue: true },
+                  time: { start: Date.now(), end: Date.now() },
+                })
+                yield* Effect.logWarning("continuing reply cut at the output token limit", { "session.id": sessionID })
+                continue
+              }
+              yield* events.publish(Session.Event.Error, {
+                sessionID,
+                error: new NamedError.Unknown({
+                  message:
+                    "The response was cut off at the output token limit again after an automatic continuation. Send a message to continue, or raise maxOutputTokens for this model.",
+                }).toObject(),
+              })
+            }
             const orphan = lastAssistantMsg?.parts.find(
               (part): part is SessionV1.ToolPart => part.type === "tool" && isOrphanedInterruptedTool(part),
             )
@@ -1432,6 +1477,27 @@ const layer = Layer.effect(
               }
             }
 
+            if (
+              result === "stop" &&
+              SessionV1.APIError.isInstance(handle.message.error) &&
+              handle.message.error.data.metadata?.retryStopped === "tool_execution_started"
+            ) {
+              if (resumes < TOOL_STREAM_RESUME_MAX) {
+                resumes++
+                yield* Effect.logWarning("continuing after stream failure once tools had started", {
+                  "session.id": sessionID,
+                  attempt: resumes,
+                })
+                yield* status.set(sessionID, {
+                  type: "retry",
+                  attempt: resumes,
+                  message: "Stream failed after tools started; continuing from saved tool results",
+                  next: Date.now(),
+                })
+                return "continue" as const
+              }
+              yield* events.publish(Session.Event.Error, { sessionID, error: handle.message.error })
+            }
             if (result === "stop") return "break" as const
             if (result === "compact") {
               yield* compaction.create({

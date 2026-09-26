@@ -22,7 +22,7 @@ import {
   ProcessId,
 } from "effect/unstable/process/ChildProcessSpawner"
 import * as NodeChildProcess from "node:child_process"
-import { PassThrough } from "node:stream"
+import { PassThrough, type Readable } from "node:stream"
 import launch from "cross-spawn"
 import { makeGlobalNode } from "./effect/app-node"
 import { filesystem, path } from "./effect/app-node-platform"
@@ -95,6 +95,26 @@ const toPlatformError = (
 }
 
 type ExitSignal = Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
+
+// How long `close` may lag behind `exit` before the stdio pipes are dropped.
+const CLOSE_GRACE_MS = 1000
+
+// Read through a PassThrough so a dropped pipe still ends the stream with all
+// buffered output: destroying the pipe itself never emits `end`.
+const readable = (
+  node: Readable,
+  drop: Array<() => void>,
+  onError: (err: unknown) => PlatformError.PlatformError,
+) => {
+  const tap = new PassThrough()
+  node.on("error", (err) => tap.destroy(toError(err)))
+  node.pipe(tap)
+  drop.push(() => {
+    node.unpipe(tap)
+    tap.end()
+  })
+  return NodeStream.fromReadable({ evaluate: () => tap, onError })
+}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -169,6 +189,7 @@ export const make = Effect.gen(function* () {
     command: ChildProcess.StandardCommand,
     proc: NodeChildProcess.ChildProcess,
     extra: ReadonlyArray<{ fd: number; config: ChildProcess.AdditionalFdConfig }>,
+    drop: Array<() => void>,
   ) {
     if (extra.length === 0) {
       return {
@@ -199,13 +220,7 @@ export const make = Effect.gen(function* () {
         case "output": {
           let stream: Stream.Stream<Uint8Array, PlatformError.PlatformError> = Stream.empty
           if (node && "read" in node) {
-            const tap = new PassThrough()
-            node.on("error", (err) => tap.destroy(toError(err)))
-            node.pipe(tap)
-            stream = NodeStream.fromReadable({
-              evaluate: () => tap,
-              onError: (err) => toPlatformError(`fromReadable(fd${x.fd})`, toError(err), command),
-            })
+            stream = readable(node, drop, (err) => toPlatformError(`fromReadable(fd${x.fd})`, toError(err), command))
           }
           if (x.config.sink) stream = Stream.transduce(stream, x.config.sink)
           outs.set(x.fd, stream)
@@ -244,18 +259,13 @@ export const make = Effect.gen(function* () {
     proc: NodeChildProcess.ChildProcess,
     out: ChildProcess.StdoutConfig,
     err: ChildProcess.StderrConfig,
+    drop: Array<() => void>,
   ) => {
     let stdout = proc.stdout
-      ? NodeStream.fromReadable({
-          evaluate: () => proc.stdout!,
-          onError: (cause) => toPlatformError("fromReadable(stdout)", toError(cause), command),
-        })
+      ? readable(proc.stdout, drop, (cause) => toPlatformError("fromReadable(stdout)", toError(cause), command))
       : Stream.empty
     let stderr = proc.stderr
-      ? NodeStream.fromReadable({
-          evaluate: () => proc.stderr!,
-          onError: (cause) => toPlatformError("fromReadable(stderr)", toError(cause), command),
-        })
+      ? readable(proc.stderr, drop, (cause) => toPlatformError("fromReadable(stderr)", toError(cause), command))
       : Stream.empty
 
     if (Sink.isSink(out.stream)) stdout = Stream.transduce(stdout, out.stream)
@@ -265,8 +275,12 @@ export const make = Effect.gen(function* () {
   }
 
   const spawn = (command: ChildProcess.StandardCommand, opts: NodeChildProcess.SpawnOptions) =>
-    Effect.callback<readonly [NodeChildProcess.ChildProcess, ExitSignal], PlatformError.PlatformError>((resume) => {
+    Effect.callback<
+      readonly [NodeChildProcess.ChildProcess, ExitSignal, Array<() => void>],
+      PlatformError.PlatformError
+    >((resume) => {
       const signal = Deferred.makeUnsafe<readonly [code: number | null, signal: NodeJS.Signals | null]>()
+      const drop: Array<() => void> = []
       const proc = launch(command.command, command.args, opts)
       let end = false
       let exit: readonly [code: number | null, signal: NodeJS.Signals | null] | undefined
@@ -275,6 +289,17 @@ export const make = Effect.gen(function* () {
       })
       proc.on("exit", (...args) => {
         exit = args
+        // `close` waits for every holder of the stdio pipes. A background process
+        // that left the process group (setsid, daemonizers) can hold them forever,
+        // which would also block kill and scope release. Settle on `exit` once the
+        // grace period passes and drop the pipes.
+        setTimeout(() => {
+          if (end) return
+          end = true
+          for (const end of drop) end()
+          for (const stream of proc.stdio) stream?.destroy()
+          Deferred.doneUnsafe(signal, Exit.succeed(args))
+        }, CLOSE_GRACE_MS).unref()
       })
       proc.on("close", (...args) => {
         if (end) return
@@ -282,7 +307,7 @@ export const make = Effect.gen(function* () {
         Deferred.doneUnsafe(signal, Exit.succeed(exit ?? args))
       })
       proc.on("spawn", () => {
-        resume(Effect.succeed([proc, signal]))
+        resume(Effect.succeed([proc, signal, drop]))
       })
       return Effect.sync(() => {
         proc.kill("SIGTERM")
@@ -370,7 +395,7 @@ export const make = Effect.gen(function* () {
           const extra = fds(command.options)
           const dir = yield* cwd(command.options)
 
-          const [proc, signal] = yield* Effect.acquireRelease(
+          const [proc, signal, drop] = yield* Effect.acquireRelease(
             spawn(command, {
               cwd: dir,
               env: env(command.options),
@@ -402,8 +427,8 @@ export const make = Effect.gen(function* () {
             }),
           )
 
-          const fd = yield* setupFds(command, proc, extra)
-          const out = setupOutput(command, proc, sout, serr)
+          const fd = yield* setupFds(command, proc, extra, drop)
+          const out = setupOutput(command, proc, sout, serr, drop)
           let ref = true
           return makeHandle({
             pid: ProcessId(proc.pid!),

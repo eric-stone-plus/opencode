@@ -52,7 +52,7 @@ import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Format } from "../../src/format"
 import { TestInstance } from "../fixture/fixture"
 import { awaitWithTimeout, pollWithTimeout, testEffect } from "../lib/effect"
-import { reply, TestLLMServer } from "../lib/llm-server"
+import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -930,6 +930,351 @@ it.instance("glob tool keeps instance context during prompt runs", () =>
     expect(tool.state.output).toContain(file)
     expect(tool.state.output).not.toContain("No context found for instance")
     expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+  }),
+)
+
+// Anthropic-compatible provider serving a non-Claude model, like Qwen on Bailian.
+const qwen = { providerID: ProviderV2.ID.make("bailian"), modelID: ModelV2.ID.make("qwen-test") }
+
+function anthropicCfg(url: string) {
+  return {
+    enabled_providers: ["bailian"],
+    provider: {
+      bailian: {
+        name: "Bailian",
+        npm: "@ai-sdk/anthropic",
+        env: [],
+        models: {
+          "qwen-test": {
+            id: "qwen-test",
+            name: "Qwen Test",
+            attachment: false,
+            reasoning: true,
+            temperature: false,
+            tool_call: true,
+            release_date: "2025-01-01",
+            limit: { context: 100000, output: 10000 },
+            cost: { input: 0, output: 0 },
+            options: {},
+          },
+        },
+        options: { apiKey: "test-key", baseURL: url },
+      },
+    },
+  }
+}
+
+// Model requests only; title generation also goes through the mock.
+const modelRequests = (hits: { body: Record<string, unknown> }[]) =>
+  hits.map((hit) => hit.body).filter((body) => !JSON.stringify(body).includes("Generate a title for this conversation"))
+
+const thinkingBlocks = (body: Record<string, unknown>) =>
+  (body.messages as { role: string; content: unknown }[]).flatMap((msg) =>
+    Array.isArray(msg.content)
+      ? msg.content.filter((block: { type: string }) => block.type === "thinking").map((block: { thinking: string }) => block.thinking)
+      : [],
+  )
+
+it.instance("loop drops thinking from earlier user turns on Anthropic-protocol models", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Reasoning replay",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "first" }],
+    })
+    yield* llm.push(reply().reason("think-one-a").tool("glob", { pattern: "**/*.txt" }))
+    yield* llm.push(reply().reason("think-one-b").text("done one").stop())
+    yield* prompt.loop({ sessionID: session.id })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "second" }],
+    })
+    yield* llm.push(reply().reason("think-two").text("done two").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(3)
+    expect(requests.every((body) => body.model === "qwen-test")).toBe(true)
+    // Inside the tool loop the previous step's thinking is still replayed.
+    expect(thinkingBlocks(requests[1])).toStrictEqual(["think-one-a"])
+    // After the next user message, none of the first turn's thinking is resent.
+    expect(thinkingBlocks(requests[2])).toStrictEqual([])
+    expect(JSON.stringify(requests[2].messages)).toContain("done one")
+    expect(result.parts.some((part) => part.type === "text" && part.text === "done two")).toBe(true)
+  }),
+)
+
+it.instance("loop retries a stream cut before message_stop in place", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Truncated stream" })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.push(reply().reason("thinking").text("partial").truncate())
+    yield* llm.push(reply().text("complete").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(2)
+    // Retried in place by the processor's backoff policy. Previously "other" was
+    // mapped to "unknown" and the loop fired a fresh request at once, leaving the
+    // cut reply behind unfinished and never bounding the attempts.
+    const replies = (yield* sessions.messages({ sessionID: session.id })).filter((msg) => msg.info.role === "assistant")
+    expect(replies).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.finish).toBe("stop")
+      expect(result.info.error).toBeUndefined()
+    }
+    expect(result.parts.some((part) => part.type === "text" && part.text === "complete")).toBe(true)
+  }),
+)
+
+it.instance("loop continues once when a reply hits the output token limit", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Output limit" })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "write a lot" }],
+    })
+    yield* llm.push(reply().text("part one").length())
+    yield* llm.push(reply().text("part two").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(2)
+    // The cut reply stays in history and the follow-up asks for the rest.
+    const messages = requests[1].messages as { role: string; content: unknown }[]
+    expect(JSON.stringify(messages)).toContain("part one")
+    expect(messages.at(-1)?.role).toBe("user")
+    expect(JSON.stringify(messages.at(-1))).toContain("output token limit")
+    expect(result.parts.some((part) => part.type === "text" && part.text === "part two")).toBe(true)
+  }),
+)
+
+it.instance("loop surfaces a second output token limit cut as a session error", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Output limit twice" })
+    const errors: string[] = []
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "write a lot" }],
+    })
+    yield* llm.push(reply().text("part one").length())
+    yield* llm.push(reply().text("part two").length())
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(2)
+    expect(errors.some((error) => error.includes("output token limit again"))).toBe(true)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.finish).toBe("length")
+  }),
+)
+
+// Anthropic events for a bash tool call whose stream fails after the call is
+// complete: the tool starts, then the connection drops before message_stop.
+function toolThenStreamError(command: string, wait: PromiseLike<unknown> | (() => PromiseLike<unknown>), id = "toolu_1") {
+  return raw({
+    head: [
+      {
+        type: "message_start",
+        message: { id: "msg_tool", type: "message", role: "assistant", model: "qwen-test", content: [], usage: { input_tokens: 1, output_tokens: 0 } },
+      },
+      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name: "bash", input: {} } },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify({ command, description: "append marker" }) },
+      },
+      { type: "content_block_stop", index: 0 },
+    ],
+    wait,
+    tail: [{ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }],
+  })
+}
+
+unix("loop continues from saved tool results after a late stream error", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Late stream error",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const marker = path.join(dir, "runs.txt")
+    const ran = defer<void>()
+    const errors: unknown[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type === Session.Event.Error.type) errors.push(event.data)
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "append once" }],
+    })
+    yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, ran.promise))
+    yield* llm.push(reply().text("done").stop())
+    const loop = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+    // Release the stream error only after the tool has actually run.
+    yield* pollWithTimeout(
+      Effect.promise(() => Bun.file(marker).exists()).pipe(Effect.map((exists) => (exists ? true : undefined))),
+      "tool never ran",
+      "10 seconds",
+    )
+    ran.resolve()
+    const result = yield* Fiber.join(loop)
+    yield* off
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(2)
+    // The tool ran exactly once and its saved result went into the continuation.
+    expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("run\n")
+    const replay = JSON.stringify(requests[1].messages)
+    expect(replay).toContain("toolu_1")
+    expect(replay).toContain("tool_result")
+    expect(errors).toHaveLength(0)
+    expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+  }),
+)
+
+unix("loop gives up after a bounded number of late stream errors", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Late stream errors",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const marker = path.join(dir, "runs.txt")
+    const errors: string[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "append" }],
+    })
+    // Each attempt runs its own new tool call. The delay starts when the response
+    // is served, so every tool finishes before its stream fails.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 500))
+    for (const n of [1, 2, 3, 4]) yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, settle, `toolu_${n}`))
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    // The first attempt plus three automatic continuations, then a visible error.
+    expect(modelRequests(yield* llm.hits)).toHaveLength(4)
+    expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("run\nrun\nrun\nrun\n")
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("tool_execution_started")
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.error).toBeDefined()
+  }),
+)
+
+it.instance("loop stops on a Bailian moderation rejection with recovery guidance", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Moderation" })
+    const errors: string[] = []
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.error(
+      400,
+      [
+        "event:error",
+        `data:${JSON.stringify({
+          request_id: "req-1",
+          code: "InvalidParameter",
+          message: `data: ${JSON.stringify({ error: { code: "data_inspection_failed", message: "Input text data may contain inappropriate content." } })}`,
+        })}`,
+      ].join("\n"),
+    )
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.error).toMatchObject({
+        name: "APIError",
+        data: { isRetryable: false, message: expect.stringContaining("/undo") },
+      })
+    }
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("data_inspection_failed")
   }),
 )
 

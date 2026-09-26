@@ -1,7 +1,9 @@
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import type { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
+import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
 import { isRecord } from "@/util/record"
 
@@ -44,7 +46,12 @@ function cap(ms: number) {
   return Math.min(ms, RETRY_MAX_DELAY)
 }
 
-export function delay(attempt: number, error?: SessionV1.APIError, random = Math.random()) {
+export function delay(
+  attempt: number,
+  error?: SessionV1.APIError,
+  random = Math.random(),
+  maxDelay?: number,
+) {
   if (error) {
     const headers = error.data.responseHeaders
     if (headers) {
@@ -70,11 +77,11 @@ export function delay(attempt: number, error?: SessionV1.APIError, random = Math
         }
       }
 
-      return cap(exponential(attempt, random))
+      return cap(Math.min(exponential(attempt, random), maxDelay ?? RETRY_MAX_DELAY))
     }
   }
 
-  return cap(Math.min(exponential(attempt, random), RETRY_MAX_DELAY_NO_HEADERS))
+  return cap(Math.min(exponential(attempt, random), maxDelay ?? RETRY_MAX_DELAY_NO_HEADERS))
 }
 
 function exponential(attempt: number, random: number) {
@@ -86,6 +93,9 @@ export function retryable(error: Err, provider: string) {
   // context overflow errors should not be retried
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
+    // Checked first: the moderation body carries request IDs whose digits can
+    // match the status-code patterns below.
+    if (ProviderError.isModerationRejection(error.data.responseBody)) return undefined
     const status = error.data.statusCode
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
@@ -184,15 +194,26 @@ export function policy(opts: {
   provider: string
   parse: (error: unknown) => Err
   set: (input: { attempt: number; message: string; action?: Retryable["action"]; next: number }) => Effect.Effect<void>
+  budget?: ConfigV1.Info["retry"]
 }) {
+  // A wall-clock budget alone means "keep trying until it runs out".
+  const attempts =
+    opts.budget?.max_attempts ?? (opts.budget?.max_elapsed_ms !== undefined ? Infinity : RETRY_MAX_RETRIES)
   return Schedule.fromStepWithMetadata(
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
       const error = opts.parse(meta.input)
       const retry = retryable(error, opts.provider)
       if (!retry) return Cause.done(meta.attempt)
-      if (meta.attempt > RETRY_MAX_RETRIES) return Cause.done(meta.attempt)
+      if (meta.attempt > attempts) return Cause.done(meta.attempt)
+      const wait = delay(
+        meta.attempt,
+        SessionV1.APIError.isInstance(error) ? error : undefined,
+        Math.random(),
+        opts.budget?.max_delay_ms,
+      )
+      if (opts.budget?.max_elapsed_ms !== undefined && meta.elapsed + wait > opts.budget.max_elapsed_ms)
+        return Cause.done(meta.attempt)
       return Effect.gen(function* () {
-        const wait = delay(meta.attempt, SessionV1.APIError.isInstance(error) ? error : undefined)
         const now = yield* Clock.currentTimeMillis
         yield* opts.set({
           attempt: meta.attempt,

@@ -618,18 +618,18 @@ const layer = Layer.effect(
           stack: e instanceof Error ? e.stack : undefined,
         })
         const parsed = parse(e)
-        const error =
-          toolsStarted && SessionRetry.retryable(parsed, input.model.providerID)
-            ? new SessionV1.APIError({
-                ...(SessionV1.APIError.isInstance(parsed) ? parsed.data : {}),
-                message: `${errorMessage(e)}\n\nAutomatic retry stopped because a tool already started executing. Continue the session to proceed from the saved history.`,
-                isRetryable: false,
-                metadata: {
-                  ...(SessionV1.APIError.isInstance(parsed) ? parsed.data.metadata : {}),
-                  retryStopped: "tool_execution_started",
-                },
-              }).toObject()
-            : parsed
+        const stopped = toolsStarted && SessionRetry.retryable(parsed, input.model.providerID) !== undefined
+        const error = stopped
+          ? new SessionV1.APIError({
+              ...(SessionV1.APIError.isInstance(parsed) ? parsed.data : {}),
+              message: `${errorMessage(e)}\n\nThe request was not retried because a tool had already started executing; its results are kept in the session history.`,
+              isRetryable: false,
+              metadata: {
+                ...(SessionV1.APIError.isInstance(parsed) ? parsed.data.metadata : {}),
+                retryStopped: "tool_execution_started",
+              },
+            }).toObject()
+          : parsed
         if (SessionV1.ContextOverflowError.isInstance(error)) {
           if ((yield* config.get()).compaction?.auto === false && !ctx.assistantMessage.summary) {
             ctx.assistantMessage.error = error
@@ -643,6 +643,9 @@ const layer = Layer.effect(
           return
         }
         ctx.assistantMessage.error = error
+        // The session loop continues from the saved tool results and reports the
+        // error itself only if it gives up.
+        if (stopped) return
         yield* events.publish(Session.Event.Error, {
           sessionID: ctx.assistantMessage.sessionID,
           error: ctx.assistantMessage.error,
@@ -655,8 +658,9 @@ const layer = Layer.effect(
           "session.id": input.sessionID,
           messageID: input.assistantMessage.id,
         })
+        const cfg = yield* config.get()
         ctx.needsCompaction = false
-        ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
         let toolsStarted = false
         const tools = Object.fromEntries(
           Object.entries(streamInput.tools).map(([name, item]) => {
@@ -709,6 +713,7 @@ const layer = Layer.effect(
               while: () => !toolsStarted,
               schedule: SessionRetry.policy({
                 provider: input.model.providerID,
+                budget: cfg.retry,
                 parse,
                 set: (info) => {
                   return status.set(ctx.sessionID, {

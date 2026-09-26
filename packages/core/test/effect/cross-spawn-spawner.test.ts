@@ -276,6 +276,46 @@ describe("cross-spawn spawner", () => {
       }),
     )
 
+    // `detached: true` makes the grandchild call setsid(), so group kills miss it
+    // while it keeps the inherited stdout pipe open.
+    const holder = (tail: string) =>
+      js(
+        `const c = require("child_process").spawn("sleep", ["30"], { detached: true, stdio: "inherit" }); c.unref(); console.log(c.pid); ${tail}`,
+      )
+
+    fx.effect(
+      "settles exit when a detached grandchild holds stdout",
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+
+        const started = Date.now()
+        const handle = yield* holder("")
+        const out = yield* decodeByteStream(handle.stdout)
+        const code = yield* handle.exitCode
+        process.kill(Number(out), "SIGKILL")
+
+        expect(Date.now() - started).toBeLessThan(5_000)
+        expect(Number(out)).toBeGreaterThan(0)
+        expect(code).toBe(ChildProcessSpawner.ExitCode(0))
+      }),
+    )
+
+    fx.effect(
+      "kill returns when a detached grandchild holds stdout",
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+
+        const handle = yield* holder("setInterval(() => {}, 10_000)")
+        const pid = yield* handle.stdout.pipe(Stream.decodeText, Stream.runHead)
+        const started = Date.now()
+        yield* handle.kill({ forceKillAfter: 500 })
+        yield* Effect.exit(handle.exitCode)
+        if (pid._tag === "Some") process.kill(Number(pid.value), "SIGKILL")
+
+        expect(Date.now() - started).toBeLessThan(5_000)
+      }),
+    )
+
     fx.effect(
       "isRunning reflects process state",
       Effect.gen(function* () {

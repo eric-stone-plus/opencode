@@ -14,6 +14,7 @@ type Flow =
   | { type: "tool-start"; id: string; name: string }
   | { type: "tool-args"; text: string }
   | { type: "usage"; usage: Usage }
+  | { type: "finish"; reason: string }
 
 type Hit = {
   url: URL
@@ -36,10 +37,12 @@ type Sse = {
   type: "sse"
   head: unknown[]
   tail: unknown[]
-  wait?: PromiseLike<unknown>
+  // A function is called when the response is served, so each delay starts then.
+  wait?: PromiseLike<unknown> | (() => PromiseLike<unknown>)
   hang?: boolean
   error?: unknown
   reset?: boolean
+  truncate?: boolean
 }
 
 type HttpError = {
@@ -316,6 +319,10 @@ function flow(item: Sse) {
       }
     }
 
+    if (choice && "finish_reason" in choice && typeof choice.finish_reason === "string") {
+      out.push({ type: "finish", reason: choice.finish_reason })
+    }
+
     if (part && typeof part === "object" && "usage" in part && part.usage && typeof part.usage === "object") {
       const raw = part.usage as Record<string, unknown>
       if (typeof raw.prompt_tokens === "number" && typeof raw.completion_tokens === "number") {
@@ -388,6 +395,7 @@ function responses(item: Sse, model: string) {
       continue
     }
 
+    if (part.type === "finish") continue
     usage = part.usage
   }
 
@@ -409,19 +417,97 @@ function responses(item: Sse, model: string) {
   return { ...item, head: lines, tail: [] } satisfies Sse
 }
 
+const STOP_REASONS: Record<string, string> = {
+  stop: "end_turn",
+  tool_calls: "tool_use",
+  length: "max_tokens",
+  content_filter: "refusal",
+}
+
+// Anthropic Messages events, shaped like Qwen on Bailian: thinking blocks close
+// with an empty signature. `truncate` ends the body cleanly before message_stop.
+function messages(item: Sse, model: string) {
+  // raw() items that already carry Anthropic events pass through untouched.
+  const first = item.head[0]
+  if (first && typeof first === "object" && "type" in first && first.type === "message_start") return item
+  const lines: unknown[] = []
+  const parts = flow(item)
+  const usage = parts.findLast((part) => part.type === "usage")?.usage
+  const finish = parts.findLast((part) => part.type === "finish")?.reason
+  let index = -1
+  let open: "thinking" | "text" | "tool_use" | undefined
+
+  const close = () => {
+    if (!open) return
+    if (open === "thinking") {
+      lines.push({ type: "content_block_delta", index, delta: { type: "signature_delta", signature: "" } })
+    }
+    lines.push({ type: "content_block_stop", index })
+    open = undefined
+  }
+  const start = (block: Record<string, unknown> & { type: "thinking" | "text" | "tool_use" }) => {
+    close()
+    index += 1
+    open = block.type
+    lines.push({ type: "content_block_start", index, content_block: block })
+  }
+
+  lines.push({
+    type: "message_start",
+    message: {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model,
+      content: [],
+      stop_reason: null,
+      usage: { input_tokens: usage?.input ?? 1, output_tokens: 0 },
+    },
+  })
+  for (const part of parts) {
+    if (part.type === "reason") {
+      if (open !== "thinking") start({ type: "thinking", thinking: "", signature: "" })
+      lines.push({ type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: part.text } })
+    }
+    if (part.type === "text") {
+      if (open !== "text") start({ type: "text", text: "" })
+      lines.push({ type: "content_block_delta", index, delta: { type: "text_delta", text: part.text } })
+    }
+    if (part.type === "tool-start") start({ type: "tool_use", id: part.id, name: part.name, input: {} })
+    if (part.type === "tool-args") {
+      lines.push({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: part.text } })
+    }
+  }
+  if (!item.hang && !item.error && !item.truncate) {
+    close()
+    lines.push({
+      type: "message_delta",
+      delta: { stop_reason: finish ? (STOP_REASONS[finish] ?? finish) : "end_turn", stop_sequence: null },
+      usage: { output_tokens: usage?.output ?? 1 },
+    })
+    lines.push({ type: "message_stop" })
+  }
+  return { ...item, head: lines, tail: [] } satisfies Sse
+}
+
 function modelFrom(body: unknown) {
   if (!body || typeof body !== "object") return "test-model"
   if (!("model" in body) || typeof body.model !== "string") return "test-model"
   return body.model
 }
 
-function send(item: Sse) {
+function send(item: Sse, terminator = true) {
   const head = bytes(item.head)
-  const tail = bytes([...item.tail, ...(item.hang || item.error ? [] : [done])])
+  const tail = bytes([...item.tail, ...(item.hang || item.error || item.truncate || !terminator ? [] : [done])])
   const empty = Stream.fromIterable<Uint8Array>([])
   const wait = item.wait
   const body: Stream.Stream<Uint8Array, unknown> = wait
-    ? Stream.concat(head, Stream.fromEffect(Effect.promise(() => wait)).pipe(Stream.flatMap(() => tail)))
+    ? Stream.concat(
+        head,
+        Stream.fromEffect(Effect.promise(() => (typeof wait === "function" ? wait() : wait))).pipe(
+          Stream.flatMap(() => tail),
+        ),
+      )
     : Stream.concat(head, tail)
   let end: Stream.Stream<Uint8Array, unknown> = empty
   if (item.error) end = Stream.concat(empty, Stream.fail(item.error))
@@ -443,6 +529,7 @@ const reset = Effect.fn("TestLLMServer.reset")(function* (item: Sse) {
 })
 
 function fail(item: HttpError) {
+  if (typeof item.body === "string") return HttpServerResponse.text(item.body, { status: item.status })
   return HttpServerResponse.text(JSON.stringify(item.body), {
     status: item.status,
     contentType: "application/json",
@@ -458,6 +545,7 @@ export class Reply {
   #hang = false
   #error: unknown
   #reset = false
+  #truncate = false
   #seq = 0
 
   #id() {
@@ -548,6 +636,24 @@ export class Reply {
     return this
   }
 
+  length() {
+    this.#finish = "length"
+    this.#hang = false
+    this.#error = undefined
+    this.#reset = false
+    return this
+  }
+
+  // End the body cleanly without a finish event, like a proxy cutting the stream.
+  truncate() {
+    this.#finish = undefined
+    this.#hang = false
+    this.#error = undefined
+    this.#reset = false
+    this.#truncate = true
+    return this
+  }
+
   item(): Item {
     return {
       type: "sse",
@@ -557,6 +663,7 @@ export class Reply {
       hang: this.#hang,
       error: this.#error,
       reset: this.#reset,
+      truncate: this.#truncate,
     }
   }
 }
@@ -577,10 +684,11 @@ export function raw(input: {
   chunks?: unknown[]
   head?: unknown[]
   tail?: unknown[]
-  wait?: PromiseLike<unknown>
+  wait?: PromiseLike<unknown> | (() => PromiseLike<unknown>)
   hang?: boolean
   error?: unknown
   reset?: boolean
+  truncate?: boolean
 }): Item {
   return {
     type: "sse",
@@ -590,6 +698,7 @@ export function raw(input: {
     hang: input.hang,
     error: input.error,
     reset: input.reset,
+    truncate: input.truncate,
   }
 }
 
@@ -669,7 +778,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         return first.item
       }
 
-      const handle = Effect.fn("TestLLMServer.handle")(function* (mode: "chat" | "responses") {
+      const handle = Effect.fn("TestLLMServer.handle")(function* (mode: "chat" | "responses" | "messages") {
         const req = yield* HttpServerRequest.HttpServerRequest
         const body = yield* req.json.pipe(Effect.orElseSucceed(() => ({})))
         const current = hit(req.originalUrl, body)
@@ -678,6 +787,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("E2E Title"), finishLine("stop")] }
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
+          if (mode === "messages") return send(messages(auto, modelFrom(body)), false)
           return send(auto)
         }
         const next = pull(current)
@@ -686,12 +796,14 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("ok"), finishLine("stop")] }
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
+          if (mode === "messages") return send(messages(auto, modelFrom(body)), false)
           return send(auto)
         }
         hits = [...hits, current]
         yield* notify()
         if (next.type !== "sse") return fail(next)
         if (mode === "responses") return send(responses(next, modelFrom(body)))
+        if (mode === "messages") return send(messages(next, modelFrom(body)), false)
         if (next.reset) {
           yield* reset(next)
           return HttpServerResponse.empty()
@@ -701,6 +813,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
 
       yield* router.add("POST", "/v1/chat/completions", handle("chat"))
       yield* router.add("POST", "/v1/responses", handle("responses"))
+      yield* router.add("POST", "/v1/messages", handle("messages"))
 
       yield* server.serve(router.asHttpEffect())
 
