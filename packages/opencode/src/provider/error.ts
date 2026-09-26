@@ -20,6 +20,18 @@ export class ResponseStreamError extends Error {
   }
 }
 
+// Bailian (DashScope) input moderation. Every retry resends the same history,
+// so the session cannot recover without removing the flagged content.
+export const MODERATION_MESSAGE =
+  "The provider's content moderation rejected this request's input (data_inspection_failed). " +
+  "Resending the same history will fail the same way, so it was not retried. " +
+  "Run /undo to remove the last turn and its tool output, then continue without the flagged content. " +
+  "/compact can help when the flagged text is in older history, but the summary request may be rejected too."
+
+export function isModerationRejection(value: unknown) {
+  return typeof value === "string" && value.includes("data_inspection_failed")
+}
+
 function isOpenAiErrorRetryable(e: APICallError) {
   const status = e.statusCode
   if (!status) return e.isRetryable
@@ -107,6 +119,10 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   const responseBody = JSON.stringify(body)
   if (body.type !== "error") return
 
+  if (isModerationRejection(responseBody)) {
+    return { type: "api_error", message: MODERATION_MESSAGE, isRetryable: false, responseBody }
+  }
+
   switch (body?.error?.code) {
     case "context_length_exceeded":
       return {
@@ -181,6 +197,17 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
   }
 
   const metadata = input.error.url ? { url: input.error.url } : undefined
+  if (isModerationRejection(input.error.responseBody) || isModerationRejection(m)) {
+    return {
+      type: "api_error",
+      message: MODERATION_MESSAGE,
+      statusCode: input.error.statusCode,
+      isRetryable: false,
+      responseHeaders: input.error.responseHeaders,
+      responseBody: input.error.responseBody,
+      metadata: { ...metadata, code: "data_inspection_failed" },
+    }
+  }
   return {
     type: "api_error",
     message: m,

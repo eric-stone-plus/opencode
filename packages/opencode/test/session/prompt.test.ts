@@ -1229,6 +1229,55 @@ unix("loop gives up after a bounded number of late stream errors", () =>
   }),
 )
 
+it.instance("loop stops on a Bailian moderation rejection with recovery guidance", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Moderation" })
+    const errors: string[] = []
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.error(
+      400,
+      [
+        "event:error",
+        `data:${JSON.stringify({
+          request_id: "req-1",
+          code: "InvalidParameter",
+          message: `data: ${JSON.stringify({ error: { code: "data_inspection_failed", message: "Input text data may contain inappropriate content." } })}`,
+        })}`,
+      ].join("\n"),
+    )
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.error).toMatchObject({
+        name: "APIError",
+        data: { isRetryable: false, message: expect.stringContaining("/undo") },
+      })
+    }
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("data_inspection_failed")
+  }),
+)
+
 it.instance("loop continues when finish is stop but assistant has tool parts", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

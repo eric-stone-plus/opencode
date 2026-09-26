@@ -2,6 +2,7 @@ import type { NamedError } from "@opencode-ai/core/util/error"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
+import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
 import { isRecord } from "@/util/record"
 
@@ -86,6 +87,9 @@ export function retryable(error: Err, provider: string) {
   // context overflow errors should not be retried
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
+    // Checked first: the moderation body carries request IDs whose digits can
+    // match the status-code patterns below.
+    if (ProviderError.isModerationRejection(error.data.responseBody)) return undefined
     const status = error.data.statusCode
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
