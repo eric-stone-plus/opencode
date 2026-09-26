@@ -1230,6 +1230,45 @@ const layer = Layer.effect(
             !hasToolCalls &&
             lastAssistant.parentID === lastUser.id
           ) {
+            // A reply cut at the output token limit is not a finished turn. Ask for
+            // the rest once with a follow-up user message (thinking models reject
+            // assistant prefill); if the continuation is cut off too, surface it.
+            if (lastAssistant.finish === "length" && !lastAssistant.error) {
+              const continued = msgs
+                .find((msg) => msg.info.id === lastUser.id)
+                ?.parts.some(
+                  (part) => part.type === "text" && part.synthetic && part.metadata?.output_length_continue === true,
+                )
+              if (!continued) {
+                const next = yield* sessions.updateMessage({
+                  id: MessageID.ascending(),
+                  role: "user",
+                  sessionID,
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: next.id,
+                  sessionID,
+                  type: "text",
+                  text: "Your previous response was cut off because it reached the output token limit. Continue exactly where it stopped, without repeating what you already wrote.",
+                  synthetic: true,
+                  metadata: { output_length_continue: true },
+                  time: { start: Date.now(), end: Date.now() },
+                })
+                yield* Effect.logWarning("continuing reply cut at the output token limit", { "session.id": sessionID })
+                continue
+              }
+              yield* events.publish(Session.Event.Error, {
+                sessionID,
+                error: new NamedError.Unknown({
+                  message:
+                    "The response was cut off at the output token limit again after an automatic continuation. Send a message to continue, or raise maxOutputTokens for this model.",
+                }).toObject(),
+              })
+            }
             const orphan = lastAssistantMsg?.parts.find(
               (part): part is SessionV1.ToolPart => part.type === "tool" && isOrphanedInterruptedTool(part),
             )

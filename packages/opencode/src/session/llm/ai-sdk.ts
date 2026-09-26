@@ -88,6 +88,16 @@ export function toLLMEvents(
     case "finish-step":
       if (event.rawFinishReason === "network_error")
         return Effect.fail(new ProviderError.ResponseStreamError("Provider finish_reason: network_error"))
+      // A body that ends without the provider's finish event (e.g. an Anthropic
+      // stream cut before message_stop) reports "other" with no raw reason and no
+      // usage. Retry it instead of treating the partial reply as a finished turn.
+      if (
+        event.finishReason === "other" &&
+        event.rawFinishReason === undefined &&
+        !event.usage?.inputTokens &&
+        !event.usage?.outputTokens
+      )
+        return Effect.fail(new ProviderError.ResponseStreamError("Provider stream ended before the response finished"))
       return Effect.sync(() => {
         const original = providerMetadata(event.providerMetadata)
         const metadata =

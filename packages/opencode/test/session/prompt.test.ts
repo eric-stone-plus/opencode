@@ -1018,6 +1018,102 @@ it.instance("loop drops thinking from earlier user turns on Anthropic-protocol m
   }),
 )
 
+it.instance("loop retries a stream cut before message_stop in place", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Truncated stream" })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.push(reply().reason("thinking").text("partial").truncate())
+    yield* llm.push(reply().text("complete").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(2)
+    // Retried in place by the processor's backoff policy. Previously "other" was
+    // mapped to "unknown" and the loop fired a fresh request at once, leaving the
+    // cut reply behind unfinished and never bounding the attempts.
+    const replies = (yield* sessions.messages({ sessionID: session.id })).filter((msg) => msg.info.role === "assistant")
+    expect(replies).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.finish).toBe("stop")
+      expect(result.info.error).toBeUndefined()
+    }
+    expect(result.parts.some((part) => part.type === "text" && part.text === "complete")).toBe(true)
+  }),
+)
+
+it.instance("loop continues once when a reply hits the output token limit", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Output limit" })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "write a lot" }],
+    })
+    yield* llm.push(reply().text("part one").length())
+    yield* llm.push(reply().text("part two").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(2)
+    // The cut reply stays in history and the follow-up asks for the rest.
+    const messages = requests[1].messages as { role: string; content: unknown }[]
+    expect(JSON.stringify(messages)).toContain("part one")
+    expect(messages.at(-1)?.role).toBe("user")
+    expect(JSON.stringify(messages.at(-1))).toContain("output token limit")
+    expect(result.parts.some((part) => part.type === "text" && part.text === "part two")).toBe(true)
+  }),
+)
+
+it.instance("loop surfaces a second output token limit cut as a session error", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(anthropicCfg)
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Output limit twice" })
+    const errors: string[] = []
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "write a lot" }],
+    })
+    yield* llm.push(reply().text("part one").length())
+    yield* llm.push(reply().text("part two").length())
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(2)
+    expect(errors.some((error) => error.includes("output token limit again"))).toBe(true)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.finish).toBe("length")
+  }),
+)
+
 it.instance("loop continues when finish is stop but assistant has tool parts", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)
