@@ -931,7 +931,7 @@ it.live("session.processor does not replay completed tools after a stream failur
         expect(value).toBe("stop")
         expect(handle.message.error).toMatchObject({
           name: "APIError",
-          data: { message: expect.stringContaining("Automatic retry stopped"), isRetryable: false },
+          data: { message: expect.stringContaining("not retried because a tool had already started"), isRetryable: false },
         })
         expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
         expect(parts.find((part) => part.type === "tool")?.state.status).toBe("completed")
@@ -1035,7 +1035,7 @@ it.live("session.processor does not replay tools still running when a stream fai
         expect(value).toBe("stop")
         expect(handle.message.error).toMatchObject({
           name: "APIError",
-          data: { message: expect.stringContaining("Automatic retry stopped"), isRetryable: false },
+          data: { message: expect.stringContaining("not retried because a tool had already started"), isRetryable: false },
         })
         expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
         expect(parts.find((part) => part.type === "tool")?.state.status).toBe("error")

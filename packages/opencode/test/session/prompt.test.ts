@@ -52,7 +52,7 @@ import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Format } from "../../src/format"
 import { TestInstance } from "../fixture/fixture"
 import { awaitWithTimeout, pollWithTimeout, testEffect } from "../lib/effect"
-import { reply, TestLLMServer } from "../lib/llm-server"
+import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -1111,6 +1111,121 @@ it.instance("loop surfaces a second output token limit cut as a session error", 
     expect(errors.some((error) => error.includes("output token limit again"))).toBe(true)
     expect(result.info.role).toBe("assistant")
     if (result.info.role === "assistant") expect(result.info.finish).toBe("length")
+  }),
+)
+
+// Anthropic events for a bash tool call whose stream fails after the call is
+// complete: the tool starts, then the connection drops before message_stop.
+function toolThenStreamError(command: string, wait: PromiseLike<unknown> | (() => PromiseLike<unknown>), id = "toolu_1") {
+  return raw({
+    head: [
+      {
+        type: "message_start",
+        message: { id: "msg_tool", type: "message", role: "assistant", model: "qwen-test", content: [], usage: { input_tokens: 1, output_tokens: 0 } },
+      },
+      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name: "bash", input: {} } },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify({ command, description: "append marker" }) },
+      },
+      { type: "content_block_stop", index: 0 },
+    ],
+    wait,
+    tail: [{ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }],
+  })
+}
+
+unix("loop continues from saved tool results after a late stream error", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Late stream error",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const marker = path.join(dir, "runs.txt")
+    const ran = defer<void>()
+    const errors: unknown[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type === Session.Event.Error.type) errors.push(event.data)
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "append once" }],
+    })
+    yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, ran.promise))
+    yield* llm.push(reply().text("done").stop())
+    const loop = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+    // Release the stream error only after the tool has actually run.
+    yield* pollWithTimeout(
+      Effect.promise(() => Bun.file(marker).exists()).pipe(Effect.map((exists) => (exists ? true : undefined))),
+      "tool never ran",
+      "10 seconds",
+    )
+    ran.resolve()
+    const result = yield* Fiber.join(loop)
+    yield* off
+
+    const requests = modelRequests(yield* llm.hits)
+    expect(requests).toHaveLength(2)
+    // The tool ran exactly once and its saved result went into the continuation.
+    expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("run\n")
+    const replay = JSON.stringify(requests[1].messages)
+    expect(replay).toContain("toolu_1")
+    expect(replay).toContain("tool_result")
+    expect(errors).toHaveLength(0)
+    expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+  }),
+)
+
+unix("loop gives up after a bounded number of late stream errors", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Late stream errors",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const marker = path.join(dir, "runs.txt")
+    const errors: string[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "append" }],
+    })
+    // Each attempt runs its own new tool call. The delay starts when the response
+    // is served, so every tool finishes before its stream fails.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 500))
+    for (const n of [1, 2, 3, 4]) yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, settle, `toolu_${n}`))
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    // The first attempt plus three automatic continuations, then a visible error.
+    expect(modelRequests(yield* llm.hits)).toHaveLength(4)
+    expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("run\nrun\nrun\nrun\n")
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("tool_execution_started")
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.error).toBeDefined()
   }),
 )
 

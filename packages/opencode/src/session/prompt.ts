@@ -79,6 +79,11 @@ IMPORTANT:
 - Complete all necessary research and tool calls BEFORE calling this tool
 - This tool provides your final answer - no further actions are taken after calling it`
 
+// Automatic continuations after a stream failure that arrived once tools had
+// started, per user turn. Each continuation resends history with the saved
+// tool results, so no tool runs twice.
+const TOOL_STREAM_RESUME_MAX = 3
+
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
 function mcpResourceBase64Size(value: string) {
@@ -1177,6 +1182,7 @@ const layer = Layer.effect(
         )
         let structured: unknown
         let step = 0
+        let resumes = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1471,6 +1477,27 @@ const layer = Layer.effect(
               }
             }
 
+            if (
+              result === "stop" &&
+              SessionV1.APIError.isInstance(handle.message.error) &&
+              handle.message.error.data.metadata?.retryStopped === "tool_execution_started"
+            ) {
+              if (resumes < TOOL_STREAM_RESUME_MAX) {
+                resumes++
+                yield* Effect.logWarning("continuing after stream failure once tools had started", {
+                  "session.id": sessionID,
+                  attempt: resumes,
+                })
+                yield* status.set(sessionID, {
+                  type: "retry",
+                  attempt: resumes,
+                  message: "Stream failed after tools started; continuing from saved tool results",
+                  next: Date.now(),
+                })
+                return "continue" as const
+              }
+              yield* events.publish(Session.Event.Error, { sessionID, error: handle.message.error })
+            }
             if (result === "stop") return "break" as const
             if (result === "compact") {
               yield* compaction.create({

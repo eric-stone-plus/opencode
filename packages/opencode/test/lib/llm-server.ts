@@ -37,7 +37,8 @@ type Sse = {
   type: "sse"
   head: unknown[]
   tail: unknown[]
-  wait?: PromiseLike<unknown>
+  // A function is called when the response is served, so each delay starts then.
+  wait?: PromiseLike<unknown> | (() => PromiseLike<unknown>)
   hang?: boolean
   error?: unknown
   reset?: boolean
@@ -501,7 +502,12 @@ function send(item: Sse, terminator = true) {
   const empty = Stream.fromIterable<Uint8Array>([])
   const wait = item.wait
   const body: Stream.Stream<Uint8Array, unknown> = wait
-    ? Stream.concat(head, Stream.fromEffect(Effect.promise(() => wait)).pipe(Stream.flatMap(() => tail)))
+    ? Stream.concat(
+        head,
+        Stream.fromEffect(Effect.promise(() => (typeof wait === "function" ? wait() : wait))).pipe(
+          Stream.flatMap(() => tail),
+        ),
+      )
     : Stream.concat(head, tail)
   let end: Stream.Stream<Uint8Array, unknown> = empty
   if (item.error) end = Stream.concat(empty, Stream.fail(item.error))
@@ -678,7 +684,7 @@ export function raw(input: {
   chunks?: unknown[]
   head?: unknown[]
   tail?: unknown[]
-  wait?: PromiseLike<unknown>
+  wait?: PromiseLike<unknown> | (() => PromiseLike<unknown>)
   hang?: boolean
   error?: unknown
   reset?: boolean
