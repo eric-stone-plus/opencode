@@ -31,16 +31,20 @@ export const SkillTool = Tool.define(
             metadata: {},
           })
 
-          const dir = path.dirname(info.location)
-          const base = dir
-          const files = yield* ripgrep.find({
-            cwd: dir,
-            pattern: "!**/SKILL.md",
-            hidden: true,
-            follow: false,
-            signal: ctx.abort,
-            limit: 10,
-          })
+          // The built-in skill has no directory on disk. `path.dirname` of its
+          // sentinel resolves to ".", which would list the user's cwd as if
+          // those files were skill resources.
+          const dir = info.location === "<built-in>" ? undefined : path.dirname(info.location)
+          const files = dir
+            ? yield* ripgrep.find({
+                cwd: dir,
+                pattern: "!**/SKILL.md",
+                hidden: true,
+                follow: false,
+                signal: ctx.abort,
+                limit: 10,
+              })
+            : []
 
           return {
             title: `Loaded skill: ${info.name}`,
@@ -49,19 +53,23 @@ export const SkillTool = Tool.define(
               `# Skill: ${info.name}`,
               "",
               info.content.trim(),
-              "",
-              `Base directory for this skill: ${base}`,
-              "Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
-              "Note: file list is sampled.",
-              "",
-              "<skill_files>",
-              files.map((file) => `<file>${path.resolve(dir, file.path)}</file>`).join("\n"),
-              "</skill_files>",
+              ...(dir
+                ? [
+                    "",
+                    `Base directory for this skill: ${dir}`,
+                    "Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
+                    "Note: file list is sampled.",
+                    "",
+                    "<skill_files>",
+                    files.map((file) => `<file>${path.resolve(dir, file.path)}</file>`).join("\n"),
+                    "</skill_files>",
+                  ]
+                : []),
               "</skill_content>",
             ].join("\n"),
             metadata: {
               name: info.name,
-              dir,
+              ...(dir ? { dir } : {}),
             },
           }
         }).pipe(Effect.orDie),
