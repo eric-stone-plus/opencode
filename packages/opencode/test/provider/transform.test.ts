@@ -4459,6 +4459,22 @@ describe("ProviderTransform.variants", () => {
     })
   })
 
+  test("glm-5.3 returns effort variants for anthropic-compatible providers", () => {
+    const model = createMockModel({
+      id: "zhipuai-coding-plan/glm-5.3",
+      providerID: "zhipuai-coding-plan",
+      api: {
+        id: "glm-5.3",
+        url: "https://api.bigmodel.cn/api/anthropic",
+        npm: "@ai-sdk/anthropic",
+      },
+    })
+    expect(ProviderTransform.variants(model)).toEqual({
+      high: { effort: "high" },
+      max: { effort: "max" },
+    })
+  })
+
   test("glm-5.2 falls back to provider defaults for other packages", () => {
     const model = createMockModel({
       id: "test/glm-5.2",
