@@ -13,7 +13,7 @@ import { $ } from "bun"
 import { homedir } from "os"
 import path from "path"
 import { existsSync } from "fs"
-import { chmod, copyFile, mkdir, mkdtemp, rename, rm } from "fs/promises"
+import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, rename, rm } from "fs/promises"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const UPSTREAM_URL = "https://github.com/anomalyco/opencode.git"
@@ -162,6 +162,12 @@ async function main() {
     console.log(`installed ${tuiDest} (app_exit none)`)
   }
 
+  const skillsSrc = path.join(ROOT, "skills")
+  if (existsSync(skillsSrc)) {
+    const installed = await installSkills(skillsSrc, path.join(homedir(), ".config", "opencode", "skills"))
+    console.log(`installed ${installed} vendored skills`)
+  }
+
   if (noRebuild) {
     console.log("done (rebuild skipped)")
     return
@@ -172,6 +178,26 @@ async function main() {
   const version = await $`${dest} --version`.text()
   console.log(`installed ${dest}`)
   console.log(version.trim())
+}
+
+// Replaces each vendored skill directory in place rather than merging into it,
+// so a skill dropped upstream disappears instead of lingering with stale
+// resources. Unrelated skills the user added by hand are left untouched.
+export async function installSkills(source: string, destination: string) {
+  await mkdir(destination, { recursive: true })
+  const entries = await readdir(source, { withFileTypes: true })
+  const skills = entries.filter(
+    (entry) => entry.isDirectory() && existsSync(path.join(source, entry.name, "SKILL.md")),
+  )
+  for (const skill of skills) {
+    const target = path.join(destination, skill.name)
+    await rm(target, { recursive: true, force: true })
+    await cp(path.join(source, skill.name), target, { recursive: true })
+  }
+  for (const file of entries.filter((entry) => entry.isFile())) {
+    await copyFile(path.join(source, file.name), path.join(destination, file.name))
+  }
+  return skills.length
 }
 
 if (import.meta.main) {
