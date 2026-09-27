@@ -43,6 +43,13 @@ const build: Agent.Info = {
   options: {},
 }
 
+const headless: Agent.Info = {
+  name: "auto",
+  mode: "primary",
+  permission: Permission.fromConfig({ "*": "allow", question: "deny" }),
+  options: {},
+}
+
 const it = testEffect(
   LayerNode.compile(SystemPrompt.node, [
     [
@@ -126,6 +133,40 @@ describe("session.system", () => {
       expect(middle).toBeGreaterThan(alpha)
       expect(zeta).toBeGreaterThan(middle)
       expect(output).not.toContain("manual-skill")
+    }),
+  )
+
+  it.effect("injects the autonomy contract when the agent denies question", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(headless)
+
+      expect(output).toContain("Skills provide specialized instructions")
+      expect(output).toContain("# Running without a human")
+    }),
+  )
+
+  // `opencode run` denies question in the session ruleset, not on the agent
+  // (cli/cmd/run.ts). Gating on the agent alone hides the question tool while
+  // withholding the contract, so the dominant headless path gets nothing.
+  it.effect("injects the autonomy contract when only the session denies question", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, Permission.fromConfig({ question: "deny" }))
+
+      expect(output).toContain("# Running without a human")
+    }),
+  )
+
+  it.effect("withholds the autonomy contract while question is callable", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const allowed = yield* prompt.skills(build)
+      const reallowed = yield* prompt.skills(headless, Permission.fromConfig({ question: "allow" }))
+
+      expect(allowed).toContain("Skills provide specialized instructions")
+      expect(allowed).not.toContain("# Running without a human")
+      expect(reallowed).not.toContain("# Running without a human")
     }),
   )
 

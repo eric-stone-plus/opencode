@@ -93,6 +93,52 @@ Use this skill.
     }),
   )
 
+  it.instance("execute appends the autonomy reminder after the skill body", () =>
+    Effect.gen(function* () {
+      const dir = (yield* TestInstance).directory
+      const skill = path.join(dir, ".opencode", "skill", "waiting-skill")
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(skill, "SKILL.md"),
+          `---
+name: waiting-skill
+description: Skill that waits for a human.
+---
+
+# Waiting Skill
+
+Then wait for the user's answers before the next round.
+`,
+        ),
+      )
+
+      const home = process.env.OPENCODE_TEST_HOME
+      process.env.OPENCODE_TEST_HOME = dir
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.env.OPENCODE_TEST_HOME = home
+        }),
+      )
+
+      const registry = yield* ToolRegistry.Service
+      const agent = { name: "auto", mode: "primary" as const, permission: [], options: {} }
+      const tool = (yield* registry.tools({ providerID: "opencode" as any, modelID: "gpt-5" as any, agent })).find(
+        (tool) => tool.id === SkillTool.id,
+      )
+      if (!tool) throw new Error("Skill tool not found")
+
+      const ctx: Tool.Context = { ...baseCtx, agent: "auto", extra: { autonomy: "REMINDER" }, ask: () => Effect.void }
+      const withReminder = yield* tool.execute({ name: "waiting-skill" }, ctx)
+      const without = yield* tool.execute({ name: "waiting-skill" }, { ...baseCtx, ask: () => Effect.void })
+
+      // Recency is the point: the reminder must land after the body it overrides.
+      expect(withReminder.output.indexOf("REMINDER")).toBeGreaterThan(
+        withReminder.output.indexOf("</skill_content>"),
+      )
+      expect(without.output).not.toContain("REMINDER")
+    }),
+  )
+
   it.instance("execute preserves not found message", () =>
     Effect.gen(function* () {
       const dir = (yield* TestInstance).directory

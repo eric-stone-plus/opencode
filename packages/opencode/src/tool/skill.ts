@@ -46,6 +46,12 @@ export const SkillTool = Tool.define(
               })
             : []
 
+          // Placed after the loaded body rather than only in the system prompt:
+          // several skills instruct the agent to wait for a human, and a distant
+          // instruction loses to the one the model just read. Head-truncation of
+          // an oversized skill can drop it; the system prompt copy survives.
+          const autonomy = typeof ctx.extra?.autonomy === "string" ? ctx.extra.autonomy : undefined
+
           return {
             title: `Loaded skill: ${info.name}`,
             output: [
@@ -66,6 +72,7 @@ export const SkillTool = Tool.define(
                   ]
                 : []),
               "</skill_content>",
+              ...(autonomy ? ["", autonomy] : []),
             ].join("\n"),
             metadata: {
               name: info.name,

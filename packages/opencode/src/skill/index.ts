@@ -318,9 +318,13 @@ const layer = Layer.effect(
   }),
 )
 
+export function hasAvailable(list: Info[]) {
+  return list.some((skill) => skill.description !== undefined)
+}
+
 export function fmt(list: Info[], opts: { verbose: boolean }) {
+  if (!hasAvailable(list)) return "No skills are currently available."
   const described = list.filter((skill) => skill.description !== undefined)
-  if (described.length === 0) return "No skills are currently available."
   if (opts.verbose) {
     return [
       "<available_skills>",

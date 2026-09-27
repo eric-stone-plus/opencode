@@ -10,6 +10,7 @@ import type { MessageV2 } from "../../../session/message-v2"
 import { MessageID, PartID } from "../../../session/schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Permission } from "../../../permission"
+import { SkillAutonomy } from "@/skill/autonomy"
 import { iife } from "../../../util/iife"
 import { fail } from "../../effect-cmd"
 import { InstanceRef } from "@/effect/instance-ref"
@@ -178,6 +179,10 @@ const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(functio
     agent: agent.name,
     abort: new AbortController().signal,
     messages: [],
+    // Mirrors session/tools.ts, so `debug agent --tool skill` shows the same
+    // output the model would get. Omitting it made the debug path a trap: it
+    // looked like proof the autonomy reminder was never injected.
+    extra: { autonomy: SkillAutonomy.reminder(agent, session.permission) },
     metadata: () => Effect.void,
     ask(req: Omit<PermissionV1.Request, "id" | "sessionID" | "tool">) {
       return Effect.sync(() => {

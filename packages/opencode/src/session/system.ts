@@ -18,6 +18,7 @@ import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import { SkillAutonomy } from "@/skill/autonomy"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
@@ -52,7 +53,7 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly skills: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
 }
 
@@ -104,8 +105,9 @@ const layer = Layer.effect(
         ].filter((part): part is string => part !== undefined)
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
-        if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, permission?: PermissionV1.Ruleset) {
+        const ruleset = Permission.merge(agent.permission, permission ?? [])
+        if (Permission.disabled(["skill"], ruleset).has("skill")) return
 
         const list = yield* skill.available(agent)
 
@@ -115,7 +117,10 @@ const layer = Layer.effect(
           // the agents seem to ingest the information about skills a bit better if we present a more verbose
           // version of them here and a less verbose version in tool description, rather than vice versa.
           Skill.fmt(list, { verbose: true }),
-        ].join("\n")
+          Skill.hasAvailable(list) ? SkillAutonomy.contract(agent, permission) : undefined,
+        ]
+          .filter((part): part is string => part !== undefined)
+          .join("\n")
       }),
 
       mcp: Effect.fn("SystemPrompt.mcp")(function* (agent: Agent.Info, permission?: PermissionV1.Ruleset) {

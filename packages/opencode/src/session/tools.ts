@@ -5,6 +5,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
 import { Permission } from "@/permission"
+import { SkillAutonomy } from "@/skill/autonomy"
 import { Tool } from "@/tool/tool"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
@@ -61,7 +62,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     abort: options.abortSignal!,
     messageID: input.processor.message.id,
     callID: options.toolCallId,
-    extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, promptOps: input.promptOps },
+    extra: {
+      model: input.model,
+      bypassAgentCheck: input.bypassAgentCheck,
+      promptOps: input.promptOps,
+      // Resolved here rather than in each tool: `Tool.Context.agent` is only a
+      // name, and looking the agent up again would add a fallible dependency.
+      // Merged with the session ruleset so this agrees with the gate in
+      // session/llm/request.ts that decides whether question is callable.
+      autonomy: SkillAutonomy.reminder(input.agent, input.session.permission),
+    },
     agent: input.agent.name,
     messages: input.messages,
     metadata: (val) =>
