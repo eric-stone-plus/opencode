@@ -1,6 +1,7 @@
 import type { ModelMessage, ToolResultPart } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
+import { glmFaceOf, glmNative } from "./glm"
 import type * as Provider from "./provider"
 import type * as ModelsDev from "@opencode-ai/core/models-dev"
 import { iife } from "@/util/iife"
@@ -826,10 +827,14 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     }
   }
   if (glm52Or53 && model.api.npm === "@ai-sdk/anthropic") {
-    return {
-      high: { effort: "high" },
-      max: { effort: "max" },
-    }
+    // Source the effort ladder from the GLM capability table when the api id
+    // parses; aliased ids (glm-5p2 and friends) keep the legacy literal pair.
+    const spec = glmNative(
+      { modelID: model.api.id, reasoning: model.capabilities.reasoning },
+      glmFaceOf(model.api.npm),
+    )
+    const efforts = spec && spec.generation === "5.x" ? spec.efforts : (["high", "max"] as const)
+    return Object.fromEntries(efforts.map((effort) => [effort, { effort }]))
   }
   // Kimi's Anthropic-compatible transports implement adaptive thinking effort.
   if (isKimiFamily(model) && ["@ai-sdk/anthropic", "@ai-sdk/google-vertex/anthropic"].includes(model.api.npm)) {

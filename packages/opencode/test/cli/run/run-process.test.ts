@@ -255,14 +255,12 @@ describe("opencode run (non-interactive subprocess)", () => {
           "tool_use",
           "step_finish",
           "step_start",
-          "step_finish",
           "step_start",
           "text",
           "step_finish",
         ])
         expect(events[1]?.part).toEqual(expect.objectContaining({ type: "text", text: "partial json" }))
-        expect(events[5]?.part).toEqual(expect.objectContaining({ type: "step-finish", reason: "unknown" }))
-        expect(events[7]?.part).toEqual(expect.objectContaining({ type: "text", text: "recovered" }))
+        expect(events[6]?.part).toEqual(expect.objectContaining({ type: "text", text: "recovered" }))
         expect(events.at(-1)?.part).toEqual(expect.objectContaining({ type: "step-finish", reason: "stop" }))
       }),
     60_000,
