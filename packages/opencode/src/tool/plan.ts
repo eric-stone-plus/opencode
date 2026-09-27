@@ -43,7 +43,12 @@ export const PlanExitTool = Tool.define(
             tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
           })
 
-          if (answers[0]?.[0] === "No") yield* new Question.RejectedError()
+          // Fail closed. `Reply.answers` has no minLength, so an empty reply
+          // reaches here; matching only "No" treated that as approval and
+          // synthesized a user message unlocking edits. This question is
+          // custom: false with exactly Yes/No, so anything short of an
+          // explicit "Yes" is not consent to leave plan mode.
+          if (answers[0]?.[0] !== "Yes") yield* new Question.RejectedError()
 
           const messages = yield* session.messages({ sessionID: ctx.sessionID }).pipe(Effect.orDie)
           const lastUser = messages.findLast((item) => item.info.role === "user" && item.info.model)
