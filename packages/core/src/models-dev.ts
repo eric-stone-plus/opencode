@@ -142,6 +142,14 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelsDev") {}
 
+// Strip OpenCode Zen free models ("opencode", "opencode-go"); harness-only fork.
+// `delete` on a missing key is a no-op, so upstream data without them is fine.
+const stripZenProviders = (data: Record<string, Provider>) => {
+  delete data.opencode
+  delete data["opencode-go"]
+  return data
+}
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -216,9 +224,9 @@ const layer = Layer.effect(
 
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
-      if (fromDisk) return fromDisk
+      if (fromDisk) return stripZenProviders(fromDisk)
       const snapshot = yield* loadSnapshot
-      if (snapshot) return snapshot
+      if (snapshot) return stripZenProviders(snapshot)
       if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
       // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
       const text = yield* Effect.scoped(
@@ -227,7 +235,7 @@ const layer = Layer.effect(
           return yield* fetchAndWrite()
         }),
       )
-      return JSON.parse(text) as Record<string, Provider>
+      return stripZenProviders(JSON.parse(text) as Record<string, Provider>)
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
