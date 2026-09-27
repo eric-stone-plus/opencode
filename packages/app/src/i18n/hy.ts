@@ -195,7 +195,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Խորհուրդ է տրվում",
   "dialog.provider.opencode.note": "Ընտրված մոդելներ, ներառյալ՝ Claude, GPT, Gemini և ավելին",
   "dialog.provider.opencode.tagline": "Վստահելի օպտիմիզացված մոդելներ",
-  "dialog.provider.opencodeGo.tagline": "Ցածր գնով բաժանորդագրություն բոլորի համար",
   "dialog.provider.anthropic.note": "Ուղիղ մուտք դեպի Claude մոդելներ, ներառյալ Pro և Max",
   "dialog.provider.copilot.note": "AI մոդելներ կոդավորման օգնության համար՝ GitHub Copilot",
   "dialog.provider.openai.note": "GPT մոդելներ արագ, ունակ ընդհանուր AI առաջադրանքների համար",
@@ -226,13 +225,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API բանալի",
   "provider.connect.apiKey.placeholder": "API բանալի",
   "provider.connect.apiKey.required": "API բանալի է պահանջվում",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen-ը թույլ է տալիս մուտք գործել կոդավորման գործակալների համար հուսալի օպտիմիզացված մոդելների հավաքածու։",
-  "provider.connect.opencodeZen.line2":
-    "Մեկ API բանալիով դուք մուտք կունենաք այնպիսի մոդելների, ինչպիսիք են՝ Claude, GPT, Gemini, GLM և ավելին:",
-  "provider.connect.opencodeZen.visit.prefix": "Այցելություն ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": " ձեր API բանալին հավաքելու համար",
   "provider.connect.oauth.code.visit.prefix": "Այցելություն ",
   "provider.connect.oauth.code.visit.link": "այս հղումը",
   "provider.connect.oauth.code.visit.suffix":
@@ -1161,5 +1153,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 նիստ կարխիվացվի։",
   "workspace.reset.archived.many": "{{count}} նիստերը կարխիվացվեն։",
   "workspace.reset.note": "Սա կվերակայի աշխատանքային տարածքը, որպեսզի համապատասխանի լռելյայն ճյուղին:",
-  "dialog.usageExceeded.dontShowAgain": "Այլևս չցուցադրել",
 }

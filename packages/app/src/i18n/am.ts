@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "የሚመከር",
   "dialog.provider.opencode.note": "Claude፣ GPT፣ Gemini እና ሌሎችንም ጨምሮ የተስተካከሉ ሞዴሎች",
   "dialog.provider.opencode.tagline": "ታማኝ የተመቻቹ ሞዴሎች",
-  "dialog.provider.opencodeGo.tagline": "ዝቅተኛ ወጪ ለሁሉም ሰው",
   "dialog.provider.anthropic.note": "የቀጥታ የClaude ሞዴሎች፣ ፕሮ እና ማክስን ጨምሮ",
   "dialog.provider.copilot.note": "AI ሞዴሎች በGitHub Copilot] በኩል ኮድ ለማድረግ እገዛ",
   "dialog.provider.openai.note": "GPT ሞዴሎች ለፈጣን እና ችሎታ ላለው አጠቃላይ AI ተግባራት",
@@ -224,11 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API ቁልፍ",
   "provider.connect.apiKey.placeholder": "API ቁልፍ",
   "provider.connect.apiKey.required": "API ቁልፍ ያስፈልጋል",
-  "provider.connect.opencodeZen.line1": "OpenCode ዜን ለኮድ ወኪሎች የተመቻቹ አስተማማኝ ሞዴሎች ስብስብ መዳረሻ ይሰጥዎታል።",
-  "provider.connect.opencodeZen.line2": "በአንድ የAPI ቁልፍ እንደ Claude፣ GPT፣ Gemini፣ GLM እና ሌሎችም ያሉ ሞዴሎችን መድረስ ይችላሉ።",
-  "provider.connect.opencodeZen.visit.prefix": "ጎብኝ ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": " የእርስዎን API ቁልፍ ለመሰብሰብ።",
   "provider.connect.oauth.code.visit.prefix": "ጎብኝ ",
   "provider.connect.oauth.code.visit.link": "ይህ ሊንክ",
   "provider.connect.oauth.code.visit.suffix":
@@ -1126,5 +1120,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 ክፍለ ጊዜ በማህደር ይቀመጣል።",
   "workspace.reset.archived.many": "{{count}} ክፍለ-ጊዜዎች በማህደር ይቀመጣሉ።",
   "workspace.reset.note": "ይህ workspaceን ከነባሪው ቅርንጫፍ ጋር እንዲመሳሰል ዳግም ያስጀምረዋል።",
-  "dialog.usageExceeded.dontShowAgain": "እንደገና አታሳይ",
 }

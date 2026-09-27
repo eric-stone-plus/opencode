@@ -3846,8 +3846,6 @@ describe("ProviderTransform sampling defaults - DeepSeek", () => {
 
   test.each([
     ["deepseek", "deepseek-v4-flash"],
-    ["opencode", "deepseek-v4-flash"],
-    ["opencode-go", "deepseek-v4-flash"],
     ["openrouter", "deepseek/deepseek-v4-flash-0731"],
     ["ollama-cloud", "deepseek-v4-flash:0731"],
   ])("defaults top_p for %s/%s", (providerID, id) => {

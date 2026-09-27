@@ -197,7 +197,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Mælt er með",
   "dialog.provider.opencode.note": "Sýndar gerðir þar á meðal Claude, GPT, Gemini og fleira",
   "dialog.provider.opencode.tagline": "Áreiðanleg bjartsýni módel",
-  "dialog.provider.opencodeGo.tagline": "Lággjaldaáskrift fyrir alla",
   "dialog.provider.anthropic.note": "Beinn aðgangur að Claude gerðum, þar á meðal Pro og Max",
   "dialog.provider.copilot.note": "AI módel fyrir kóðaaðstoð í gegnum GitHub Copilot",
   "dialog.provider.openai.note": "GPT gerðir fyrir hröð, fær almenn gervigreind verkefni",
@@ -228,13 +227,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API lykill",
   "provider.connect.apiKey.placeholder": "API lykill",
   "provider.connect.apiKey.required": "API lykill er nauðsynlegur",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen veitir þér aðgang að safni af áreiðanlegum og fínstilltum gerðum fyrir kóðunarmiðla.",
-  "provider.connect.opencodeZen.line2":
-    "Með einum API lykli færðu aðgang að gerðum eins og Claude, GPT, Gemini, GLM og fleira.",
-  "provider.connect.opencodeZen.visit.prefix": "Heimsókn",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "til að safna API lykilnum þínum.",
   "provider.connect.oauth.code.visit.prefix": "Heimsókn",
   "provider.connect.oauth.code.visit.link": "þennan hlekk",
   "provider.connect.oauth.code.visit.suffix":
@@ -1153,5 +1145,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 seta verður sett í geymslu.",
   "workspace.reset.archived.many": "{{count}} setur verða settar í geymslu.",
   "workspace.reset.note": "Þetta mun endurstilla vinnusvæðið til að passa við sjálfgefna útibúið.",
-  "dialog.usageExceeded.dontShowAgain": "Ekki sýna aftur",
 }

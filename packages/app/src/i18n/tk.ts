@@ -194,7 +194,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Maslahat berilýär",
   "dialog.provider.opencode.note": "Claude, GPT, Gemini we ş.m.",
   "dialog.provider.opencode.tagline": "Ygtybarly optimal modeller",
-  "dialog.provider.opencodeGo.tagline": "Hemmeler üçin arzan bahaly abuna",
   "dialog.provider.anthropic.note": "Pro we Max ýaly Claude modellerine göni giriş",
   "dialog.provider.copilot.note": "GitHub Copilot arkaly kodlaşdyrmak üçin AI modelleri",
   "dialog.provider.openai.note": "Çalt, başarnykly umumy AI meseleleri üçin GPT modelleri",
@@ -225,13 +224,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API açary",
   "provider.connect.apiKey.placeholder": "API açary",
   "provider.connect.apiKey.required": "API açary talap edilýär",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen kodlaşdyrmak serişdeleri üçin ygtybarly optimallaşdyrylan modelleriň toplumyna girmäge mümkinçilik berýär.",
-  "provider.connect.opencodeZen.line2":
-    "Zekeje API açary bilen Claude, GPT, Gemini, GLM we başgalar ýaly modellere girip bilersiňiz.",
-  "provider.connect.opencodeZen.visit.prefix": "Sapar ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": " API açaryňyzy ýygnamak.",
   "provider.connect.oauth.code.visit.prefix": "Sapar ",
   "provider.connect.oauth.code.visit.link": "Bu baglanyşyk",
   "provider.connect.oauth.code.visit.suffix":
@@ -1155,5 +1147,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 sessiýa arhiwlener.",
   "workspace.reset.archived.many": "{{count}} sessiýalary arhiwlener.",
   "workspace.reset.note": "Bu workspace-i adaty şaha gabat getirmek üçin täzeden düzer.",
-  "dialog.usageExceeded.dontShowAgain": "Gaýtadan görkezme",
 }

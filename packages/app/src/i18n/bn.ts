@@ -194,7 +194,6 @@ export const dict: Record<string, string> = {
   "dialog.provider.tag.recommended": "প্রস্তাবিত",
   "dialog.provider.opencode.note": "Claude, GPT, Gemini এবং আরও অনেক কিছু সহ কিউরেট করা মডেল",
   "dialog.provider.opencode.tagline": "নির্ভরযোগ্য অপ্টিমাইজ করা মডেল",
-  "dialog.provider.opencodeGo.tagline": "সবার জন্য কম খরচে সাবস্ক্রিপশন",
   "dialog.provider.anthropic.note": "প্রো এবং ম্যাক্স সহ Claude মডেলগুলিতে সরাসরি অ্যাক্সেস",
   "dialog.provider.copilot.note": "GitHub Copilot এর মাধ্যমে কোডিং সহায়তার জন্য AI মডেল",
   "dialog.provider.openai.note": "দ্রুত, সক্ষম সাধারণ AI কার্যগুলির জন্য GPT মডেল",
@@ -225,13 +224,6 @@ export const dict: Record<string, string> = {
   "provider.connect.apiKey.label": "{{provider}} API কী",
   "provider.connect.apiKey.placeholder": "API কী",
   "provider.connect.apiKey.required": "API কী প্রয়োজন",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen আপনাকে কোডিং এজেন্টের জন্য নির্ভরযোগ্য অপ্টিমাইজ করা মডেলের একটি কিউরেটেড সেটে অ্যাক্সেস দেয়।",
-  "provider.connect.opencodeZen.line2":
-    "একটি API কী দিয়ে আপনি Claude, GPT, Gemini, GLM এবং আরও অনেক কিছুর মতো মডেলগুলিতে অ্যাক্সেস পাবেন৷",
-  "provider.connect.opencodeZen.visit.prefix": "ভিজিট করুন",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "আপনার API কী সংগ্রহ করতে।",
   "provider.connect.oauth.code.visit.prefix": "ভিজিট করুন",
   "provider.connect.oauth.code.visit.link": "এই লিঙ্ক",
   "provider.connect.oauth.code.visit.suffix":
@@ -1148,5 +1140,4 @@ export const dict: Record<string, string> = {
   "workspace.reset.archived.one": "1 সেশন আর্কাইভ করা হবে.",
   "workspace.reset.archived.many": "{{count}} সেশন আর্কাইভ করা হবে।",
   "workspace.reset.note": "এটি ডিফল্ট শাখার সাথে মেলে ওয়ার্কস্পেস রিসেট করবে।",
-  "dialog.usageExceeded.dontShowAgain": "আবার দেখাবেন না",
 }

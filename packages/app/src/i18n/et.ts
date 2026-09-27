@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Soovitatav",
   "dialog.provider.opencode.note": "Kureeritud mudelid, sealhulgas Claude, GPT, Gemini ja palju muud",
   "dialog.provider.opencode.tagline": "Usaldusväärsed optimeeritud mudelid",
-  "dialog.provider.opencodeGo.tagline": "Madala hinnaga tellimus kõigile",
   "dialog.provider.anthropic.note": "Otsene juurdepääs Claude mudelile, sealhulgas Pro ja Max",
   "dialog.provider.copilot.note": "AI mudelid kodeerimisabiks GitHub Copilot kaudu",
   "dialog.provider.openai.note": "GPT mudelid kiirete ja võimekate üldiste AI-ülesannete jaoks",
@@ -224,13 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API klahv",
   "provider.connect.apiKey.placeholder": "API klahv",
   "provider.connect.apiKey.required": "Klahv API on nõutav",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen annab teile juurdepääsu kodeerimisagentide usaldusväärsete optimeeritud mudelite kureeritud komplektile.",
-  "provider.connect.opencodeZen.line2":
-    "Ühe klahviga API pääsete juurde sellistele mudelitele nagu Claude, GPT, Gemini, GLM ja palju muud.",
-  "provider.connect.opencodeZen.visit.prefix": "Külastage ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": " API võtme kättesaamiseks.",
   "provider.connect.oauth.code.visit.prefix": "Külastage ",
   "provider.connect.oauth.code.visit.link": "see link",
   "provider.connect.oauth.code.visit.suffix":
@@ -1147,5 +1139,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 seanss arhiveeritakse.",
   "workspace.reset.archived.many": "{{count}} seanssi arhiivitakse.",
   "workspace.reset.note": "See lähtestab tööruumi, et see vastaks vaikeharule.",
-  "dialog.usageExceeded.dontShowAgain": "Ära kuva enam",
 }

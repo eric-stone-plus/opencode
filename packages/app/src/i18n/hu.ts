@@ -197,7 +197,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Ajánlott",
   "dialog.provider.opencode.note": "Összeválogatott modellek, köztük Claude, GPT, Gemini és még sok más",
   "dialog.provider.opencode.tagline": "Megbízható optimalizált modellek",
-  "dialog.provider.opencodeGo.tagline": "Olcsó előfizetés mindenki számára",
   "dialog.provider.anthropic.note": "Közvetlen hozzáférés a Claude modellekhez, beleértve a Pro és Max modelleket",
   "dialog.provider.copilot.note": "AI modellek a kódoláshoz a GitHub Copilot segítségével",
   "dialog.provider.openai.note": "GPT modellek a gyors, általános AI-feladatokhoz",
@@ -228,13 +227,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API kulcs",
   "provider.connect.apiKey.placeholder": "API kulcs",
   "provider.connect.apiKey.required": "API kulcs szükséges",
-  "provider.connect.opencodeZen.line1":
-    "A OpenCode Zen hozzáférést biztosít a kódoló ügynökök számára megbízható, optimalizált modellek válogatott készletéhez.",
-  "provider.connect.opencodeZen.line2":
-    "Egyetlen API kulccsal hozzáférhet olyan modellekhez, mint a Claude, GPT, Gemini, GLM és még sok más.",
-  "provider.connect.opencodeZen.visit.prefix": "Látogatás",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "hogy átvegye a API kulcsát.",
   "provider.connect.oauth.code.visit.prefix": "Látogatás",
   "provider.connect.oauth.code.visit.link": "ezt a linket",
   "provider.connect.oauth.code.visit.suffix":
@@ -1166,5 +1158,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 munkamenet archiválva lesz.",
   "workspace.reset.archived.many": "A {{count}} munkamenetek archiválva lesznek.",
   "workspace.reset.note": "Ezzel visszaállítja a munkaterületet, hogy megfeleljen az alapértelmezett ágnak.",
-  "dialog.usageExceeded.dontShowAgain": "Ne jelenjen meg újra",
 }

@@ -197,7 +197,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Preporučeno",
   "dialog.provider.opencode.note": "Odabrani modeli uključujući Claude, GPT, Gemini i druge",
   "dialog.provider.opencode.tagline": "Pouzdani optimizirani modeli",
-  "dialog.provider.opencodeGo.tagline": "Niska cijena pretplate za sve",
   "dialog.provider.anthropic.note": "Izravan pristup Claude modelima, uključujući Pro i Max",
   "dialog.provider.copilot.note": "AI modeli za pomoć kodiranja putem GitHub Copilot",
   "dialog.provider.openai.note": "GPT modeli za brze, sposobne opće AI zadatke",
@@ -228,13 +227,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API ključ",
   "provider.connect.apiKey.placeholder": "Ključ API",
   "provider.connect.apiKey.required": "Potreban je ključ API",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen vam daje pristup odabranom skupu pouzdanih optimiziranih modela za agente za kodiranje.",
-  "provider.connect.opencodeZen.line2":
-    "S jednim ključem API dobit ćete pristup modelima kao što su Claude, GPT, Gemini, GLM i još mnogo toga.",
-  "provider.connect.opencodeZen.visit.prefix": "Posjetiti",
-  "provider.connect.opencodeZen.visit.link": "otvoreni kod.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "da preuzmete svoj ključ API.",
   "provider.connect.oauth.code.visit.prefix": "Posjetiti",
   "provider.connect.oauth.code.visit.link": "ovaj link",
   "provider.connect.oauth.code.visit.suffix":
@@ -1164,5 +1156,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 sesija će biti arhivirana.",
   "workspace.reset.archived.many": "{{count}} sesije će biti arhivirane.",
   "workspace.reset.note": "Ovo će resetirati radni prostor kako bi odgovarao zadanoj grani.",
-  "dialog.usageExceeded.dontShowAgain": "Ne prikazuj ponovno",
 }

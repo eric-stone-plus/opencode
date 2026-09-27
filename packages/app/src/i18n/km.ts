@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "បានណែនាំ",
   "dialog.provider.opencode.note": "ម៉ូដែលដែលបានជ្រើសរើសរួមមាន Claude, GPT, Gemini និងច្រើនទៀត",
   "dialog.provider.opencode.tagline": "ម៉ូដែលដែលបានកែលម្អដែលអាចទុកចិត្តបាន។",
-  "dialog.provider.opencodeGo.tagline": "ការជាវតម្លៃទាបសម្រាប់អ្នករាល់គ្នា",
   "dialog.provider.anthropic.note": "ការចូលប្រើដោយផ្ទាល់ទៅកាន់ម៉ូដែល Claude រួមទាំង Pro និង Max",
   "dialog.provider.copilot.note": "ម៉ូដែល AI សម្រាប់ជំនួយការសរសេរកូដតាមរយៈ GitHub Copilot",
   "dialog.provider.openai.note": "ម៉ូដែល GPT សម្រាប់កិច្ចការ AI ទូទៅដែលមានល្បឿនលឿន និងមានសមត្ថភាព",
@@ -224,13 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "សោ API {{provider}}",
   "provider.connect.apiKey.placeholder": "សោ API",
   "provider.connect.apiKey.required": "ត្រូវការសោ API",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen ផ្តល់ឱ្យអ្នកនូវម៉ូដែលដែលបានជ្រើសរើស និងកែលម្អសម្រាប់ភ្នាក់ងារសរសេរកូដ។",
-  "provider.connect.opencodeZen.line2":
-    "ជាមួយនឹងសោ API តែមួយ អ្នកនឹងទទួលបានការចូលប្រើម៉ូដែលដូចជា Claude, GPT, Gemini, GLM និងច្រើនទៀត។",
-  "provider.connect.opencodeZen.visit.prefix": "ទស្សនា",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "ដើម្បីប្រមូលសោ API របស់អ្នក។",
   "provider.connect.oauth.code.visit.prefix": "ទស្សនា",
   "provider.connect.oauth.code.visit.link": "តំណនេះ។",
   "provider.connect.oauth.code.visit.suffix":
@@ -1147,5 +1139,4 @@ export const dict = {
   "workspace.reset.archived.one": "សម័យ 1 នឹងត្រូវបានទុកក្នុងប័ណ្ណសារ។",
   "workspace.reset.archived.many": "សម័យ {{count}} នឹងត្រូវបានទុកក្នុងប័ណ្ណសារ។",
   "workspace.reset.note": "វានឹងកំណត់កន្លែងធ្វើការឡើងវិញដើម្បីផ្គូផ្គងសាខាលំនាំដើម។",
-  "dialog.usageExceeded.dontShowAgain": "កុំបង្ហាញម្តងទៀត",
 }

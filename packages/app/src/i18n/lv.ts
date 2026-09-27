@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Ieteikts",
   "dialog.provider.opencode.note": "Atlasīti modeļi, tostarp Claude, GPT, Gemini un citi",
   "dialog.provider.opencode.tagline": "Uzticami optimizēti modeļi",
-  "dialog.provider.opencodeGo.tagline": "Zemas cenas abonements visiem",
   "dialog.provider.anthropic.note": "Tieša piekļuve Claude modeļiem, tostarp Pro un Max",
   "dialog.provider.copilot.note": "AI modeļi programmēšanas atbalstam ar GitHub Copilot",
   "dialog.provider.openai.note": "GPT modeļi ātriem, spējīgiem vispārējiem AI uzdevumiem",
@@ -224,13 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API atslēga",
   "provider.connect.apiKey.placeholder": "API atslēga",
   "provider.connect.apiKey.required": "Nepieciešama API atslēga",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen nodrošina piekļuvi atlasītiem uzticamiem optimizētiem modeļiem kodēšanas aģentiem.",
-  "provider.connect.opencodeZen.line2":
-    "Ar vienu API atslēgu iegūsiet piekļuvi tādiem modeļiem kā Claude, GPT, Gemini, GLM un citiem.",
-  "provider.connect.opencodeZen.visit.prefix": "Apmeklējiet",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": ", lai saņemtu savu API atslēgu.",
   "provider.connect.oauth.code.visit.prefix": "Apmeklējiet",
   "provider.connect.oauth.code.visit.link": "šo saiti",
   "provider.connect.oauth.code.visit.suffix":
@@ -1158,5 +1150,4 @@ export const dict = {
   "workspace.reset.archived.one": "Tiks arhivēta 1 sesija.",
   "workspace.reset.archived.many": "Tiks arhivētas {{count}} sesijas.",
   "workspace.reset.note": "Darbvieta tiks atiestatīta uz noklusējuma zara stāvokli.",
-  "dialog.usageExceeded.dontShowAgain": "Vairs nerādīt",
 }

@@ -13,7 +13,6 @@ The app is currently hybrid. In this document, V1 refers to the legacy unprefixe
   - `src/context/global-sync/event-reducer.ts`
   - `src/context/server-session.ts`
   - `src/context/notification.tsx`
-  - `src/pages/session/usage-exceeded-dialogs.tsx`
 - [ ] Remove legacy message event compatibility: `message.updated`, `message.removed`, `message.part.updated`, `message.part.removed`, and `message.part.delta`.
   - `src/context/global-sync/event-reducer.ts`
   - `src/context/server-session.ts`

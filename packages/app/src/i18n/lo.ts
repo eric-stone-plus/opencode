@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "ແນະນຳ",
   "dialog.provider.opencode.note": "ແບບທີ່ຄັດສັນມາລວມທັງ Claude, GPT, Gemini ແລະອື່ນໆ",
   "dialog.provider.opencode.tagline": "ຮູບແບບການເພີ່ມປະສິດທິພາບທີ່ເຊື່ອຖືໄດ້",
-  "dialog.provider.opencodeGo.tagline": "ການສະໝັກໃຊ້ລາຄາຕໍ່າສຳລັບທຸກຄົນ",
   "dialog.provider.anthropic.note": "ເຂົ້າເຖິງຕົວແບບ Claude ໂດຍກົງ, ລວມທັງ Pro ແລະ Max",
   "dialog.provider.copilot.note": "ຮູບແບບ AI ສໍາລັບການຊ່ວຍເຫຼືອການເຂົ້າລະຫັດຜ່ານ GitHub Copilot",
   "dialog.provider.openai.note": "ແບບ GPT ສໍາລັບວຽກງານ AI ທົ່ວໄປທີ່ໄວ, ມີຄວາມສາມາດ",
@@ -224,13 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "ລະຫັດ API {{provider}}",
   "provider.connect.apiKey.placeholder": "ລະຫັດ API",
   "provider.connect.apiKey.required": "ຕ້ອງການລະຫັດ API",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen ໃຫ້ທ່ານເຂົ້າເຖິງຊຸດຮູບແບບການປັບແຕ່ງທີ່ໜ້າເຊື່ອຖືໄດ້ສຳລັບຕົວແທນການເຂົ້າລະຫັດ.",
-  "provider.connect.opencodeZen.line2":
-    "ດ້ວຍລະຫັດ API ດຽວເຈົ້າຈະໄດ້ຮັບການເຂົ້າເຖິງຕົວແບບເຊັ່ນ: Claude, GPT, Gemini, GLM ແລະອື່ນໆ.",
-  "provider.connect.opencodeZen.visit.prefix": "ຢ້ຽມຢາມ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "ເພື່ອເກັບກຳລະຫັດ API ຂອງທ່ານ.",
   "provider.connect.oauth.code.visit.prefix": "ຢ້ຽມຢາມ",
   "provider.connect.oauth.code.visit.link": "ລິ້ງນີ້",
   "provider.connect.oauth.code.visit.suffix":
@@ -1144,5 +1136,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 ເຊດຊັນຈະຖືກເກັບໄວ້.",
   "workspace.reset.archived.many": "ເຊດຊັນ {{count}} ຈະຖືກເກັບໄວ້.",
   "workspace.reset.note": "ນີ້ຈະຣີເຊັດພື້ນທີ່ເຮັດວຽກໃຫ້ກົງກັບສາຂາເລີ່ມຕົ້ນ.",
-  "dialog.usageExceeded.dontShowAgain": "ຢ່າສະແດງອີກ",
 }

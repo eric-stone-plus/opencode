@@ -193,7 +193,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Disyorkan",
   "dialog.provider.opencode.note": "Model terpilih termasuk Claude, GPT, Gemini dan banyak lagi",
   "dialog.provider.opencode.tagline": "Model dioptimumkan yang boleh dipercayai",
-  "dialog.provider.opencodeGo.tagline": "Langganan kos rendah untuk semua",
   "dialog.provider.anthropic.note": "Akses terus ke model Claude, termasuk Pro dan Max",
   "dialog.provider.copilot.note": "Model AI untuk bantuan pengekodan melalui GitHub Copilot",
   "dialog.provider.openai.note": "Model GPT untuk tugasan AI umum yang pantas dan berkeupayaan",
@@ -224,13 +223,6 @@ export const dict = {
   "provider.connect.apiKey.label": "Kunci API {{provider}}",
   "provider.connect.apiKey.placeholder": "Kunci API",
   "provider.connect.apiKey.required": "Kunci API diperlukan",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen memberi anda akses kepada set model terpilih yang boleh dipercayai dan dioptimumkan untuk ejen pengekodan.",
-  "provider.connect.opencodeZen.line2":
-    "Dengan satu kunci API, anda akan mendapat akses kepada model seperti Claude, GPT, Gemini, GLM dan banyak lagi.",
-  "provider.connect.opencodeZen.visit.prefix": "Layari",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "untuk mendapatkan kunci API anda.",
   "provider.connect.oauth.code.visit.prefix": "Layari",
   "provider.connect.oauth.code.visit.link": "pautan ini",
   "provider.connect.oauth.code.visit.suffix":
@@ -1153,5 +1145,4 @@ export const dict = {
   "workspace.reset.archived.one": "1 sesi akan diarkibkan.",
   "workspace.reset.archived.many": "{{count}} sesi akan diarkibkan.",
   "workspace.reset.note": "Ini akan menetap semula ruang kerja agar sepadan dengan cawangan lalai.",
-  "dialog.usageExceeded.dontShowAgain": "Jangan tunjukkan lagi",
 }

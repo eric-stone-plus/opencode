@@ -193,7 +193,6 @@ export const dict: Record<string, string> = {
   "dialog.provider.tag.recommended": "නිර්දේශ කර ඇත",
   "dialog.provider.opencode.note": "Claude, GPT, Gemini සහ තවත් දේ ඇතුළුව සංවෘත ආකෘති",
   "dialog.provider.opencode.tagline": "විශ්වසනීය ප්රශස්ත මාදිලි",
-  "dialog.provider.opencodeGo.tagline": "සෑම කෙනෙකුටම අඩු වියදම් දායකත්වයක්",
   "dialog.provider.anthropic.note": "Pro සහ Max ඇතුළුව Claude මාදිලි වෙත සෘජු ප්‍රවේශය",
   "dialog.provider.copilot.note": "GitHub Copilot හරහා කේතීකරණ සහාය සඳහා AI ආකෘති",
   "dialog.provider.openai.note": "වේගවත්, හැකියාව ඇති සාමාන්‍ය AI කාර්යයන් සඳහා GPT මාදිලි",
@@ -224,13 +223,6 @@ export const dict: Record<string, string> = {
   "provider.connect.apiKey.label": "{{provider}} API යතුර",
   "provider.connect.apiKey.placeholder": "API යතුර",
   "provider.connect.apiKey.required": "API යතුර අවශ්‍යයි",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Zen ඔබට කේතීකරණ නියෝජිතයන් සඳහා විශ්වාසදායක ප්‍රශස්ත මාදිලි සමූහයකට ප්‍රවේශය ලබා දෙයි.",
-  "provider.connect.opencodeZen.line2":
-    "තනි API යතුරක් සමඟින් ඔබට Claude, GPT, Gemini, GLM සහ තවත් ආකෘති වෙත ප්‍රවේශය ලැබෙනු ඇත.",
-  "provider.connect.opencodeZen.visit.prefix": "පිවිසෙන්න",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": "ඔබගේ API යතුර එකතු කිරීමට.",
   "provider.connect.oauth.code.visit.prefix": "පිවිසෙන්න",
   "provider.connect.oauth.code.visit.link": "මෙම සබැඳිය",
   "provider.connect.oauth.code.visit.suffix":
@@ -1149,5 +1141,4 @@ export const dict: Record<string, string> = {
   "workspace.reset.archived.one": "1 සැසියක් සංරක්ෂණය කෙරේ.",
   "workspace.reset.archived.many": "සැසි {{count}} සංරක්ෂිත වනු ඇත.",
   "workspace.reset.note": "මෙය පෙරනිමි ශාඛාවට ගැලපෙන පරිදි වැඩබිම නැවත සකසනු ඇත.",
-  "dialog.usageExceeded.dontShowAgain": "නැවත නොපෙන්වන්න",
 }

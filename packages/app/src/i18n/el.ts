@@ -194,7 +194,6 @@ export const dict = {
   "dialog.provider.tag.recommended": "Συνιστάται",
   "dialog.provider.opencode.note": "Επιμελημένα μοντέλα συμπεριλαμβανομένων των Claude, GPT, Gemini και άλλων",
   "dialog.provider.opencode.tagline": "Αξιόπιστα βελτιστοποιημένα μοντέλα",
-  "dialog.provider.opencodeGo.tagline": "Συνδρομή χαμηλού κόστους για όλους",
   "dialog.provider.anthropic.note": "Άμεση πρόσβαση σε Claude μοντέλα, συμπεριλαμβανομένων των Pro και Max",
   "dialog.provider.copilot.note": "Μοντέλα AI για βοήθεια κωδικοποίησης μέσω GitHub Copilot",
   "dialog.provider.openai.note": "GPT μοντέλα για γρήγορες, ικανές εργασίες γενικής τεχνητής νοημοσύνης",
@@ -225,13 +224,6 @@ export const dict = {
   "provider.connect.apiKey.label": "{{provider}} API κλειδί",
   "provider.connect.apiKey.placeholder": "API κλειδί",
   "provider.connect.apiKey.required": "API απαιτείται κλειδί",
-  "provider.connect.opencodeZen.line1":
-    "OpenCode Το Zen σάς δίνει πρόσβαση σε ένα επιμελημένο σύνολο αξιόπιστων βελτιστοποιημένων μοντέλων για πράκτορες κωδικοποίησης.",
-  "provider.connect.opencodeZen.line2":
-    "Με ένα μόνο κλειδί API θα έχετε πρόσβαση σε μοντέλα όπως Claude, GPT, Gemini, GLM και άλλα.",
-  "provider.connect.opencodeZen.visit.prefix": "Επίσκεψη ",
-  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
-  "provider.connect.opencodeZen.visit.suffix": " για τη συλλογή του κλειδιού σας API.",
   "provider.connect.oauth.code.visit.prefix": "Επίσκεψη ",
   "provider.connect.oauth.code.visit.link": "αυτός ο σύνδεσμος",
   "provider.connect.oauth.code.visit.suffix":
@@ -1169,5 +1161,4 @@ export const dict = {
   "workspace.reset.archived.one": "Θα αρχειοθετηθεί 1 συνεδρία.",
   "workspace.reset.archived.many": "{{count}} θα αρχειοθετηθούν οι περίοδοι σύνδεσης.",
   "workspace.reset.note": "Αυτό θα επαναφέρει τον χώρο εργασίας ώστε να ταιριάζει με τον προεπιλεγμένο κλάδο.",
-  "dialog.usageExceeded.dontShowAgain": "Να μην εμφανιστεί ξανά",
 }
