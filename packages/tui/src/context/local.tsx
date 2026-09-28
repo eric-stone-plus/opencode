@@ -48,6 +48,26 @@ export function recentModels(
     .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
 }
 
+// Mirrors the server's variant resolution (packages/opencode/src/session/prompt.ts createUserMessage):
+// the explicit pick wins, otherwise the agent default applies only when the request model is the
+// agent's own model and the variant exists on that model. "default" is the unset sentinel that
+// variant.set(undefined) persists, so it is treated as no selection.
+export function resolveVariant(input: {
+  selected: string | undefined
+  variants: string[]
+  model: { providerID: string; modelID: string }
+  agentModel: { providerID: string; modelID: string } | undefined
+  agentVariant: string | undefined
+}) {
+  if (input.selected && input.selected !== "default" && input.variants.includes(input.selected)) return input.selected
+  const same =
+    !!input.agentModel &&
+    input.model.providerID === input.agentModel.providerID &&
+    input.model.modelID === input.agentModel.modelID
+  if (input.agentVariant && same && input.variants.includes(input.agentVariant)) return input.agentVariant
+  return undefined
+}
+
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
@@ -367,10 +387,18 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return modelStore.variant[key]
           },
           current() {
-            const v = this.selected()
-            if (!v) return undefined
-            if (!this.list().includes(v)) return undefined
-            return v
+            const m = currentModel()
+            if (!m) return undefined
+            const variants = this.list()
+            if (variants.length === 0) return undefined
+            const a = agent.current()
+            return resolveVariant({
+              selected: this.selected(),
+              variants,
+              model: m,
+              agentModel: a?.model,
+              agentVariant: a?.variant,
+            })
           },
           list() {
             const m = currentModel()
