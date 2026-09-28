@@ -181,6 +181,7 @@ done
 say ""
 say "-- step 2: config files"
 CFG="$TARGET_HOME/.config/opencode"
+DATA="$TARGET_HOME/.local/share/opencode"
 
 if [ "$LINK_MODE" -eq 1 ]; then
   dst="$CFG/opencode.jsonc"
@@ -205,11 +206,16 @@ else
 fi
 
 # auth.json: template, only when absent. Never touch an existing one (holds keys).
-if [ -e "$CFG/auth.json" ]; then
-  note "unchanged $CFG/auth.json (exists; secrets are never overwritten)"
+# Lives in the DATA dir (~/.local/share/opencode), not the config dir.
+if [ -e "$DATA/auth.json" ]; then
+  note "unchanged $DATA/auth.json (exists; secrets are never overwritten)"
 else
-  act "create $CFG/auth.json from config/auth.json.template (placeholder keys)"
-  if [ "$DRY_RUN" -eq 0 ]; then cp -p "$BOOTSTRAP_DIR/config/auth.json.template" "$CFG/auth.json"; chmod 600 "$CFG/auth.json"; fi
+  act "create $DATA/auth.json from config/auth.json.template (placeholder keys)"
+  if [ "$DRY_RUN" -eq 0 ]; then
+    ensure_dir_quiet "$DATA"
+    cp -p "$BOOTSTRAP_DIR/config/auth.json.template" "$DATA/auth.json"
+    chmod 600 "$DATA/auth.json"
+  fi
   changed
   note "REMEMBER: fill the 4 provider keys (README 'Secrets re-seed')"
 fi

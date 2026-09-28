@@ -152,7 +152,7 @@ fi
 
 # --- 6. auth providers (names only, never values) ----------------------------
 echo "-- auth (names only)"
-AUTH="$CFG/auth.json"
+AUTH="$DATA/auth.json"
 if [ ! -f "$AUTH" ]; then
   fail "auth.json missing: $AUTH"
 elif ! command -v python3 >/dev/null 2>&1; then

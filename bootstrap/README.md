@@ -98,12 +98,12 @@ listed in §5.
 
 ### Step 4 — secret entry (the only manual step)
 
-Nothing in this bundle carries secret values. Fill `~/.config/opencode/auth.json`
+Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth.json`
 (four provider keys) and the `environment.d` seed files per §3, then:
 
 ```sh
 # install.sh created the skeleton if auth.json was absent:
-ls -l ~/.config/opencode/auth.json        # mode 0600
+ls -l ~/.local/share/opencode/auth.json   # mode 0600
 ```
 
 ### Step 5 — verify
@@ -124,7 +124,7 @@ Verify the wrapper is live with `type opencode` (must show a *function*).
 | --- | --- | --- |
 | 1 | dirs under `~/.config/opencode`, `~/.config/environment.d`, `~/.config/agent-hooks`, `~/.local/bin` | create if missing |
 | 2 | `~/.config/opencode/opencode.jsonc` | copy (+ username sed) or `--link` symlink; timestamp-backup on overwrite |
-| 2 | `~/.config/opencode/auth.json` | **only if absent**, from template; chmod 600; never touched afterwards |
+| 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; chmod 600; never touched afterwards |
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds) |
 | 3 | `~/.local/bin/opencode` shim → `~/.opencode/bin/opencode` | only if absent (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
