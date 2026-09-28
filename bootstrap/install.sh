@@ -437,7 +437,8 @@ for d in command agent; do
   for f in "$BOOTSTRAP_DIR/$d"/*; do
     [ -f "$f" ] || continue
     found=1
-    STAGE_SED=""
+    # goal-edit.md carries the seat username in its goals write globs
+    STAGE_SED="s|home/eric/.local/share/opencode/goals/|home/$SED_USER/.local/share/opencode/goals/|"
     install_file "$f" "$CFG/$d/$(basename "$f")"
   done
   [ "$found" -eq 1 ] || say "SKIP  bundle $d/ is empty (nothing to install)"

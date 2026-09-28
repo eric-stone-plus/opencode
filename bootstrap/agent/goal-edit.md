@@ -11,6 +11,12 @@ permission:
     "*": deny
     ".opencode/goals/*.md": allow
     "home/eric/.local/share/opencode/goals/*.md": allow
+  # external_directory is a separate gate from edit: the goals dir sits
+  # outside any worktree, so without this the edit tool is blocked before
+  # file-pattern matching (e2e-tested 2026-09-29).
+  external_directory:
+    "*": deny
+    "/home/eric/.local/share/opencode/goals/*": allow
   question: deny
   plan_enter: deny
   plan_exit: deny
