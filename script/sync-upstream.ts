@@ -84,6 +84,11 @@ async function main() {
   const resume = process.argv.includes("--continue")
   await assertSyncReady(ROOT, resume)
 
+  // Reuse recorded conflict resolutions across merges: recurring upstream
+  // conflicts (e.g. the Zen-provider deletion) auto-resolve after the first
+  // manual resolution. Local to this clone; harmless on fresh machines.
+  await mustGit(["config", "rerere.enabled", "true"])
+
   if (!resume) {
     const remotes = await mustGit(["remote"])
     if (!remotes.split("\n").includes("upstream")) {
@@ -105,14 +110,14 @@ async function main() {
     if (behind === "0") {
       console.log("already up to date with upstream")
     } else {
-      console.log(`rebasing ${LOCAL_BRANCH} onto ${onto}…`)
-      const rebase = await git(["rebase", onto])
-      if (!rebase.ok) {
+      console.log(`merging ${onto} into ${LOCAL_BRANCH}…`)
+      const merge = await git(["merge", "--no-edit", onto])
+      if (!merge.ok) {
         throw new Error(
-          `${rebase.error || rebase.text}\n\nConflict. Fix files, then:\n` +
-            "  git add -A && git rebase --continue\n" +
+          `${merge.error || merge.text}\n\nConflict. Fix files, then:\n` +
+            "  git add -A && git commit --no-edit\n" +
             "  bun run sync-upstream --continue\n" +
-            "To abort: git rebase --abort",
+            "To abort: git merge --abort",
         )
       }
     }
@@ -148,11 +153,11 @@ async function main() {
     if (!existsSync(built)) throw new Error(`Built binary missing: ${built}`)
   }
 
-  // A failed install/build must not publish an unverified rebase. Also catch
+  // A failed install/build must not publish an unverified merge. Also catch
   // tracked files accidentally changed by package lifecycle/build scripts.
   await assertSyncReady(ROOT, true)
-  console.log("pushing origin/main (force-with-lease)…")
-  await mustGit(["push", "--force-with-lease", "origin", LOCAL_BRANCH])
+  console.log("pushing origin/main…")
+  await mustGit(["push", "origin", LOCAL_BRANCH])
 
   const tuiSrc = path.join(ROOT, "tui.json")
   const tuiDest = path.join(homedir(), ".config", "opencode", "tui.json")
@@ -166,6 +171,12 @@ async function main() {
   if (existsSync(skillsSrc)) {
     const installed = await installSkills(skillsSrc, path.join(homedir(), ".config", "opencode", "skills"))
     console.log(`installed ${installed} vendored skills`)
+  }
+
+  const dotfilesSrc = path.join(ROOT, "dotfiles", "opencode")
+  if (existsSync(dotfilesSrc)) {
+    const report = await installGoalConfig(dotfilesSrc, path.join(homedir(), ".config", "opencode"))
+    for (const line of report) console.log(line)
   }
 
   if (noRebuild) {
@@ -198,6 +209,39 @@ export async function installSkills(source: string, destination: string) {
     await copyFile(path.join(source, file.name), path.join(destination, file.name))
   }
   return skills.length
+}
+
+// Goal-mode config distribution. Managed content (command/goal.md,
+// AGENTS.goal.md) is replaced on every sync. The agent definition is a seed:
+// installed only when absent, so per-machine tuning (e.g. pinned model or
+// variant) survives subsequent syncs.
+export async function installGoalConfig(source: string, configDir: string) {
+  const report: string[] = []
+  const managed: Array<[string, string]> = [
+    ["command/goal.md", "command/goal.md"],
+    ["AGENTS.goal.md", "AGENTS.goal.md"],
+  ]
+  for (const [relSrc, relDest] of managed) {
+    const src = path.join(source, relSrc)
+    if (!existsSync(src)) continue
+    const dest = path.join(configDir, relDest)
+    await mkdir(path.dirname(dest), { recursive: true })
+    await rm(dest, { force: true })
+    await copyFile(src, dest)
+    report.push(`installed ${dest}`)
+  }
+  const agentSrc = path.join(source, "agent/goal.md")
+  if (existsSync(agentSrc)) {
+    const agentDest = path.join(configDir, "agent/goal.md")
+    await mkdir(path.dirname(agentDest), { recursive: true })
+    if (existsSync(agentDest)) {
+      report.push(`kept existing ${agentDest} (agent definition is a seed)`)
+    } else {
+      await copyFile(agentSrc, agentDest)
+      report.push(`installed ${agentDest}`)
+    }
+  }
+  return report
 }
 
 if (import.meta.main) {
