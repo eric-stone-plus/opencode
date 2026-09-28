@@ -79,15 +79,18 @@ If a merge conflict hits a file you patched, keep the personal behavior unless t
 
 ## Config outside git
 
-`~/.config/opencode/opencode.jsonc` must match repo-root `opencode.jsonc` (provider `bailian-token-plan-personal` / model `qwen3.8-max`). The full-power tuning in it is intentional:
+`~/.config/opencode/opencode.jsonc` must match repo-root `opencode.jsonc`. Since 2026-09-29 the default model is `xiaomi-token-plan-cn/mimo-v2.6-pro` (with `agent.auto` on the same model, `variant: "high"` — mimo's variant ladder tops out at `high`); the `bailian-token-plan-personal` / `qwen3.8-max` block remains tuned as below. The full-power tuning in it is intentional:
 
-- `limit`: context 983616 / input 852544 / output 131072 (`input` keeps the 256k working window intact when the output cap grows)
-- model `options`: `"effort": "max"` — travels as `output_config.effort`; bailian supports low/medium/high/xhigh/max. Do not downgrade unless asked.
-- model `options.maxOutputTokens`: **65536**, persisted in config so terminals and daemons do not depend on inheriting a newly exported environment variable. The provider capability remains 131072; the default request budget deliberately leaves that ceiling unused for stability. This is a ceiling, not a target response length. Keep the 256k working context cap and pruning.
-- `"compaction": { "auto": true, "prune": true }` — do not revert prune unless asked.
+- bailian `limit`: context 983616 / input 852544 / output 131072 (`input` keeps the 256k working window intact when the output cap grows)
+- bailian model `options`: `"effort": "max"` — travels as `output_config.effort`; bailian supports low/medium/high/xhigh/max. Do not downgrade unless asked.
+- bailian model `options.maxOutputTokens`: **65536**, persisted in config so terminals and daemons do not depend on inheriting a newly exported environment variable. The provider capability remains 131072; the default request budget deliberately leaves that ceiling unused for stability. This is a ceiling, not a target response length. Keep the 256k working context cap and pruning.
+- xiaomi/zhipu blocks (2026-09-29, swarm-verified): `maxOutputTokens: 131072` on both gateways (reasoning_tokens count against max_tokens there; 262144 is rejected with `限制数值范围[1,131072]`), `limit.input` 917504 (xiaomi) / 868928 (zhipu) so the compaction keep-window survives the 131072 output cap.
+- `"compaction": { "auto": true, "prune": true, "preserve_recent_tokens": 40000 }` — do not revert prune unless asked.
 - `"permission": "allow"` — full auto-approve, intentional. Do not revert.
 
-If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/opencode.jsonc` from the repo root.
+If the runtime file drifts, restore it: `cp opencode.jsonc ~/.config/opencode/opencode.jsonc` from the repo root. (Safe again as of 2026-09-29: the root copy is refreshed to match the live file.)
+
+Data backend (2026-09-29 consolidation): the canonical SQLite DB is `~/.local/share/opencode/opencode-main.db`. The binary names the DB after its build channel (`packages/core/src/database/database.ts` `path()`), which forked history across `opencode.db` / `opencode-local.db` / `opencode-main.db`; the pin `OPENCODE_DB=opencode-main.db` in `~/.config/environment.d/10-opencode-db.conf` plus the `~/.local/bin/opencode` wrapper forces one file for every build flavor. The orphan DBs were merged in with `opencode-dbctl migrate` (INSERT OR IGNORE) and retired by rename under `~/.local/share/opencode/retired-20260929/` (kept, never deleted). Day-to-day management: `script/dbctl.py` (`opencode-dbctl`), machine-B reproduction bundle: `bootstrap/`.
 
 The provider block deliberately has **no** `apiKey` line. The key comes from `~/.local/share/opencode/auth.json` (600, outside git): `{"bailian-token-plan-personal": {"type": "api", "key": "sk-sp-…"}}`. Do **not** re-add `"apiKey": "{env:QIANWEN_TP_PERSONAL_KEY}"` — see "API key lost after upgrade" below. Re-seed auth.json after a reinstall or key rotation (key never printed):
 
