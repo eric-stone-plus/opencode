@@ -18,6 +18,7 @@
  * - `.mutating()` tells the runner to reset isolated state after destructive routes.
  */
 import { Effect } from "effect"
+import { mkdir, writeFile } from "node:fs/promises"
 import { OpenApi } from "effect/unstable/httpapi"
 import { TestLLMServer } from "../../lib/llm-server"
 import path from "path"
@@ -1266,6 +1267,43 @@ const scenarios: Scenario[] = [
     }))
     .json(200, (body, ctx) => {
       check(stable(body) === stable(ctx.state.todos), "todos should match seeded state")
+    }),
+  http.protected
+    .get("/session/{sessionID}/goal", "session.goal")
+    .inProject({ git: true })
+    .seeded((ctx) =>
+      Effect.gen(function* () {
+        const session = yield* ctx.session({ title: "Goal session" })
+        const goalFile = path.join(
+          ctx.directory!,
+          ".opencode",
+          "goals",
+          `${session.time.created}-${session.slug}.md`,
+        )
+        yield* Effect.promise(() =>
+          mkdir(path.dirname(goalFile), { recursive: true }).then(() => writeFile(goalFile, "cover session goal")),
+        )
+        return { session, goalFile }
+      }),
+    )
+    .at((ctx) => ({
+      path: route("/session/{sessionID}/goal", { sessionID: ctx.state.session.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, (body, ctx) => {
+      check(isRecord(body) && body.text === "cover session goal", "goal should match seeded text")
+      check(typeof body.path === "string" && body.path === ctx.state.goalFile, "goal should expose its file path")
+    }),
+  http.protected
+    .post("/session/{sessionID}/withdraw", "session.withdraw")
+    .preserveDatabase()
+    .seeded((ctx) => ctx.session({ title: "Withdraw session" }))
+    .at((ctx) => ({
+      path: route("/session/{sessionID}/withdraw", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(404, (body) => {
+      check(isRecord(body), "withdraw with no queued message should map empty to 404")
     }),
   http.protected
     .get("/session/{sessionID}/diff", "session.diff")

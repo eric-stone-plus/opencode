@@ -1523,6 +1523,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               <Show when={duration()}>
                 <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
               </Show>
+              <Show when={props.last ? sync.data.goal[props.message.sessionID]?.text.trim() : undefined}>
+                {(text) => (
+                  <span style={{ fg: theme.textMuted }}> · ⎇ {Locale.truncate(text(), 24)}</span>
+                )}
+              </Show>
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>

@@ -68,6 +68,7 @@ export type Event =
   | EventQuestionV2Replied
   | EventQuestionV2Rejected
   | EventTodoUpdated
+  | EventGoalUpdated
   | EventLspUpdated
   | EventPermissionAsked
   | EventPermissionReplied
@@ -1368,6 +1369,15 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "goal.updated"
+        properties: {
+          sessionID: string
+          text: string
+          path: string
+        }
+      }
+    | {
+        id: string
         type: "lsp.updated"
         properties: {
           [key: string]: unknown
@@ -2555,6 +2565,17 @@ export type NotFoundError = {
   }
 }
 
+export type SessionGoal = {
+  /**
+   * Session goal text, empty string when no goal is set
+   */
+  text: string
+  /**
+   * Absolute path of the session goal file
+   */
+  path: string
+}
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -2924,6 +2945,7 @@ export type V2Event =
   | QuestionV2Replied
   | QuestionV2Rejected
   | TodoUpdated
+  | GoalUpdated
   | LspUpdated
   | PermissionAsked
   | PermissionReplied
@@ -5684,6 +5706,25 @@ export type TodoUpdated = {
   }
 }
 
+export type GoalUpdated = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "goal.updated"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    text: string
+    path: string
+  }
+}
+
 export type LspUpdated = {
   id: string
   metadata?: {
@@ -6853,6 +6894,16 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
+  }
+}
+
+export type EventGoalUpdated = {
+  id: string
+  type: "goal.updated"
+  properties: {
+    sessionID: string
+    text: string
+    path: string
   }
 }
 
@@ -9728,6 +9779,40 @@ export type SessionTodoResponses = {
 }
 
 export type SessionTodoResponse = SessionTodoResponses[keyof SessionTodoResponses]
+
+export type SessionGoalData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/goal"
+}
+
+export type SessionGoalErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type SessionGoalError = SessionGoalErrors[keyof SessionGoalErrors]
+
+export type SessionGoalResponses = {
+  /**
+   * Session goal
+   */
+  200: SessionGoal
+}
+
+export type SessionGoalResponse = SessionGoalResponses[keyof SessionGoalResponses]
 
 export type SessionDiffData = {
   body?: never

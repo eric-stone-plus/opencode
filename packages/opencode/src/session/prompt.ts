@@ -7,6 +7,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { SessionRevert } from "./revert"
 import { Session } from "./session"
+import { SessionGoal } from "@opencode-ai/schema/session-goal"
 import { Agent } from "../agent/agent"
 import { Provider } from "@/provider/provider"
 
@@ -1558,7 +1559,13 @@ const layer = Layer.effect(
           const ctx = yield* InstanceState.context
           const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
           const cleared = /^(clear|none|remove)$/i.test(text)
-          yield* fsys.writeWithDirs(Session.goal(session, ctx), cleared ? "" : text).pipe(Effect.orDie)
+          const goalPath = Session.goal(session, ctx)
+          yield* fsys.writeWithDirs(goalPath, cleared ? "" : text).pipe(Effect.orDie)
+          yield* events.publish(SessionGoal.Event.Updated, {
+            sessionID: input.sessionID,
+            text: cleared ? "" : text,
+            path: goalPath,
+          })
         }
       }
 

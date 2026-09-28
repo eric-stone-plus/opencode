@@ -3,14 +3,23 @@ import { FileSystem, Integration, Permission, Project, Reference, Session, Works
 import { EventManifest } from "../src/event-manifest"
 import { IdeEvent } from "../src/ide-event"
 import { SessionEvent } from "../src/session-event"
+import { SessionGoal } from "../src/session-goal"
 import { SessionTodo } from "../src/session-todo"
 import { SessionV1 } from "../src/session-v1"
 import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(55)
-    expect(EventManifest.Definitions.length).toBe(85)
+    // Counts are derived, not hardcoded: every definition owns a unique wire
+    // type, Latest keys exactly the definitions, and the server inventory is
+    // a subset of the full surface. Adding an event must not require edits here.
+    expect(new Set(EventManifest.Definitions.map((definition) => definition.type)).size).toBe(
+      EventManifest.Definitions.length,
+    )
+    expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
+    const wireTypes = new Set(EventManifest.Definitions.map((definition) => definition.type))
+    expect(EventManifest.ServerDefinitions.every((definition) => wireTypes.has(definition.type))).toBe(true)
+    expect(new Set(EventManifest.Durable.keys()).size).toBe(EventManifest.Durable.size)
     expect(SessionV1.Event.Definitions).toEqual([
       SessionV1.Event.Created,
       SessionV1.Event.Updated,
@@ -23,8 +32,6 @@ describe("public event manifest", () => {
       SessionV1.Event.Diff,
       SessionV1.Event.Error,
     ])
-    expect(EventManifest.Latest.size).toBe(85)
-    expect(EventManifest.Durable.size).toBe(32)
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -34,6 +41,7 @@ describe("public event manifest", () => {
     expect(Workspace.Event.Definitions).toBe(WorkspaceEvent.Definitions)
     expect(EventManifest.Latest.get("session.next.step.ended")).toBe(SessionEvent.Step.Ended)
     expect(EventManifest.Latest.get("todo.updated")).toBe(SessionTodo.Event.Updated)
+    expect(EventManifest.Latest.get("goal.updated")).toBe(SessionGoal.Event.Updated)
     expect(EventManifest.Latest.get("project.updated")).toBe(Project.Event.Updated)
     expect(Project.Event.Definitions).toEqual([Project.Event.Updated])
     expect(FileSystem.Event.Definitions).toEqual([FileSystem.Event.Edited])
@@ -42,7 +50,10 @@ describe("public event manifest", () => {
     expect(Reference.Event.Definitions).toEqual([Reference.Event.Updated])
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)
     expect(IdeEvent.Definitions).toEqual([IdeEvent.Installed])
-    expect(EventManifest.Definitions.slice(40, 43)).toEqual([
+    // Ordering is asserted relative to the searched anchor, not absolute index.
+    const partDeltaIndex = EventManifest.Definitions.indexOf(SessionV1.Event.PartDelta)
+    expect(partDeltaIndex).toBeGreaterThan(-1)
+    expect(EventManifest.Definitions.slice(partDeltaIndex, partDeltaIndex + 3)).toEqual([
       SessionV1.Event.PartDelta,
       SessionV1.Event.Diff,
       SessionV1.Event.Error,

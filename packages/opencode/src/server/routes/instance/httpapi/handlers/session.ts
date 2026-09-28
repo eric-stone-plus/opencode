@@ -6,6 +6,8 @@ import { Command } from "@/command"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
+import { SessionGoal } from "@opencode-ai/schema/session-goal"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { SessionCompaction } from "@/session/compaction"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
@@ -57,6 +59,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const permissionSvc = yield* Permission.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
+    const fsys = yield* FSUtil.Service
     const summary = yield* SessionSummary.Service
     const events = yield* EventV2Bridge.Service
     const scope = yield* Scope.Scope
@@ -94,6 +97,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const todo = Effect.fn("SessionHttpApi.todo")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
       return yield* todoSvc.get(ctx.params.sessionID)
+    })
+
+    const goal = Effect.fn("SessionHttpApi.goal")(function* (ctx: { params: { sessionID: SessionID } }) {
+      const info = yield* requireSession(ctx.params.sessionID)
+      const instance = yield* InstanceState.context
+      const goalPath = Session.goal(info, instance)
+      const text =
+        (yield* fsys.readFileStringSafe(goalPath).pipe(Effect.orElseSucceed(() => undefined)))?.trim() ?? ""
+      return { text, path: goalPath } satisfies SessionGoal.Info
     })
 
     const diff = Effect.fn("SessionHttpApi.diff")(function* (ctx: {
@@ -427,6 +439,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("get", get)
       .handle("children", children)
       .handle("todo", todo)
+      .handle("goal", goal)
       .handle("diff", diff)
       .handle("messages", messages)
       .handle("message", message)
