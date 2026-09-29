@@ -1554,16 +1554,30 @@ const layer = Layer.effect(
       const agentName = cmd.agent ?? input.agent
 
       if (input.command === Command.Default.GOAL) {
-        const text = input.arguments.trim()
-        if (text) {
+        // The run CLI wraps space-containing argv words in quotes so positional
+        // substitution keeps its boundaries (run.ts message join); the goal
+        // branch consumes the raw argument string, so drop one wrapping quote
+        // layer before parsing.
+        const trimmed = input.arguments.trim()
+        const quoteWrapped = /^"([\s\S]*)"$/.exec(trimmed) ?? /^'([\s\S]*)'$/.exec(trimmed)
+        const text = (quoteWrapped ? quoteWrapped[1] : input.arguments.trim()).trim()
+        // "/goal edit <text>" rewrites the goal in place and skips the swarm turn
+        // (the goal template owns a brief confirm turn); a bare "/goal edit" only
+        // reports the current goal and writes nothing.
+        const edit = /^edit(?:\s+([\s\S]+))?$/i.exec(text)
+        const update = edit === null ? text : (edit[1] ?? "").trim()
+        const showOnly = edit !== null && update === ""
+        if (text && !showOnly) {
           const ctx = yield* InstanceState.context
           const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
-          const cleared = /^(clear|none|remove)$/i.test(text)
+          // Only a bare clear/none/remove clears; "/goal edit clear" stores the
+          // literal word as the goal text.
+          const cleared = edit === null && /^(clear|none|remove)$/i.test(text)
           const goalPath = Session.goal(session, ctx)
-          yield* fsys.writeWithDirs(goalPath, cleared ? "" : text).pipe(Effect.orDie)
+          yield* fsys.writeWithDirs(goalPath, cleared ? "" : update).pipe(Effect.orDie)
           yield* events.publish(SessionGoal.Event.Updated, {
             sessionID: input.sessionID,
-            text: cleared ? "" : text,
+            text: cleared ? "" : update,
             path: goalPath,
           })
         }
