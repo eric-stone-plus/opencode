@@ -266,8 +266,9 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * The kill-guard battery and its five wirings.
 * Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `motoko.ts` symlink.
 * Orphan skills `longrun-stability-audit`, `motoko-seat-ops`.
-* Goal-mode files `command/goal-edit.md`, `agent/goal-edit.md` (when shipped —
-  see bundle layout).
+* Goal-mode files `command/goal.md`, `agent/goal.md` (when shipped —
+  see bundle layout). `/goal edit <text>` support is a fork-binary patch
+  (`SessionPrompt.command`), so a machine-B build must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
   byte-exact from machine A's `~/.bashrc`.
 
@@ -332,8 +333,8 @@ bootstrap/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── mpskills-update.ts        as-is (hardcodes /home/eric)
 │   └── MOTOKO_SYMLINK.txt        symlink target record (TARGET: line)
-├── command/                      goal-edit.md (if shipped at cut time)
-└── agent/                        goal-edit.md (if shipped at cut time)
+├── command/                      goal.md (template with /goal edit rules)
+└── agent/                        goal.md (goal agent definition)
 ```
 
 ---

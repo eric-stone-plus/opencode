@@ -283,7 +283,7 @@ fi
 
 # --- 11. goal command/agent files -------------------------------------------
 echo "-- goal command/agent"
-for pair in "command/goal-edit.md" "agent/goal-edit.md"; do
+for pair in "command/goal.md" "agent/goal.md"; do
   if [ -f "$BOOTSTRAP_DIR/$pair" ]; then
     if [ -f "$CFG/$pair" ]; then
       pass "$pair installed"
@@ -294,10 +294,17 @@ for pair in "command/goal-edit.md" "agent/goal-edit.md"; do
     if [ -f "$CFG/$pair" ]; then
       pass "$pair present at target (not shipped in this bundle revision)"
     else
-      warn "$pair absent at target and not shipped in bundle (skip condition documented in the report)"
+      warn "$pair absent at target and not shipped in bundle"
     fi
   fi
 done
+if [ -f "$CFG/command/goal.md" ]; then
+  if grep -q 'starts with "edit "' "$CFG/command/goal.md"; then
+    pass "command/goal.md carries the /goal edit rules"
+  else
+    fail "command/goal.md lacks the /goal edit rules (stale template — re-sync from dotfiles)"
+  fi
+fi
 
 echo
 echo "== summary: $FAILS fail(s), $WARNS warn(s) =="
