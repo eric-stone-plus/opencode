@@ -21,7 +21,7 @@ Every number traces to a primary — a pasted output or a named round+line.
 An applier re-computes every numeral it is told to write, including numerals supplied by the caller.
 
 **Cases — three appliers killed in one round:**
-- Told to correct a clock delta, wrote `8h1m20s`. The subtraction gives **7h58m40s** (626160 − 597440 = 28720 s). The error was 80 s in the direction that made the number prettier.
+- Told to correct a clock delta, wrote `8h1m20s`. The subtraction gives **7h58m40s** (626160 − 597440 = 28720 s). The error was 160 s in the direction that made the number prettier.
 - Wrote `869 s` for a value no primary contained: the two on-disk records give **949.3 s** (24194.3 − 23245). `grep -c -F '869'` on both primaries returned **0**.
 - Wrote "the stale figure was computed as 70.5 − 58 = 12.5" to explain a published `12`. Three defects in one sentence: the arithmetic yields 12.5, not 12; `70.5` appears **0** times in the cited primary; and the provenance was asserted, never sourced.
 

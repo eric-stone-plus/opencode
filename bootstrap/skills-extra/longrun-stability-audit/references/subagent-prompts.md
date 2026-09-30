@@ -33,7 +33,7 @@ Two adaptations, because those skills assume a human you do not have:
 
 ## Hard constraints (host policy — violating these ends the session)
 - Live-host command budget for this round: <N>. Zero means read-only file inspection only:
-  grep, sed -n, awk, wc, od, stat, find, python3 -c.
+  grep, sed -n, awk, wc, od, stat, find.
   Forbidden at any budget: journalctl/systemctl/sysctl state changes, package or disk
   mutations, network probes, process kills.
 - Never kill by command-line pattern (`pkill -f`); never pipe `pgrep` into `kill`.

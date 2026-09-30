@@ -86,10 +86,15 @@ hostname after the scope precheck (DNS pinning is not universal), and when
 cleaning up stray engine children, terminate recorded numeric PIDs/process
 groups only — cleanup by name catches the wrong processes.
 
-`query` and `events` page by cursor and return pseudonymous references with
-typed metadata — follow the cursor to exhaustion before concluding a tail is
-the whole story, and never expect graph strings or raw evidence payloads
-from them.
+`query` and `events` are one-shot read-only listings, not cursor pages: `query`
+dumps every matching entity in one pass (id, state, confidence, and the
+entity's own title/value — graph strings, not pseudonyms), and `events` prints
+a windowed tail (`--since-seq`, strictly greater, plus `--limit`, default 20;
+narrow with `--kind`/`--entity`) that includes each event's raw payload text —
+payloads are never hidden. `--json` emits the parsed payload verbatim, and an
+undecodable row is printed raw with a marker rather than dropped. A tail is not
+the whole story by default: keep re-running with a raised `--since-seq` until
+the rows run out, and only then treat the tail as complete.
 
 ## strix line
 

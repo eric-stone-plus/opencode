@@ -19,9 +19,17 @@
 #      exit; _oc_tty_flush_input discards the residual pty input queue.
 #      (NEVER send ?1049l in there — see original comment in the block.)
 #   2. Egress self-heal: probe real direct egress first (proxy vars stripped);
-#      only if both provider endpoints fail, fall back to the local causeway
+#      only if all provider endpoints fail, fall back to the local causeway
 #      proxy chain (18880 -> 17878) for the session. Direct recovery
 #      automatically falls back to direct on the next launch.
+#
+# DEVIATION LOG (the marker claim "UNMODIFIED machine-A text" is scoped below):
+#   2026-09-30 review F6 — probe set extended from two endpoints to three:
+#   the default provider moved to xiaomi-token-plan-cn/mimo-v2.6-pro and the
+#   wrapper still probed only the ali/glm endpoints, so a xiaomi-only outage
+#   never triggered proxy self-heal. Endpoint host taken from the seat's
+#   opencode.jsonc provider.xiaomi-token-plan-cn.options.baseURL (no derived
+#   host assumption). Everything else stays machine-A verbatim.
 #
 # INSTALL (machine B):
 #   Option A (install.sh does this by default):
@@ -92,14 +100,17 @@ _oc_tty_flush_input() {
 }
 opencode() {
     # 双端点任一通即直连：封 bigmodel 单挂时场景 B 的静默中途失败（2026-09-28 审计裁决）
+    # 2026-09-30 (review F6): third probe added for the default xiaomi provider
+    # (see DEVIATION LOG above) — any ONE reachable endpoint means direct is fine.
     local ep_ali="https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
     local ep_glm="https://open.bigmodel.cn/api/anthropic/v1/messages"
+    local ep_xiaomi="https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
     local rc
     _oc_tty_reset   # 启动前先清一遍：本终端可能残留着上一个硬死实例泄漏的鼠标模式
-    if _egress_direct_ok "$ep_ali" || _egress_direct_ok "$ep_glm"; then
+    if _egress_direct_ok "$ep_ali" || _egress_direct_ok "$ep_glm" || _egress_direct_ok "$ep_xiaomi"; then
         command opencode "$@"
     elif _egress_18880_or_bail opencode; then
-        echo "opencode: 双端点直连皆不可达，本次会话走 $EGRESS_PROXY" >&2
+        echo "opencode: 三端点直连皆不可达，本次会话走 $EGRESS_PROXY" >&2
         _via_proxy opencode "$@"
     else
         command opencode "$@"

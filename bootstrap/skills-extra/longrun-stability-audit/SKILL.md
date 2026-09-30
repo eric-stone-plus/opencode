@@ -30,7 +30,7 @@ Either way the prompt must still carry what no skill can supply: the goal, exact
 
 ### Step 0 — Pin the box and the budget
 
-Record, in one file: hostname, uptime, kernel, the workload under test, and the **thermal budget** (how many live commands this round may spend). A hot box (this method's origin host idled at 97–99 °C) makes live measurement expensive, and the archive's own primaries usually suffice — a **zero-live-command round is a legitimate round**. Declare the budget in every prompt so subagents do not spend it independently.
+Record, in one file: hostname, uptime, kernel, the workload under test, and the **thermal budget** (how many live commands this round may spend). A hot box (this method's origin host reaches 97–99 °C under concurrent AI load — a load-case figure, not an idle reading) makes live measurement expensive, and the archive's own primaries usually suffice — a **zero-live-command round is a legitimate round**. Declare the budget in every prompt so subagents do not spend it independently.
 
 Also pin the safety rails: which commands are forbidden outright (state-mutating `systemctl`/`sysctl`/package/disk operations, process kills by pattern), which directories are read-only, which are off-box. Paste the rails into every prompt; a subagent that has not seen them will run them.
 
@@ -107,7 +107,7 @@ Temp files, scratch scripts, background processes, partial installs, dirty git s
 
 ## Evidence rules
 
-Eight rules; the case law behind each — including four defects the caller itself introduced — is in [`references/evidence-rules.md`](references/evidence-rules.md). Read it before your first dispatch, and paste the rules into every prompt.
+Eleven rules; the case law behind each — including four defects the caller itself introduced — is in [`references/evidence-rules.md`](references/evidence-rules.md). Read it before your first dispatch, and paste the rules into every prompt.
 
 1. **Copy, cite, or measure.** Every number in the archive traces to a primary: a pasted output or a named round+line. Aggregation is a generation step — copying a hedged claim without its hedge creates a new false claim.
 2. **Re-derive before you write.** An applier re-computes every numeral it is told to write. Three appliers were killed for transcribing numerals they never derived.

@@ -10,7 +10,7 @@ Portability: commands assume a systemd/journald Linux host (Fedora in the origin
 
 | Measure | Command | Trap |
 | --- | --- | --- |
-| Thermal / throttling | `sensors`, `cat /sys/class/thermal/thermal_zone*/temp`, `lscpu | grep MHz` | A box at 97–99 °C under concurrent AI load makes live measurement itself a load generator. Set the **thermal budget** before measuring, and prefer archive primaries over fresh probes. |
+| Thermal / throttling | `sensors`, `cat /sys/class/thermal/thermal_zone*/temp`, `lscpu | grep MHz` | A box whose load-case temperature is 97–99 °C (measured under concurrent AI load, not at idle) makes live measurement itself a load generator. Set the **thermal budget** before measuring, and prefer archive primaries over fresh probes. |
 | Memory errors | `journalctl -k | grep -iE 'mce|edac|ecc'`, `edac-util -v` | Absence of hits is not absence of ECC: many boards report only via firmware. Say which channel you checked. |
 | Disk health | `smartctl -H /dev/nvme0`, `smartctl -A` | `-H` says PASSED on a drive with growing reallocated sectors; read the attributes, not the verdict. |
 | Firmware/ucode | `dmesg | grep -i microcode`, `fwupdmgr get-devices` (read-only subcommands) | A microcode load failure is silent at runtime and shows only in early boot records — which L2 may have mis-timestamped. |

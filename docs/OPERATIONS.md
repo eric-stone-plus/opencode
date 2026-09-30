@@ -1,10 +1,12 @@
-# Stability audit: 2026-09-19
+# Operations
+
+## 1. Stability audit: 2026-09-19
 
 This audit covers the personal fork's `main` branch, starting at `dec535568`. It focuses on the personal overlay, Qwen's Anthropic endpoint, history loading in long sessions, tool retries, cancellation, and TUI lifecycles. It is not an exhaustive audit of the upstream project.
 
 Engineering assessment: the 256k working window, default pruning of old tool output, lower idle frame rate, and PDF text extraction are sound choices. The main weaknesses were asynchronous boundaries and failure recovery, with concrete risks of duplicate tool execution, execution in the wrong directory, and interrupted event synchronization. Configuration values and happy-path tests alone do not establish reliability for unattended long tasks. This audit prioritizes those reproduced failures.
 
-## Fixes
+### Fixes
 
 | Priority | Trigger and impact                                                                                                                    | Fix and evidence                                                                                                                                                                                                                                                                                                                      |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -21,7 +23,7 @@ Engineering assessment: the 256k working window, default pruning of old tool out
 | Medium   | An environment file defines an output budget, but an older terminal or daemon never inherited it                                      | Persist per-model `options.maxOutputTokens`. A valid process environment override still takes precedence, and the model's output capability remains an upper bound.                                                                                                                                                                   |
 | Medium   | Animations restore stale frame rates; upstream sync pushes before discovering build failures; installation overwrites the live binary | Centralize render budgets, validate and install locked dependencies and build before pushing, and install through a temporary file on the same filesystem with an atomic rename. Also correct Linux wait-state classification in diagnostic sampling.                                                                                 |
 
-## Final runtime configuration
+### Final runtime configuration
 
 - Provider: `bailian-token-plan-personal`; model: `qwen3.8-max`.
 - Endpoint: `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1`.
@@ -31,7 +33,7 @@ Engineering assessment: the 256k working window, default pruning of old tool out
 - Idle rendering: 8fps; busy and animation rendering: 30fps. Mouse support and personal exit and paging bindings are preserved.
 - Retain the default AI SDK execution path. The experimental native runtime remains disabled; tool concurrency and network timeouts are unchanged.
 
-## Validation
+### Validation
 
 | Coverage                                                                                                         | Result                                                                                                                                                                                |
 | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -51,7 +53,7 @@ Local evidence: `/tmp/opencode-audit-final-suite.log`, `/tmp/opencode-cli-final.
 
 Pre-installation backup: `~/Downloads/stability-20260919T105706Z/`, containing the previous `opencode`, `opencode.jsonc`, and `tui.json`. All file hashes, sizes, and permissions were verified after relocation. Configuration and binary replacement used atomic renames; credentials were not added to the repository or this report.
 
-## Remaining limitations
+### Remaining limitations
 
 - A stream failure after tool execution **preserves state and stops automatic replay**; the session requires continuation. This prioritizes stability but does not guarantee exactly-once execution for arbitrary external tools: completion of external operations before a power loss or SIGKILL may still need verification.
 - No multi-day production Bailian soak test was performed, and no reliable production throughput or p99 latency measurement is available. The short request only confirms that the current endpoint accepts the configuration and completes successfully. Local patches cannot eliminate provider rate limits, network failures, or external process termination.

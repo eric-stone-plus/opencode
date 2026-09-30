@@ -74,10 +74,9 @@ chmod 755 ~/.opencode/bin/opencode
 
 `script/sync-upstream.ts` additionally installs `~/.config/opencode/tui.json`
 (:162-168), the vendored `skills/` (:197-214, rm+cp), `command/goal.md` +
-`AGENTS.goal.md` (:218-248, rm+copyFile) and seeds `agent/goal.md`. It does NOT
-touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, `autonomy.md`, or any other
-`command/*.md` / `agent/*.md`. Run it if you want its pieces; this bundle does
-not duplicate them.
+`AGENTS.goal.md` + `autonomy.md` (:218-246, rm+copyFile) and seeds
+`agent/goal.md`. It does NOT touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, or
+any other `command/*.md` / `agent/*.md`. Run it if you want its pieces.
 
 ### Step 3 — this bundle's installer
 
@@ -93,8 +92,8 @@ Flags: `--dry-run`, `--home <path>`, `--user <name>`, `--link` (file-symlink
 `opencode.jsonc` into the checkout instead of copying), `--motoko-plugin <path>`
 (motoko symlink target), `--no-bashrc`. Idempotent: a second run reports
 `0 change(s)` and does nothing. Every overwritten file gets a timestamped
-`*.bak.<YYYYmmddHHMMSS>` sibling; files that must never be overwritten are
-listed in §5.
+`*.bak.<YYYYmmddHHMMSS>` sibling (the newest 20 per target are kept, oldest
+pruned by mtime); files that must never be overwritten are listed in §5.
 
 ### Step 4 — secret entry (the only manual step)
 
@@ -104,6 +103,9 @@ Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth
 ```sh
 # install.sh created the skeleton if auth.json was absent:
 ls -l ~/.local/share/opencode/auth.json   # mode 0600
+# mode 0600 is converged on every run for auth.json, ~/.config/opencode/env
+# and the secret-bearing environment.d drop-ins (content is never touched):
+ls -l ~/.config/opencode/env ~/.config/environment.d/{95-quinte-provider,motoko-keys}.conf
 ```
 
 ### Step 5 — verify
@@ -124,22 +126,22 @@ Verify the wrapper is live with `type opencode` (must show a *function*).
 | --- | --- | --- |
 | 1 | dirs under `~/.config/opencode`, `~/.config/environment.d`, `~/.config/agent-hooks`, `~/.local/bin` | create if missing |
 | 2 | `~/.config/opencode/opencode.jsonc` | copy (+ username sed) or `--link` symlink; timestamp-backup on overwrite |
-| 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; chmod 600; never touched afterwards |
-| 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds) |
+| 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; mode converged 0600 (content never touched afterwards) |
+| 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` shim → `~/.opencode/bin/opencode` | only if absent (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
-| 4 | `environment.d/{90-fcitx5,95-quinte-provider,motoko-home,motoko-keys}.conf` | **only if absent**; templates carry names only |
+| 4 | `environment.d/{90-fcitx5,95-quinte-provider,motoko-home,motoko-keys}.conf` | **only if absent**; templates carry names only; the three 0600-claiming ones (`95-quinte-provider`, `motoko-home`, `motoko-keys`) get mode 0600 |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
-| 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard path to the target home / inserts the stanza when absent; backup first |
+| 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza when absent; backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
 | 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts}` | copies, as-is (see §5) |
 | 7 | `plugin/motoko.ts` | **file-symlink** to the motoko checkout (dangling = non-fatal, warned) |
-| 8 | `command/`, `agent/` goal files | only those shipped in the bundle |
-| 9 | `~/.bashrc` | marked, idempotent `source` line for `shell/bashrc-opencode-block.sh` inside an interactive guard; `--no-bashrc` skips |
+| 8 | `command/`, `agent/` goal files, `autonomy.md` | only those shipped in the bundle |
+| 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older bundle-path source lines are rewritten in place, never duplicated); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
 Explicit non-goals (owned by `script/sync-upstream.ts` or by hand):
 `tui.json`, the vendored `skills/` set, `command/goal.md`, `AGENTS.goal.md`,
-`AGENTS.md`, `autonomy.md`, the real binary.
+`AGENTS.md`, the real binary.
 
 **SYMLINK RULE.** Individual *file* symlinks into a git checkout are safe and
 better (live-edit). *Directory* symlinks for `skills/` and `command/` are
@@ -266,11 +268,15 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * The kill-guard battery and its five wirings.
 * Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `motoko.ts` symlink.
 * Orphan skills `longrun-stability-audit`, `motoko-seat-ops`.
-* Goal-mode files `command/goal.md`, `agent/goal.md` (when shipped —
-  see bundle layout). `/goal edit <text>` support is a fork-binary patch
+* Goal-mode files `command/goal.md`, `agent/goal.md`, `autonomy.md` (when
+  shipped — see bundle layout). `/goal edit <text>` support is a fork-binary patch
   (`SessionPrompt.command`), so a machine-B build must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
-  byte-exact from machine A's `~/.bashrc`.
+  machine-A `~/.bashrc` verbatim **except** the egress probe set: 2026-09-30
+  it was extended to the default xiaomi provider endpoint
+  (`token-plan-cn.xiaomimimo.com`, host from `opencode.jsonc` provider config)
+  — the two-endpoint set predates the default-model switch and missed
+  xiaomi-only outages.
 
 **Not reproduced (by design or by nature)**
 
@@ -334,7 +340,8 @@ bootstrap/
 │   ├── mpskills-update.ts        as-is (hardcodes /home/eric)
 │   └── MOTOKO_SYMLINK.txt        symlink target record (TARGET: line)
 ├── command/                      goal.md (template with /goal edit rules)
-└── agent/                        goal.md (goal agent definition)
+├── agent/                        goal.md (goal agent definition)
+└── autonomy.md                   autonomous-execution policy (instructions array)
 ```
 
 ---
@@ -346,7 +353,8 @@ bootstrap/
   `opencode.jsonc` was being refreshed in parallel to match it — compare before
   trusting either: `diff ../../opencode.jsonc config/opencode.jsonc`.
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
-  against `~/.bashrc` lines 111, 210-240, 252-290.
+  against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
+  the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
 * `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts}` and
   `skills-extra/` are byte-copies of the machine-A files named above.
 * No secret values were copied into this bundle (verified: auth.json carries
