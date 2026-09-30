@@ -103,17 +103,19 @@ function getCopyMethod() {
     if (native?.[0] === "osascript") {
       return async (text: string) => {
         const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-        await command("osascript", ["-e", `set the clipboard to "${escaped}"`]).catch(() => undefined)
+        // Failures propagate: swallowing them made write() always resolve and
+        // every caller toast "copied" over a dead clipboard.
+        await command("osascript", ["-e", `set the clipboard to "${escaped}"`])
       }
     }
     if (native) {
       return async (text: string) => {
-        await command(native[0], native.slice(1), text).catch(() => undefined)
+        await command(native[0], native.slice(1), text)
       }
     }
     return async (text: string) => {
       const { default: clipboardy } = await import("clipboardy")
-      await clipboardy.write(text).catch(() => undefined)
+      await clipboardy.write(text)
     }
   })())
 }
