@@ -73,4 +73,19 @@ describe("parseGoalArguments", () => {
     expect(parseGoalArguments('edit "new direction"').update).toBe("new direction")
     expect(parseGoalArguments("edit 'new direction'").update).toBe("new direction")
   })
+
+  test("run CLI escapes are decoded, not stored as literal backslashes", () => {
+    // `opencode run --command goal 'say "hi" now'` arrives as "say \"hi\" now"
+    expect(parseGoalArguments(String.raw`"say \"hi\" now"`).update).toBe('say "hi" now')
+    const edit = parseGoalArguments(String.raw`"edit fix \"x\""`)
+    expect(edit.edit).toBe(true)
+    expect(edit.update).toBe('fix "x"')
+  })
+
+  test("several separately quoted words keep their quotes balanced", () => {
+    expect(parseGoalArguments('"a" "b"').update).toBe('"a" "b"')
+    expect(parseGoalArguments('"a b" c "d e"').update).toBe('"a b" c "d e"')
+    expect(parseGoalArguments('edit "a" "b"').update).toBe('"a" "b"')
+    expect(parseGoalArguments(`'a' 'b'`).update).toBe(`'a' 'b'`)
+  })
 })

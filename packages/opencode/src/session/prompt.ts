@@ -1821,15 +1821,13 @@ export function parseGoalArguments(raw: string): {
   cleared: boolean
 } {
   const trimmed = raw.trim()
-  const quoteWrapped = /^"([\s\S]*)"$/.exec(trimmed) ?? /^'([\s\S]*)'$/.exec(trimmed)
-  const text = (quoteWrapped ? quoteWrapped[1] : trimmed).trim()
+  const text = unquoteGoalText(trimmed).trim()
   const editMatch = /^edit(?:\s+([\s\S]+))?$/i.exec(text)
   // A quoted empty update (`/goal edit ""`) is an empty update, not the
   // literal two-quote goal text: strip one wrapping quote layer from the
   // update the same way the CLI's argv quoting is stripped above.
   const updateRaw = editMatch === null ? text : (editMatch[1] ?? "").trim()
-  const updateQuoted = /^"([\s\S]*)"$/.exec(updateRaw) ?? /^'([\s\S]*)'$/.exec(updateRaw)
-  const update = (updateQuoted ? updateQuoted[1] : updateRaw).trim()
+  const update = (editMatch === null ? updateRaw : unquoteGoalText(updateRaw)).trim()
   return {
     text,
     edit: editMatch !== null,
@@ -1838,6 +1836,26 @@ export function parseGoalArguments(raw: string): {
     cleared: editMatch === null && /^(clear|none|remove)$/i.test(text),
   }
 }
+
+/**
+ * Remove one argv quoting layer from /goal text. The run CLI (`opencode run
+ * --command goal …`) sends a space-containing argv word as `"` + word with
+ * `"` escaped as `\"` + `"`, so a text that is exactly one such token is
+ * decoded, escapes included. A text made of several quoted/bare words
+ * (`"a" "b"`) is kept literally: stripping its outer pair would leave the
+ * unbalanced `a" "b`. Any other quote-wrapped text loses the outer pair only.
+ */
+function unquoteGoalText(text: string) {
+  const double = /^"((?:\\"|[^"])*)"$/.exec(text)
+  if (double) return double[1].replaceAll('\\"', '"')
+  const single = /^'([^']*)'$/.exec(text)
+  if (single) return single[1]
+  const wrapped = /^(["'])([\s\S]*)\1$/.exec(text)
+  if (!wrapped || goalWordsRegex.test(text)) return text
+  return wrapped[2]
+}
+const goalWordsRegex = /^(?:"(?:\\"|[^"])*"|'[^']*'|[^\s"']+)(?:\s+(?:"(?:\\"|[^"])*"|'[^']*'|[^\s"']+))+$/
+
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g
