@@ -212,14 +212,15 @@ export async function installSkills(source: string, destination: string) {
 }
 
 // Goal-mode config distribution. Managed content (command/goal.md,
-// AGENTS.goal.md) is replaced on every sync. The agent definition is a seed:
-// installed only when absent, so per-machine tuning (e.g. pinned model or
-// variant) survives subsequent syncs.
+// AGENTS.goal.md, autonomy.md) is replaced on every sync. The agent definition
+// is a seed: installed only when absent, so per-machine tuning (e.g. pinned
+// model or variant) survives subsequent syncs.
 export async function installGoalConfig(source: string, configDir: string) {
   const report: string[] = []
   const managed: Array<[string, string]> = [
     ["command/goal.md", "command/goal.md"],
     ["AGENTS.goal.md", "AGENTS.goal.md"],
+    ["autonomy.md", "autonomy.md"],
   ]
   for (const [relSrc, relDest] of managed) {
     const src = path.join(source, relSrc)

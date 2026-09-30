@@ -1551,36 +1551,29 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
-      const agentName = cmd.agent ?? input.agent
+      // /goal routes the agent from its own argument grammar (M3): a set or
+      // "edit <text>" lands on the goal agent (red Goal mode), a bare
+      // clear/none/remove lands on the default agent (Auto), and the
+      // read-only forms (bare "/goal edit", bare "/goal") stay where the
+      // session already is. Every other command routes the old way.
+      const goal = input.command === Command.Default.GOAL ? parseGoalArguments(input.arguments) : undefined
+      const agentName = yield* Effect.gen(function* () {
+        if (goal === undefined) return cmd.agent ?? input.agent
+        if (goal.cleared) return yield* agents.defaultAgent()
+        if (goal.showOnly) return input.agent
+        return cmd.agent ?? input.agent
+      })
 
-      if (input.command === Command.Default.GOAL) {
-        // The run CLI wraps space-containing argv words in quotes so positional
-        // substitution keeps its boundaries (run.ts message join); the goal
-        // branch consumes the raw argument string, so drop one wrapping quote
-        // layer before parsing.
-        const trimmed = input.arguments.trim()
-        const quoteWrapped = /^"([\s\S]*)"$/.exec(trimmed) ?? /^'([\s\S]*)'$/.exec(trimmed)
-        const text = (quoteWrapped ? quoteWrapped[1] : input.arguments.trim()).trim()
-        // "/goal edit <text>" rewrites the goal in place and skips the swarm turn
-        // (the goal template owns a brief confirm turn); a bare "/goal edit" only
-        // reports the current goal and writes nothing.
-        const edit = /^edit(?:\s+([\s\S]+))?$/i.exec(text)
-        const update = edit === null ? text : (edit[1] ?? "").trim()
-        const showOnly = edit !== null && update === ""
-        if (text && !showOnly) {
-          const ctx = yield* InstanceState.context
-          const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
-          // Only a bare clear/none/remove clears; "/goal edit clear" stores the
-          // literal word as the goal text.
-          const cleared = edit === null && /^(clear|none|remove)$/i.test(text)
-          const goalPath = Session.goal(session, ctx)
-          yield* fsys.writeWithDirs(goalPath, cleared ? "" : update).pipe(Effect.orDie)
-          yield* events.publish(SessionGoal.Event.Updated, {
-            sessionID: input.sessionID,
-            text: cleared ? "" : update,
-            path: goalPath,
-          })
-        }
+      if (goal !== undefined && !goal.showOnly) {
+        const ctx = yield* InstanceState.context
+        const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+        const goalPath = Session.goal(session, ctx)
+        yield* fsys.writeWithDirs(goalPath, goal.cleared ? "" : goal.update).pipe(Effect.orDie)
+        yield* events.publish(SessionGoal.Event.Updated, {
+          sessionID: input.sessionID,
+          text: goal.cleared ? "" : goal.update,
+          path: goalPath,
+        })
       }
 
       const raw = input.arguments.match(argsRegex) ?? []
@@ -1602,7 +1595,10 @@ const layer = Layer.effect(
         return args[argIndex]
       })
       const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
-      let template = withArgs.replaceAll("$ARGUMENTS", input.arguments)
+      // R6: goal templates see the quote-stripped argument text — the run CLI
+      // wraps space-containing argv words in quotes, which would otherwise leak
+      // into the template's interpretation of "edit …" / "clear".
+      let template = withArgs.replaceAll("$ARGUMENTS", goal ? goal.text : input.arguments)
 
       if (placeholders.length === 0 && !usesArgumentsPlaceholder && input.arguments.trim()) {
         template = template + "\n\n" + input.arguments
@@ -1624,7 +1620,9 @@ const layer = Layer.effect(
 
       const taskModel = yield* Effect.gen(function* () {
         if (cmd.model) return Provider.parseModel(cmd.model)
-        if (cmd.agent) {
+        // M3 guard: only follow the command's agent model when routing
+        // actually landed there (/goal clear lands on Auto instead).
+        if (cmd.agent && cmd.agent === agentName) {
           const cmdAgent = yield* agents.get(cmd.agent)
           if (cmdAgent?.model) return cmdAgent.model
         }
@@ -1805,6 +1803,41 @@ export function createStructuredOutputTool(input: {
   })
 }
 const bashRegex = /!`([^`]+)`/g
+
+/**
+ * Parse /goal's argument grammar: strip one wrapping quote layer (the run CLI
+ * quotes space-containing argv words), then classify. `cleared` is only a bare
+ * clear/none/remove — "/goal edit clear" stores the literal word as the goal
+ * text. `showOnly` covers the two read-only forms (bare "/goal edit", bare
+ * "/goal") that report the current goal and write nothing.
+ *
+ * @internal Exported for testing
+ */
+export function parseGoalArguments(raw: string): {
+  text: string
+  edit: boolean
+  update: string
+  showOnly: boolean
+  cleared: boolean
+} {
+  const trimmed = raw.trim()
+  const quoteWrapped = /^"([\s\S]*)"$/.exec(trimmed) ?? /^'([\s\S]*)'$/.exec(trimmed)
+  const text = (quoteWrapped ? quoteWrapped[1] : trimmed).trim()
+  const editMatch = /^edit(?:\s+([\s\S]+))?$/i.exec(text)
+  // A quoted empty update (`/goal edit ""`) is an empty update, not the
+  // literal two-quote goal text: strip one wrapping quote layer from the
+  // update the same way the CLI's argv quoting is stripped above.
+  const updateRaw = editMatch === null ? text : (editMatch[1] ?? "").trim()
+  const updateQuoted = /^"([\s\S]*)"$/.exec(updateRaw) ?? /^'([\s\S]*)'$/.exec(updateRaw)
+  const update = (updateQuoted ? updateQuoted[1] : updateRaw).trim()
+  return {
+    text,
+    edit: editMatch !== null,
+    update,
+    showOnly: text === "" || (editMatch !== null && update === ""),
+    cleared: editMatch === null && /^(clear|none|remove)$/i.test(text),
+  }
+}
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g

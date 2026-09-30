@@ -4,6 +4,7 @@ Goal argument: $ARGUMENTS
 
 Interpret the argument as follows:
 
-1. Non-empty argument other than "clear": this text is now the session goal. It has been persisted and will be re-stated to you automatically on every turn, including after compaction. Acknowledge the goal in one short sentence, then continue working toward it.
-2. Argument is "clear" (case-insensitive): the session goal has been removed. Confirm in one short sentence.
-3. Empty argument: nothing was changed. State the current session goal in one short sentence (it appears in the system reminder when set), or say that no goal is set.
+1. Argument starts with "edit " (case-insensitive): the goal is being replaced. The intended content is everything after "edit " (with one wrapping quote pair removed if present), verbatim. If that content is empty (e.g. `edit ""`), treat it as case 2 instead. Otherwise the goal file at the path named in the system reminder should contain exactly that text (a trailing newline is fine either way). Then confirm in one short sentence ("Goal updated: <first line>"); do not continue working toward the old goal.
+2. Argument is exactly "edit" (case-insensitive), or the argument is empty: nothing was changed. State the current session goal in one short sentence (it appears in the system reminder when set), or say that no goal is set.
+3. Argument is "clear", "none", or "remove" (case-insensitive): the session goal has been removed. Confirm in one short sentence.
+4. Any other non-empty argument: this text is now the session goal. It has been persisted and will be re-stated to you automatically on every turn, including after compaction. Acknowledge the goal in one short sentence, then continue working toward it.

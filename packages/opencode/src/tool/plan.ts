@@ -6,6 +6,7 @@ import { Question } from "../question"
 import { Session } from "@/session/session"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "@/provider/provider"
+import { Agent } from "@/agent/agent"
 import { InstanceState } from "@/effect/instance-state"
 import { MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
@@ -18,6 +19,7 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const agents = yield* Agent.Service
 
     return {
       description: EXIT_DESCRIPTION,
@@ -27,15 +29,22 @@ export const PlanExitTool = Tool.define(
           const instance = yield* InstanceState.context
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(instance.worktree, Session.plan(info, instance))
+          // Landing profile: the agent of the last user turn that was not
+          // plan (plan is the mode being left), falling back to the default
+          // agent (Auto) — not hardcoded "build".
+          const history = yield* session.messages({ sessionID: ctx.sessionID }).pipe(Effect.orDie)
+          const landingAgent =
+            history.findLast((item) => item.info.role === "user" && item.info.agent !== "plan")?.info.agent ??
+            (yield* agents.defaultAgent())
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             questions: [
               {
-                question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-                header: "Build Agent",
+                question: `Plan at ${plan} is complete. Would you like to switch to the ${landingAgent} agent and start implementing?`,
+                header: "Leave Plan Mode",
                 custom: false,
                 options: [
-                  { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+                  { label: "Yes", description: `Switch to the ${landingAgent} agent and start implementing the plan` },
                   { label: "No", description: "Stay with plan agent to continue refining the plan" },
                 ],
               },
@@ -60,7 +69,7 @@ export const PlanExitTool = Tool.define(
             sessionID: ctx.sessionID,
             role: "user",
             time: { created: Date.now() },
-            agent: "build",
+            agent: landingAgent,
             model,
           }
           yield* session.updateMessage(msg)
@@ -72,11 +81,23 @@ export const PlanExitTool = Tool.define(
             text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
             synthetic: true,
           } satisfies SessionV1.TextPart)
+          // Keep the session row in sync so the TUI shows the landing profile
+          // instead of the stale plan agent. Only the agent changes: the
+          // session row's model ({id, providerID, variant}) is preserved.
+          yield* session.setAgentModel({
+            sessionID: ctx.sessionID,
+            agent: landingAgent,
+            model: info.model ?? { id: model.modelID, providerID: model.providerID, variant: "default" },
+            time: Date.now(),
+          })
 
           return {
-            title: "Switching to build agent",
-            output: "User approved switching to build agent. Wait for further instructions.",
-            metadata: {},
+            title: `Switching to ${landingAgent} agent`,
+            output: `User approved switching to the ${landingAgent} agent. Wait for further instructions.`,
+            // ToolStateCompleted.metadata is Record<string, Schema.Any>
+            // (packages/schema/src/v1/session.ts); the TUI reads `agent` from
+            // here to derive the post-plan profile.
+            metadata: { agent: landingAgent },
           }
         }).pipe(Effect.orDie),
     }

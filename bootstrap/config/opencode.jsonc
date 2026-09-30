@@ -256,21 +256,58 @@
         "plan_exit": "deny"
       }
     },
+    // Goal mode: red Goal profile. The prompt body lives in agent/goal.md
+    // (markdown wins the merge per key; item.prompt = value.prompt ??
+    // item.prompt keeps it); this block pins the surface so all four
+    // profiles declare it in one place. Same no-interrupt surface as auto:
+    // the swarm playbook must never be blocked by a prompt mid-run.
+    "goal": {
+      "description": "Goal mode. Every message is a /goal objective: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
+      "mode": "primary",
+      "color": "error",
+      "model": "xiaomi-token-plan-cn/mimo-v2.6-pro",
+      "variant": "high",
+      "permission": {
+        "*": "allow",
+        "question": "deny",
+        "plan_enter": "deny",
+        "plan_exit": "deny"
+      }
+    },
     // Explicit colors: without them the TUI picks positionally from
     // [secondary, accent, success, warning, primary, error, info], so adding
-    // `auto` would shift plan off orange.
-    "build": { "color": "secondary" },
+    // `auto` would shift plan off orange. build keeps full allow except
+    // plan_exit: build is never in plan mode, and plan_exit prompts via
+    // Question.Service directly, bypassing the question gate.
+    "build": {
+      "color": "secondary",
+      "permission": {
+        "*": "allow",
+        "question": "allow",
+        "plan_enter": "allow",
+        "plan_exit": "deny"
+      }
+    },
     // The global "permission": "allow" above merges AFTER plan's native
     // edit-deny and findLast() keeps the last match, so it silently defeats
     // plan mode's read-only guarantee. Re-asserting edit here merges last and
     // restores it, while still letting plan write its own plan documents.
+    // Path forms: "home/eric/..." is the machine-A slash-less form (kept);
+    // ".local/..." and "*/.local/..." make the allowlist user-agnostic across
+    // homes, for both absolute and slash-less matcher inputs.
     "plan": {
       "color": "warning",
       "permission": {
+        "*": "allow",
+        "question": "allow",
+        "plan_enter": "deny",
+        "plan_exit": "allow",
         "edit": {
           "*": "deny",
           ".opencode/plans/*.md": "allow",
-          "home/eric/.local/share/opencode/plans/*.md": "allow"
+          "home/eric/.local/share/opencode/plans/*.md": "allow",
+          ".local/share/opencode/plans/*.md": "allow",
+          "*/.local/share/opencode/plans/*.md": "allow"
         },
         // Also defeated by the global wildcard: without this, plan mode can
         // route edits around its own read-only rule via the general subagent.

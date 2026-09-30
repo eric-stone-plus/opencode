@@ -305,7 +305,11 @@ export function Session() {
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit") {
-      local.agent.set("build")
+      // M4: the landing profile is derived server-side (previous non-plan
+      // user agent, else the default agent) and travels in the tool result's
+      // metadata — never hardcoded "build".
+      const landing = part.state.metadata?.agent
+      local.agent.set(typeof landing === "string" && landing ? landing : "auto")
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
       local.agent.set("plan")

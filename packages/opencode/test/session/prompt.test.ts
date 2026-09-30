@@ -1919,7 +1919,14 @@ it.instance("prompt submitted during an active run is included in the next LLM i
     expect(inputs).toHaveLength(2)
     const messages = inputs.at(-1)?.messages
     if (!Array.isArray(messages)) throw new Error("expected LLM messages")
-    expect(messages.at(-1)).toEqual({ role: "user", content: "second" })
+    // The prompt text rides in the final user message, possibly alongside the
+    // in-memory standing mode card (M1), so match the content blocks instead
+    // of requiring an exact single-string shape.
+    const lastInput = messages.at(-1) as { role?: string; content?: unknown }
+    expect(lastInput?.role).toBe("user")
+    const content = typeof lastInput?.content === "string" ? [lastInput.content] : lastInput?.content
+    expect(Array.isArray(content)).toBe(true)
+    expect((content as Array<{ text?: string }>).some((block) => (block?.text ?? block) === "second")).toBe(true)
   }),
 )
 

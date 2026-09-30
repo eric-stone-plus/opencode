@@ -51,7 +51,14 @@ import { createFadeIn } from "../../util/signal"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { useArgs } from "../../context/args"
-import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useLeaderActive, useOpencodeKeymap } from "../../keymap"
+import {
+  OPENCODE_BASE_MODE,
+  useBindings,
+  useCommandShortcut,
+  useCommandSlashes,
+  useLeaderActive,
+  useOpencodeKeymap,
+} from "../../keymap"
 import { useTuiConfig } from "../../config"
 import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
@@ -166,6 +173,7 @@ export function Prompt(props: PromptProps) {
   const history = usePromptHistory()
   const stash = usePromptStash()
   const keymap = useOpencodeKeymap()
+  const slashes = useCommandSlashes()
   const agentShortcut = useCommandShortcut("agent.cycle")
   const paletteShortcut = useCommandShortcut("command.palette.show")
   const renderer = useRenderer()
@@ -311,8 +319,13 @@ export function Prompt(props: PromptProps) {
     ),
   )
 
-  // Initialize agent/model/variant from last user message when session changes
+  // Initialize agent/model/variant from last user message when session
+  // changes; after that the agent follows the last user message id (M4), so
+  // synthetic turns like plan_exit's landing or /goal clear move the selector
+  // with them. Model/variant stay session-scoped: mid-session synthetic turns
+  // must not yank the model picker.
   let syncedSessionID: string | undefined
+  let syncedMessageID: string | undefined
   createEffect(() => {
     const sessionID = props.sessionID
     const msg = lastUserMessage()
@@ -321,6 +334,7 @@ export function Prompt(props: PromptProps) {
       if (!sessionID || !msg) return
 
       syncedSessionID = sessionID
+      syncedMessageID = msg.id
 
       // Only set agent if it's a primary agent (not a subagent)
       const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
@@ -332,7 +346,14 @@ export function Prompt(props: PromptProps) {
           local.model.variant.set(msg.model.variant)
         }
       }
+      return
     }
+
+    if (!msg || msg.id === syncedMessageID) return
+    syncedMessageID = msg.id
+
+    const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
+    if (msg.agent && isPrimaryAgent && !args.agent) local.agent.set(msg.agent)
   })
 
   const promptCommands = createMemo(() =>
@@ -1052,6 +1073,23 @@ export function Prompt(props: PromptProps) {
     const trimmed = store.prompt.input.trim()
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       void exit()
+      return true
+    }
+    // Local slash commands run in the TUI itself and must never reach the model
+    // as a prompt: typing `/usage ` with a trailing space hides the slash
+    // autocomplete, so this submit path is the last line of defense.
+    const slash = store.prompt.input.split("\n")[0].split(" ")[0]
+    const localSlash = slash.startsWith("/")
+      ? slashes().find((entry) => entry.display === slash || entry.aliases?.includes(slash))
+      : undefined
+    if (localSlash) {
+      localSlash.onSelect()
+      history.append({ ...store.prompt, mode: store.mode })
+      input.extmarks.clear()
+      setStore("prompt", { input: "", parts: [] })
+      setStore("extmarkToPartIndex", new Map())
+      props.onSubmit?.()
+      input.clear()
       return true
     }
     const selectedModel = local.model.current()
