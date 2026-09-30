@@ -8,7 +8,7 @@ Source of truth on machine A:
 | Item | Path |
 | --- | --- |
 | fork repo (binary source) | `/home/eric/Documents/Development/private/agent-design/projects/opencode` (branch `main`) |
-| motoko checkout (optional plugin) | `/home/eric/Documents/Development/private/agent-design/projects/motoko` |
+| motoko checkout (optional plugin) | `/home/eric/Documents/Development/private/agent-design/tools/motoko` |
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
@@ -41,7 +41,7 @@ cd ~/work/agent-design/projects/opencode
 git checkout main                       # REQUIRED: see channel note below
 
 # optional: only if you want the motoko plugin / motoko-seat-ops skills
-git clone <motoko-repo> ~/work/agent-design/projects/motoko
+git clone <motoko-repo> ~/work/agent-design/tools/motoko
 ```
 
 **Channel discipline (do not skip).** The build bakes the channel in from the

@@ -18,7 +18,7 @@ directly, is the one class of mistake that defines this seat's existence —
 the graph has exactly one writer, and it is the engine.
 
 The project rules live in the engine repo's `AGENTS.md`
-(`~/Documents/Development/private/agent-design/projects/motoko/AGENTS.md`).
+(`~/Documents/Development/private/agent-design/tools/motoko/AGENTS.md`).
 Where this skill and that file disagree, that file wins; where it states a
 number, that file owns the number and re-measurement.
 
@@ -170,10 +170,24 @@ discipline).
 - Every imported security skill passes the guard scan before entering the
   tree; "never scanned yet" is not a state. A blocked verdict is exempted
   only by a written rationale recording why the hits are descriptive
-  methodology rather than executable injection.
+  methodology rather than executable injection. The rs-* tree arrived
+  with v5 receipts (`rs-SCAN-EXEMPTIONS.md` + `.scan-cache/`); the
+  scanner itself retired with the hermes clone — recover
+  `tools/skills_guard.py` from the hermes remote before the next
+  new-skill import.
 - The import face stays permissive-licensed only; a copyleft package is
   excluded, not adapted. Payload corpora ride outside the tracked tree.
-- The rs-* corpus (43 modules, upstream MIT) survives only in the retiring
-  host's profile git repo (`~/.hermes/profiles/penetrate`) — and so do the
-  kali-pentest and web-pentest reference trees dying with the same host.
-  Clone the whole profile repo before that host is retired.
+- The rs-* corpus (43 modules, upstream MIT) plus hunt-*, security__*,
+  kali-pentest, web-pentest and the technique trees are absorbed
+  (2026-10-01) into `~/.motoko/skills/security/` — canonical store,
+  including the opt-in payloader payload corpus. Profile git history:
+  `agent-design/archive/hermes-retirement-20261001/penetrate-profile.bundle`.
+  Two intel-bearing dirs were withheld into the cold archive tarball. The
+  engineering/productivity trees were NOT imported — this seat vendors
+  those from upstream mattpocock/skills (see `skills/PROVENANCE.md`).
+
+## Auxiliary CLIs
+
+- grok CLI: headless `grok -p "<prompt>" --permission-mode
+  bypassPermissions`, binary `~/.local/bin/grok`, auth is Grok OAuth at
+  `~/.grok/`; api.x.ai only works through the GFW-evasion lane.

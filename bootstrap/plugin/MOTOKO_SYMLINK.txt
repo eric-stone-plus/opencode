@@ -9,7 +9,7 @@ startup; that is the accepted degraded mode when motoko is not checked out.
 
 Machine A target (install.sh parses the `TARGET:` line below as its default):
 
-TARGET: /home/eric/Documents/Development/private/agent-design/projects/motoko/engine/host/opencode/plugin.ts
+TARGET: /home/eric/Documents/Development/private/agent-design/tools/motoko/engine/host/opencode/plugin.ts
 
 On machine B: clone motoko and pass the real path via
 `install.sh --motoko-plugin <path>`, or edit the symlink afterwards
