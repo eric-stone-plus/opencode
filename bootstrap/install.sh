@@ -669,12 +669,23 @@ fi
 # --- 8. goal command/agent files --------------------------------------------
 say ""
 say "-- step 8: command/ + agent/ goal files + autonomy.md shipped in the bundle"
+# agent/goal.md is a SEED (same contract as script/sync-upstream.ts): installed
+# only when absent, so a per-machine model/variant pin in the file survives
+# re-installs. The seed note inside the file promises exactly this. Everything
+# else here is managed content and converges on every run.
 for d in command agent; do
   found=0
   for f in "$BOOTSTRAP_DIR/$d"/*; do
     [ -f "$f" ] || continue
     found=1
     STAGE_SED=""
+    if [ "$d" = "agent" ]; then
+      dst="$CFG/$d/$(basename "$f")"
+      if [ -e "$dst" ]; then
+        note "seed kept $dst (agent definition installed only when absent)"
+        continue
+      fi
+    fi
     install_file "$f" "$CFG/$d/$(basename "$f")"
   done
   [ "$found" -eq 1 ] || say "SKIP  bundle $d/ is empty (nothing to install)"
