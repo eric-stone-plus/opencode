@@ -1,42 +1,529 @@
 [
-  { "label": "pkill -f node server.js", "cmd": "pkill -f node server.js", "expect": "block" },
-  { "label": "pkill --full", "cmd": "pkill --full myapp", "expect": "block" },
-  { "label": "pkill -if (bundled)", "cmd": "pkill -if myapp", "expect": "block" },
-  { "label": "pkill -9f (bundled)", "cmd": "pkill -9f myapp", "expect": "block" },
-  { "label": "bracket trick still blocked", "cmd": "pkill -f '[n]ode'", "expect": "block" },
-  { "label": "flag before -f: -9", "cmd": "pkill -9 -f vite", "expect": "block" },
-  { "label": "flag before -f: --signal", "cmd": "pkill --signal TERM -f vite", "expect": "block" },
-  { "label": "pgrep -f | xargs kill", "cmd": "pgrep -f myapp | xargs kill", "expect": "block" },
-  { "label": "pgrep flag before -f | kill", "cmd": "pgrep -u root -f myapp | xargs kill", "expect": "block" },
-  { "label": "kill $(pgrep -f)", "cmd": "kill $(pgrep -f myapp)", "expect": "block" },
-  { "label": "killall -r", "cmd": "killall -r myapp", "expect": "block" },
-  { "label": "killall -9 -r", "cmd": "killall -9 -r myapp", "expect": "block" },
-  { "label": "ps|grep literal|xargs kill", "cmd": "ps aux | grep myapp | awk '{print $2}' | xargs kill", "expect": "block" },
-  { "label": "sudo pkill -f", "cmd": "sudo pkill -f node", "expect": "block" },
-  { "label": "nested bash -c", "cmd": "bash -c \"pkill -f x\"", "expect": "block" },
-  { "label": "multi-statement", "cmd": "pkill -f x ; echo REACHED", "expect": "block" },
-  { "label": "ssh remote pkill", "cmd": "ssh host 'pkill -f x'", "expect": "block" },
-  { "label": "command substitution voids echo exemption", "cmd": "echo \"$(pkill -f x)\"", "expect": "block" },
-  { "label": "pkill -x (comm match)", "cmd": "pkill -x node", "expect": "allow" },
-  { "label": "pkill without -f", "cmd": "pkill node", "expect": "allow" },
-  { "label": "numeric kill", "cmd": "kill -TERM 12345", "expect": "allow" },
-  { "label": "kill by port", "cmd": "lsof -ti:3000 | xargs -r kill", "expect": "allow" },
-  { "label": "fuser by port", "cmd": "fuser -k 8000/tcp", "expect": "allow" },
-  { "label": "pattern from file (AGENTS.md method 3)", "cmd": "ps -eo pid=,args= | grep -F -f /tmp/kill.pat | awk '{print $1}' | xargs -r kill", "expect": "allow" },
-  { "label": "pattern as data", "cmd": "grep -rn \"pkill -f\" ~/.config", "expect": "allow" },
-  { "label": "write pattern file", "cmd": "printf '%s\\n' 'myapp' > /tmp/kill.pat", "expect": "allow" },
-  { "label": "pgrep inspect", "cmd": "pgrep -af node", "expect": "allow" },
-  { "label": "pgrep -f read-only", "cmd": "pgrep -f myapp", "expect": "allow" },
-  { "label": "ps|grep no kill", "cmd": "ps aux | grep myapp", "expect": "allow" },
-  { "label": "killall by name", "cmd": "killall node", "expect": "allow" },
-  { "label": "echo benign", "cmd": "echo hello world", "expect": "allow" },
-  { "label": "echo pattern as data", "cmd": "echo \"pkill -f is dangerous\"", "expect": "allow" },
-  { "label": "echo pattern to file", "cmd": "echo pkill -f x > /tmp/notes.txt", "expect": "allow" },
-  { "label": "git log | grep", "cmd": "git log --oneline | grep pkill", "expect": "allow" },
-  { "label": "filename containing pkill", "cmd": "vim /tmp/pkill-notes.txt", "expect": "allow" },
-  { "label": "service name containing pkill", "cmd": "systemctl kill pkilld.service", "expect": "allow" },
-  { "label": "malformed JSON", "cmd": "this is not json", "expect": "allow", "raw": true },
-  { "label": "empty stdin", "cmd": "", "expect": "allow", "raw": true },
-  { "label": "quoted flag", "cmd": "pkill \"-f\" vite", "expect": "allow", "note": "known limitation: pattern matcher, not a shell parser" },
-  { "label": "--full with bogus arg", "cmd": "pkill --full=v vite", "expect": "allow", "note": "pkill --full takes no argument; invocation invalid anyway" }
+  {
+    "label": "pkill -f node server.js",
+    "cmd": "pkill -f node server.js",
+    "expect": "block"
+  },
+  {
+    "label": "pkill --full",
+    "cmd": "pkill --full myapp",
+    "expect": "block"
+  },
+  {
+    "label": "pkill -if (bundled)",
+    "cmd": "pkill -if myapp",
+    "expect": "block"
+  },
+  {
+    "label": "pkill -9f (bundled)",
+    "cmd": "pkill -9f myapp",
+    "expect": "block"
+  },
+  {
+    "label": "bracket trick still blocked",
+    "cmd": "pkill -f '[n]ode'",
+    "expect": "block"
+  },
+  {
+    "label": "flag before -f: -9",
+    "cmd": "pkill -9 -f vite",
+    "expect": "block"
+  },
+  {
+    "label": "flag before -f: --signal",
+    "cmd": "pkill --signal TERM -f vite",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep -f | xargs kill",
+    "cmd": "pgrep -f myapp | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep flag before -f | kill",
+    "cmd": "pgrep -u root -f myapp | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "kill $(pgrep -f)",
+    "cmd": "kill $(pgrep -f myapp)",
+    "expect": "block"
+  },
+  {
+    "label": "killall -r",
+    "cmd": "killall -r myapp",
+    "expect": "block"
+  },
+  {
+    "label": "killall -9 -r",
+    "cmd": "killall -9 -r myapp",
+    "expect": "block"
+  },
+  {
+    "label": "ps|grep literal|xargs kill",
+    "cmd": "ps aux | grep myapp | awk '{print $2}' | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "sudo pkill -f",
+    "cmd": "sudo pkill -f node",
+    "expect": "block"
+  },
+  {
+    "label": "nested bash -c",
+    "cmd": "bash -c \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "multi-statement",
+    "cmd": "pkill -f x ; echo REACHED",
+    "expect": "block"
+  },
+  {
+    "label": "ssh remote pkill",
+    "cmd": "ssh host 'pkill -f x'",
+    "expect": "block"
+  },
+  {
+    "label": "command substitution voids echo exemption",
+    "cmd": "echo \"$(pkill -f x)\"",
+    "expect": "block"
+  },
+  {
+    "label": "pkill -x (comm match)",
+    "cmd": "pkill -x node",
+    "expect": "allow"
+  },
+  {
+    "label": "pkill without -f",
+    "cmd": "pkill node",
+    "expect": "allow"
+  },
+  {
+    "label": "numeric kill",
+    "cmd": "kill -TERM 12345",
+    "expect": "allow"
+  },
+  {
+    "label": "kill by port",
+    "cmd": "lsof -ti:3000 | xargs -r kill",
+    "expect": "allow"
+  },
+  {
+    "label": "fuser by port",
+    "cmd": "fuser -k 8000/tcp",
+    "expect": "allow"
+  },
+  {
+    "label": "pattern from file (AGENTS.md method 3)",
+    "cmd": "ps -eo pid=,args= | grep -F -f /tmp/kill.pat | awk '{print $1}' | xargs -r kill",
+    "expect": "allow"
+  },
+  {
+    "label": "pattern as data",
+    "cmd": "grep -rn \"pkill -f\" ~/.config",
+    "expect": "allow"
+  },
+  {
+    "label": "write pattern file",
+    "cmd": "printf '%s\\n' 'myapp' > /tmp/kill.pat",
+    "expect": "allow"
+  },
+  {
+    "label": "pgrep inspect",
+    "cmd": "pgrep -af node",
+    "expect": "allow"
+  },
+  {
+    "label": "pgrep -f read-only",
+    "cmd": "pgrep -f myapp",
+    "expect": "allow"
+  },
+  {
+    "label": "ps|grep no kill",
+    "cmd": "ps aux | grep myapp",
+    "expect": "allow"
+  },
+  {
+    "label": "killall by name",
+    "cmd": "killall node",
+    "expect": "allow"
+  },
+  {
+    "label": "echo benign",
+    "cmd": "echo hello world",
+    "expect": "allow"
+  },
+  {
+    "label": "echo pattern as data",
+    "cmd": "echo \"pkill -f is dangerous\"",
+    "expect": "allow"
+  },
+  {
+    "label": "echo pattern to file",
+    "cmd": "echo pkill -f x > /tmp/notes.txt",
+    "expect": "allow"
+  },
+  {
+    "label": "git log | grep",
+    "cmd": "git log --oneline | grep pkill",
+    "expect": "allow"
+  },
+  {
+    "label": "filename containing pkill",
+    "cmd": "vim /tmp/pkill-notes.txt",
+    "expect": "allow"
+  },
+  {
+    "label": "service name containing pkill",
+    "cmd": "systemctl kill pkilld.service",
+    "expect": "allow"
+  },
+  {
+    "label": "malformed JSON",
+    "cmd": "this is not json",
+    "expect": "allow",
+    "raw": true
+  },
+  {
+    "label": "empty stdin",
+    "cmd": "",
+    "expect": "allow",
+    "raw": true
+  },
+  {
+    "label": "quoted flag",
+    "cmd": "pkill \"-f\" vite",
+    "expect": "allow",
+    "note": "known limitation: pattern matcher, not a shell parser"
+  },
+  {
+    "label": "--full with bogus arg",
+    "cmd": "pkill --full=v vite",
+    "expect": "allow",
+    "note": "pkill --full takes no argument; invocation invalid anyway"
+  },
+  {
+    "label": "git commit message carries kill words (double-quoted)",
+    "cmd": "git commit -m \"fix: pkill -f foo killed my session; rm -rf /tmp/x\"",
+    "expect": "allow"
+  },
+  {
+    "label": "git commit message carries kill words (single-quoted)",
+    "cmd": "git commit -m 'docs: kill 12345; pkill -f foo'",
+    "expect": "allow"
+  },
+  {
+    "label": "git commit --message= quoted value",
+    "cmd": "git commit --message=\"chore: pkill -f notes\"",
+    "expect": "allow"
+  },
+  {
+    "label": "git commit --message= bare value",
+    "cmd": "git commit --message=pkill-notes-for-later",
+    "expect": "allow"
+  },
+  {
+    "label": "git commit -am single-quoted message",
+    "cmd": "git commit -am 'revert killall -r change'",
+    "expect": "allow"
+  },
+  {
+    "label": "heredoc body is data (AGENTS.md method 6)",
+    "cmd": "cat > /tmp/x.sh <<'EOF'\npkill -f rm\nkill 12345\nEOF\nbash /tmp/x.sh",
+    "expect": "allow"
+  },
+  {
+    "label": "heredoc body is data, unquoted terminator",
+    "cmd": "cat > /tmp/y.sh <<EOF\npgrep -f foo | xargs kill\nEOF\nbash /tmp/y.sh",
+    "expect": "allow"
+  },
+  {
+    "label": "heredoc <<- body is data",
+    "cmd": "cat > /tmp/z.sh <<-'EOF'\npkill -f rm\n\tEOF\nbash /tmp/z.sh",
+    "expect": "allow"
+  },
+  {
+    "label": "bash -c double-quoted payload is operator",
+    "cmd": "bash -c \"pkill -f foo\"",
+    "expect": "block"
+  },
+  {
+    "label": "bash -c single-quoted payload is operator",
+    "cmd": "bash -c 'pkill -f foo'",
+    "expect": "block"
+  },
+  {
+    "label": "eval quoted payload is operator",
+    "cmd": "eval \"pkill -f foo\"",
+    "expect": "block"
+  },
+  {
+    "label": "timeout bash -c payload is operator",
+    "cmd": "timeout 5 bash -c \"pkill -f foo\"",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep -f | awk (inspector pipe)",
+    "cmd": "pgrep -f foo | awk '{print $1}'",
+    "expect": "allow"
+  },
+  {
+    "label": "pgrep -f | awk | xargs kill",
+    "cmd": "pgrep -f foo | awk '{print $1}' | xargs -r kill",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep -f | kill",
+    "cmd": "pgrep -f foo | kill",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep -f | xargs kill (dup of pipe rule)",
+    "cmd": "pgrep -f foo | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "pgrep -f | grep -v grep (read-only chain)",
+    "cmd": "pgrep -f foo | grep -v grep",
+    "expect": "allow"
+  },
+  {
+    "label": "pgrep -f | rg (read-only chain)",
+    "cmd": "pgrep -f foo | rg foo",
+    "expect": "allow"
+  },
+  {
+    "label": "pgrep -a inspect",
+    "cmd": "pgrep -a foo",
+    "expect": "allow"
+  },
+  {
+    "label": "ps|grep pattern from file, no kill",
+    "cmd": "ps -eo pid=,args= | grep -F -f /tmp/kill.pat",
+    "expect": "allow"
+  },
+  {
+    "label": "numeric kill then ps|grep statement",
+    "cmd": "kill 12345; ps -p 12345 | grep foo",
+    "expect": "allow"
+  },
+  {
+    "label": "pkill -x mydaemon",
+    "cmd": "pkill -x mydaemon",
+    "expect": "allow"
+  },
+  {
+    "label": "pkill -f bare",
+    "cmd": "pkill -f foo",
+    "expect": "block"
+  },
+  {
+    "label": "killall -r bare",
+    "cmd": "killall -r foo",
+    "expect": "block"
+  },
+  {
+    "label": "python -m cgroup_cleanup is operator",
+    "cmd": "python -m gateway.cgroup_cleanup",
+    "expect": "block"
+  },
+  {
+    "label": "cgroup_cleanup in commit message is data",
+    "cmd": "git commit -m \"notes about gateway.cgroup_cleanup\"",
+    "expect": "allow"
+  },
+  {
+    "label": "ps 2>&1 redirect keeps pipeline intact",
+    "cmd": "ps aux 2>&1 | grep myapp | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "F9 path-qualified pkill",
+    "cmd": "/usr/bin/pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "F9 path-qualified killall",
+    "cmd": "/bin/killall -r x",
+    "expect": "block"
+  },
+  {
+    "label": "F10 killall --regexp long option",
+    "cmd": "killall --regexp x",
+    "expect": "block"
+  },
+  {
+    "label": "F10 killall --rege unique prefix",
+    "cmd": "killall --rege x",
+    "expect": "block"
+  },
+  {
+    "label": "F10 killall --regex unique prefix",
+    "cmd": "killall --regex x",
+    "expect": "block"
+  },
+  {
+    "label": "F10 killall -r short flag",
+    "cmd": "killall -r x",
+    "expect": "block"
+  },
+  {
+    "label": "commit -qm bundled message is data",
+    "cmd": "git commit -qm \"fix: kill 12345 by pidfile\"",
+    "expect": "allow"
+  },
+  {
+    "label": "commit -qm bundled message hides kill words",
+    "cmd": "git commit -qm \"pkill -f x\"",
+    "expect": "allow"
+  },
+  {
+    "label": "commit -qm bare message masks next token",
+    "cmd": "git commit -qm pkill -f x",
+    "expect": "allow"
+  },
+  {
+    "label": "cgroup_cleanup filename is data",
+    "cmd": "vim cgroup_cleanup.md",
+    "expect": "allow"
+  },
+  {
+    "label": "python3 -c payload is operator",
+    "cmd": "python3 -c \"import os; os.system('pkill -f x')\"",
+    "expect": "block"
+  },
+  {
+    "label": "non-bash tool_name ignored",
+    "cmd": "{\"tool_name\":\"Edit\",\"tool_input\":{\"command\":\"pkill -f x\"}}",
+    "expect": "allow",
+    "raw": true
+  },
+  {
+    "label": "missing tool_name still scanned",
+    "cmd": "{\"tool_input\":{\"command\":\"pkill -f x\"}}",
+    "expect": "block",
+    "raw": true
+  },
+  {
+    "label": "grok run_terminal_command scanned",
+    "cmd": "{\"tool_name\":\"run_terminal_command\",\"tool_input\":{\"command\":\"pkill -f x\"}}",
+    "expect": "block",
+    "raw": true
+  },
+  {
+    "label": "heredoc body with cgroup_cleanup is data",
+    "cmd": "cat > /tmp/x.sh <<'EOF'\npython -m gateway.cgroup_cleanup\nEOF\nbash /tmp/x.sh",
+    "expect": "allow"
+  },
+  {
+    "label": "F11 --norc -c payload",
+    "cmd": "bash --norc -c \"pkill -f foo\"",
+    "expect": "block"
+  },
+  {
+    "label": "F11 -O extglob -c payload",
+    "cmd": "bash -O extglob -c \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "F12 ANSI-C quoting payload",
+    "cmd": "bash -c $'pkill -f foo'",
+    "expect": "block"
+  },
+  {
+    "label": "F13 bare cgroup_cleanup after bash -c",
+    "cmd": "bash -c cgroup_cleanup",
+    "expect": "block"
+  },
+  {
+    "label": "F13 xargs cgroup_cleanup",
+    "cmd": "xargs cgroup_cleanup",
+    "expect": "block"
+  },
+  {
+    "label": "F13 path-qualified cgroup_cleanup payload",
+    "cmd": "bash -c \"/usr/lib/gateway/cgroup_cleanup\"",
+    "expect": "block"
+  },
+  {
+    "label": "F14 pipe kill text into bash",
+    "cmd": "echo pkill -f x | bash",
+    "expect": "block"
+  },
+  {
+    "label": "F14 printf kill text into bash",
+    "cmd": "printf '%s\\n' 'pkill -f x' | bash",
+    "expect": "block"
+  },
+  {
+    "label": "F14 heredoc body into bash",
+    "cmd": "cat <<'EOF' | bash\npkill -f x\nEOF",
+    "expect": "block"
+  },
+  {
+    "label": "F15 unquoted heredoc substitution runs",
+    "cmd": "cat <<EOF\n$(pkill -f x)\nEOF",
+    "expect": "block"
+  },
+  {
+    "label": "F16 pkill --f unique prefix",
+    "cmd": "pkill --f x",
+    "expect": "block"
+  },
+  {
+    "label": "F16 pgrep --fu | xargs kill",
+    "cmd": "pgrep --fu foo | xargs kill",
+    "expect": "block"
+  },
+  {
+    "label": "F17 git -m substitution payload",
+    "cmd": "git commit -m \"$(pkill -f x)\"",
+    "expect": "block"
+  },
+  {
+    "label": "F17 git -m then pkill statement",
+    "cmd": "git commit -m fix && pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "F18 nice flag-arg walk-back",
+    "cmd": "sudo nice -n 5 pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "F18 timeout numeric walk-back",
+    "cmd": "timeout 30 pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "F19 grep pattern is data",
+    "cmd": "grep -rn killall .",
+    "expect": "allow"
+  },
+  {
+    "label": "F19 git -m tail is data",
+    "cmd": "git commit -m fix pkill -f x",
+    "expect": "allow"
+  },
+  {
+    "label": "F19 script takes -c",
+    "cmd": "bash script.sh -c \"pkill -f x\"",
+    "expect": "allow"
+  },
+  {
+    "label": "F19 file inspector on cgroup_cleanup",
+    "cmd": "ls /usr/lib/gateway/cgroup_cleanup",
+    "expect": "allow"
+  },
+  {
+    "label": "F20 unquoted heredoc literal body",
+    "cmd": "cat <<EOF\necho hi\nEOF",
+    "expect": "allow"
+  },
+  {
+    "label": "F21 pgrep --f=x invalid form",
+    "cmd": "pgrep --full=v vite",
+    "expect": "allow"
+  }
 ]

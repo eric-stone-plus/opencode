@@ -30,6 +30,17 @@ DB="$DATA/opencode-main.db"
 LOG="$DATA/log/opencode.log"
 GUARD="$TARGET_HOME/.config/agent-hooks/block-unsafe-kill.sh"
 
+# Canonicalized homes for every comparison below: a hardcoded path from the
+# install machine (machine A's /home/eric) must never satisfy a scratch --home.
+canon() {
+  local d b
+  d=$(dirname "$1"); b=$(basename "$1")
+  if [ -d "$d" ]; then printf '%s/%s\n' "$(cd "$d" 2>/dev/null && pwd -P)" "$b"; else printf '%s\n' "$1"; fi
+}
+TARGET_HOME_R=$(canon "$TARGET_HOME")
+REAL_HOME_R=""
+[ -n "${HOME:-}" ] && REAL_HOME_R=$(canon "$HOME")
+
 FAILS=0
 WARNS=0
 
@@ -58,12 +69,28 @@ bunv=$(bun --version 2>/dev/null || true)
 
 # --- 2. opencode binary / shim ----------------------------------------------
 echo "-- binary"
-OC_BIN=$(command -v opencode 2>/dev/null || true)
+# Resolution order: the target home's REAL binary first, then the target's pin
+# shim — a pin shim execs "$HOME/.opencode/bin/opencode" and must never be
+# picked before the real thing when auditing a foreign --home. The auditor's
+# PATH is consulted last and only as a warned fallback
+# (`command -v` finds whatever the auditor's PATH points at).
+OC_BIN=""
+for cand in "$TARGET_HOME/.opencode/bin/opencode" "$TARGET_HOME/.local/bin/opencode"; do
+  if [ -x "$cand" ]; then OC_BIN="$cand"; break; fi
+done
 if [ -n "$OC_BIN" ]; then
-  pass "opencode on PATH: $OC_BIN"
+  pass "opencode binary (resolved against target home): $OC_BIN"
+elif command -v opencode >/dev/null 2>&1; then
+  OC_BIN=$(command -v opencode)
+  warn "opencode only found on the auditor's PATH: $OC_BIN (target home has none)"
 else
-  fail "opencode not on PATH (build+install it; README step 3)"
+  fail "opencode not found for $TARGET_HOME and not on PATH (build+install it; README step 3)"
 fi
+# Every invocation pins HOME to the audited home: a pin shim can then only ever
+# resolve inside that home, never silently into the auditor's own seat.
+run_oc() {
+  HOME="$TARGET_HOME" OPENCODE_DB=opencode-main.db "$OC_BIN" "$@"
+}
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
   pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
@@ -77,7 +104,7 @@ fi
 # --- 3. version / channel ----------------------------------------------------
 echo "-- version"
 if [ -n "$OC_BIN" ]; then
-  ver=$("$OC_BIN" --version 2>/dev/null | head -n 1)
+  ver=$(run_oc --version 2>/dev/null | head -n 1)
   case "$ver" in
     0.0.0-main-[0-9]*) pass "version $ver (fork build, channel=main)" ;;
     "") warn "opencode --version produced no output" ;;
@@ -95,17 +122,21 @@ if [ -f "$dbconf" ] && grep -q '^OPENCODE_DB=opencode-main\.db$' "$dbconf"; then
 else
   fail "environment.d/10-opencode-db.conf missing or not pinning OPENCODE_DB=opencode-main.db"
 fi
-visible=""
-[ "${OPENCODE_DB:-}" = "opencode-main.db" ] && visible="process env"
-if [ -z "$visible" ] && command -v systemctl >/dev/null 2>&1; then
-  if systemctl --user show-environment 2>/dev/null | grep -q '^OPENCODE_DB=opencode-main\.db$'; then
-    visible="systemctl --user show-environment"
-  fi
-fi
-if [ -n "$visible" ]; then
-  pass "OPENCODE_DB=opencode-main.db visible in live environment ($visible)"
+if [ "$TARGET_HOME_R" != "$REAL_HOME_R" ]; then
+  info "skipping live-environment check: auditing $TARGET_HOME, but the live env belongs to ${REAL_HOME_R:-<unset HOME>}"
 else
-  fail "OPENCODE_DB not visible in environment — re-login after install (environment.d is a login-time mechanism)"
+  visible=""
+  [ "${OPENCODE_DB:-}" = "opencode-main.db" ] && visible="process env"
+  if [ -z "$visible" ] && command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user show-environment 2>/dev/null | grep -q '^OPENCODE_DB=opencode-main\.db$'; then
+      visible="systemctl --user show-environment"
+    fi
+  fi
+  if [ -n "$visible" ]; then
+    pass "OPENCODE_DB=opencode-main.db visible in live environment ($visible)"
+  else
+    fail "OPENCODE_DB not visible in environment — re-login after install (environment.d is a login-time mechanism)"
+  fi
 fi
 
 # --- 5. canonical DB (guarded) ----------------------------------------------
@@ -116,11 +147,16 @@ if [ -f "$DB" ]; then
   # Even then it runs migrations on open; expect an error on a non-opencode DB.
   if [ -n "$OC_BIN" ]; then
     errf=$(mktemp "${TMPDIR:-/tmp}/verify-dbpath.XXXXXX")
-    resolved=$(HOME="$TARGET_HOME" "$OC_BIN" db path 2>"$errf" | head -n 1)
+    # Pin the DB name (the call must never pick a channel DB) and compare
+    # canonicalized paths: $TARGET_HOME may contain symlinks and the binary
+    # may print either form.
+    resolved=$(run_oc db path 2>"$errf" | head -n 1)
     errtail=$(tr '\n' ' ' <"$errf" | cut -c1-160)
     rm -f "$errf"
-    if [ "$resolved" = "$DB" ]; then
-      pass "opencode db path resolves to the canonical DB"
+    resolved_r=""
+    [ -n "$resolved" ] && resolved_r=$(canon "$resolved")
+    if [ -n "$resolved" ] && [ "$resolved_r" = "$(canon "$DB")" ]; then
+      pass "opencode db path resolves to the canonical DB ($resolved)"
     elif [ -z "$resolved" ]; then
       warn "opencode db path produced no path (inconclusive): $errtail"
     else
@@ -164,11 +200,16 @@ try:
     d = json.load(open(sys.argv[1]))
 except Exception as e:
     print("PARSE_ERROR"); raise SystemExit
-names = sorted(d.keys()) if isinstance(d, dict) else []
-placeholders = sorted(
-    k for k, v in d.items()
-    if isinstance(v, dict) and str(v.get("key", "")).startswith("REPLACE_ME")
-)
+if isinstance(d, dict):
+    names = sorted(d.keys())
+    placeholders = sorted(
+        k for k, v in d.items()
+        if isinstance(v, dict) and str(v.get("key", "")).startswith("REPLACE_ME")
+    )
+else:
+    # non-dict auth.json (corrupt/foreign shape): report empty, never crash
+    names = []
+    placeholders = []
 print("NAMES " + ",".join(names))
 print("PLACEHOLDERS " + ",".join(placeholders))
 PYEOF
@@ -196,6 +237,38 @@ PYEOF
   esac
 fi
 
+# --- 6b. secret seed file modes ----------------------------------------------
+echo "-- secret seed file modes"
+# FAIL for auth.json / env: the primary secret surfaces must never be
+# group/world-readable. WARN for the environment.d drop-ins: they carry
+# placeholder names until re-seeded (and motoko-home/90-fcitx5 hold no secret
+# at all), so a hard FAIL would block machine-B verification over files that
+# still contain nothing sensitive.
+mode_check() {
+  local f="$1" sev="$2" label="$3" mode
+  if [ ! -e "$f" ]; then
+    info "$label: absent (nothing to check)"
+    return 0
+  fi
+  mode=$(stat -c '%a' "$f" 2>/dev/null) || mode=""
+  if [ -z "$mode" ]; then
+    warn "$label: cannot stat mode of $f"
+    return 0
+  fi
+  if [ "$(( 8#$mode & 077 ))" -eq 0 ]; then
+    pass "$label: $f mode $mode (not group/world-readable)"
+  elif [ "$sev" = "FAIL" ]; then
+    fail "$label: $f mode $mode — secret seed must not be group/world-readable (install.sh require_private)"
+  else
+    warn "$label: $f mode $mode — should be 0600 once re-seeded (install.sh require_private)"
+  fi
+}
+mode_check "$DATA/auth.json" FAIL "auth.json"
+mode_check "$CFG/env" FAIL "env seed"
+mode_check "$TARGET_HOME/.config/environment.d/95-quinte-provider.conf" WARN "95-quinte-provider.conf"
+mode_check "$TARGET_HOME/.config/environment.d/motoko-keys.conf" WARN "motoko-keys.conf"
+mode_check "$TARGET_HOME/.config/environment.d/motoko-home.conf" WARN "motoko-home.conf"
+
 # --- 7. kill-guard battery + 5 hook surfaces ---------------------------------
 echo "-- kill-guard wiring"
 if [ -x "$GUARD" ]; then
@@ -205,7 +278,7 @@ else
 fi
 surface() {
   # $1 label, $2 file
-  local label="$1" f="$2" ref
+  local label="$1" f="$2" ref refs bad=0 stale=0
   if [ ! -f "$f" ]; then
     warn "$label: $f absent (install.sh wires it only when the config exists)"
     return 0
@@ -214,13 +287,87 @@ surface() {
     warn "$label: $f exists but is not wired to block-unsafe-kill.sh"
     return 0
   fi
-  ref=$(grep -o '[][A-Za-z0-9_./-]*block-unsafe-kill\.sh' "$f" | head -n 1)
-  if [ -e "$GUARD" ] && grep -qF "$GUARD" "$f"; then
-    pass "$label wired to $GUARD"
-  elif [ -n "$ref" ] && [ -e "$ref" ]; then
-    pass "$label wired to $ref (exists)"
+  # Every referenced guard path must equal this home's guard: a path that
+  # exists but belongs to another home/user is stale wiring, not a pass
+  # (a hardcoded /home/eric ref must not satisfy a scratch --home audit).
+  # Per-occurrence path walk (not a scan-wide prefix cut): two refs in one
+  # string must not merge into one bogus path, space-containing homes must
+  # survive, and a bare name mention is data, not a path reference.
+  if command -v python3 >/dev/null 2>&1; then
+    refs=$(python3 - "$f" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+NAME = "block-unsafe-kill.sh"
+BOUNDARY = " \t\n\"'`" + ";|&<>()"
+ROOTED = ("/", "~", "./", "../")
+refs = set()
+for m in re.finditer(re.escape(NAME), text):
+    end = m.end()
+    if end < len(text) and text[end] not in BOUNDARY + "=":
+        continue  # block-unsafe-kill.sh.bak and friends are not guard refs
+    start = m.start()
+    if start > 0 and text[start - 1] not in BOUNDARY + "/~=":
+        continue  # myblock-unsafe-kill.sh is a different file
+    while start > 0 and text[start - 1] not in BOUNDARY:
+        start -= 1
+    run = text[start:end]
+    eq = run.rfind("=")
+    if (
+        eq > 0
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", run[:eq])
+        and run[eq + 1 : eq + 2] in ("/", "~", ".")
+    ):
+        run = run[eq + 1 :]
+    if "/" not in run:
+        continue  # bare name mention, not a path reference
+    if not run.startswith(ROOTED):
+        k = start + (len(text[start:end]) - len(run))
+        ext = k
+        rooted = False
+        while True:
+            p = k - 1
+            if p < 0 or text[p] not in " \t":
+                break
+            q = p
+            # `=` is a word boundary here too, or `KEY=/home/my user/x.sh`
+            # sees one unrooted `KEY=/home/my` word and under-extends.
+            while q > 0 and text[q - 1] not in BOUNDARY + "=":
+                q -= 1
+            word = text[q:p]
+            if not word or word.startswith("-") or word.isdigit():
+                break
+            ext = q
+            if word.startswith(ROOTED):
+                rooted = True
+                break
+            k = q
+        if rooted:
+            run = text[ext:end]
+    refs.add(run)
+for r in sorted(refs):
+    print(r)
+PYEOF
+)
   else
-    fail "$label references '$ref' which does not exist (stale username/path?)"
+    refs=$(grep -o '[][A-Za-z0-9_./-]*block-unsafe-kill\.sh' "$f" | sort -u)
+    warn "$label: python3 missing — ref scan degraded (paths with spaces may mis-report)"
+  fi
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    if [ "$ref" = "$GUARD" ]; then
+      :
+    elif [ -e "$ref" ]; then
+      stale=$((stale + 1))
+      warn "$label: stale guard ref '$ref' (exists but is not $GUARD — old home/username?)"
+    else
+      bad=$((bad + 1))
+      fail "$label: references '$ref' which does not exist (stale username/path?)"
+    fi
+  done <<EOF
+$refs
+EOF
+  if [ "$bad" -eq 0 ] && [ "$stale" -eq 0 ]; then
+    pass "$label wired to $GUARD"
   fi
 }
 surface "claude" "$TARGET_HOME/.claude/settings.json"
@@ -228,6 +375,22 @@ surface "zcode" "$TARGET_HOME/.zcode/settings.json"
 surface "grok" "$TARGET_HOME/.grok/hooks/block-unsafe-kill.json"
 surface "kimi" "$TARGET_HOME/.kimi-code/config.toml"
 info "5th surface = opencode plugin port (verified under plugin/ below)"
+
+# --- 7b. bashrc egress wrapper source path (stable seat copy, not the bundle) --
+BLK="$CFG/shell/bashrc-opencode-block.sh"
+if [ -f "$TARGET_HOME/.bashrc" ]; then
+  if grep 'source' "$TARGET_HOME/.bashrc" | grep 'bashrc-opencode-block\.sh' | grep -vF "$BLK" | grep -q .; then
+    warn "bashrc sources bashrc-opencode-block.sh from outside $BLK (bundle-path wiring — re-run install.sh step 9 to converge)"
+  elif grep -qF "$BLK" "$TARGET_HOME/.bashrc"; then
+    if [ -f "$BLK" ]; then
+      pass "bashrc sources the stable seat copy: $BLK"
+    else
+      fail "bashrc sources $BLK but that copy is missing (install.sh step 9)"
+    fi
+  else
+    info "bashrc has no wrapper source line (install.sh writes one only when .bashrc exists; --no-bashrc skips)"
+  fi
+fi
 if [ -f "$BOOTSTRAP_DIR/agent-hooks/run-cases.sh" ]; then
   info "regression battery (optional, needs jq+bun): bash $TARGET_HOME/.config/agent-hooks/run-cases.sh"
 fi
