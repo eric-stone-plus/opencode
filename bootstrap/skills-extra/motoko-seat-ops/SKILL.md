@@ -172,19 +172,16 @@ discipline).
   only by a written rationale recording why the hits are descriptive
   methodology rather than executable injection. The rs-* tree arrived
   with v5 receipts (`rs-SCAN-EXEMPTIONS.md` + `.scan-cache/`); the
-  scanner itself retired with the hermes clone — recover
-  `tools/skills_guard.py` from the hermes remote before the next
-  new-skill import.
+  scanner did not come with the tree — a guard scanner must be selected
+  before the next new-skill import.
 - The import face stays permissive-licensed only; a copyleft package is
   excluded, not adapted. Payload corpora ride outside the tracked tree.
 - The rs-* corpus (43 modules, upstream MIT) plus hunt-*, security__*,
-  kali-pentest, web-pentest and the technique trees are absorbed
-  (2026-10-01) into `~/.motoko/skills/security/` — canonical store,
-  including the opt-in payloader payload corpus. Profile git history:
-  `agent-design/archive/hermes-retirement-20261001/penetrate-profile.bundle`.
-  Two intel-bearing dirs were withheld into the cold archive tarball. The
-  engineering/productivity trees were NOT imported — this seat vendors
-  those from upstream mattpocock/skills (see `skills/PROVENANCE.md`).
+  kali-pentest, web-pentest and the technique trees live at
+  `~/.motoko/skills/security/` — the canonical store, including the
+  opt-in payloader payload corpus. Two intel-bearing dirs are excluded
+  per operator ruling. The engineering/productivity trees are vendored
+  separately from upstream mattpocock/skills (see `skills/PROVENANCE.md`).
 
 ## Auxiliary CLIs
 
