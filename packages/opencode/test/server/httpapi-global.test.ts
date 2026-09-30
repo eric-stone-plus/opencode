@@ -35,7 +35,7 @@ const apiLayer = HttpRouter.serve(
     Layer.mock(Installation.Service)({
       method: () => Effect.succeed("npm"),
       latest: () => Effect.succeed("9.9.9"),
-      upgrade: () => Effect.void,
+      upgrade: () => Effect.die("the upgrade route must never reach Installation.upgrade"),
     }),
   ),
   Layer.provide(ServerAuth.Config.configLayer({ password: Option.none(), username: "opencode" })),
@@ -43,15 +43,17 @@ const apiLayer = HttpRouter.serve(
 const it = testEffect(apiLayer)
 
 describe("global HttpApi", () => {
-  it.live("upgrades to the requested version", () =>
+  it.live("refuses to upgrade the source-built binary", () =>
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.post(GlobalPaths.upgrade).pipe(
         HttpClientRequest.bodyJsonUnsafe({ target: "9.9.9" }),
         HttpClient.execute,
       )
 
-      expect(response.status).toBe(200)
-      expect(yield* response.json).toEqual({ success: true, version: "9.9.9" })
+      expect(response.status).toBe(403)
+      const body = (yield* response.json) as { success: boolean; error: string }
+      expect(body.success).toBe(false)
+      expect(body.error).toContain("sync-upstream")
     }),
   )
 

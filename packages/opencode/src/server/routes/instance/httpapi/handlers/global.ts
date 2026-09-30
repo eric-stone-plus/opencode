@@ -2,7 +2,6 @@ import { Config } from "@/config/config"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
-import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Queue } from "effect"
@@ -60,7 +59,6 @@ function eventResponse() {
 export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handlers) =>
   Effect.gen(function* () {
     const config = yield* Config.Service
-    const installation = yield* Installation.Service
     const bridge = yield* EffectBridge.make()
 
     const health = Effect.fn("GlobalHttpApi.health")(function* () {
@@ -86,33 +84,18 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return true
     })
 
-    const upgrade = Effect.fn("GlobalHttpApi.upgrade")(function* (ctx: { payload: typeof GlobalUpgradeInput.Type }) {
-      const method = yield* installation.method()
-      if (method === "unknown") {
-        return HttpServerResponse.jsonUnsafe(
-          { success: false as const, error: "Unknown installation method" },
-          { status: 400 },
-        )
-      }
-      const target = ctx.payload.target
-      const result = yield* installation.upgrade(method, target).pipe(
-        Effect.as({ success: true as const, version: target }),
-        Effect.catch((err) =>
-          Effect.succeed({
-            success: false as const,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        ),
-      )
-      if (!result.success) return HttpServerResponse.jsonUnsafe(result, { status: 500 })
-      GlobalBus.emit("event", {
-        directory: "global",
-        payload: {
-          type: Installation.Event.Updated.type,
-          properties: { version: target },
+    // Personal fork: the running binary is built from source, and every
+    // Installation.upgrade method would overwrite it with an upstream release.
+    // The route stays in the API (typed clients and the TUI still call it) but
+    // always refuses; updates go through `bun run sync-upstream`.
+    const upgrade = Effect.fn("GlobalHttpApi.upgrade")(function* (_ctx: { payload: typeof GlobalUpgradeInput.Type }) {
+      return HttpServerResponse.jsonUnsafe(
+        {
+          success: false as const,
+          error: "Upgrades are disabled in this build; update it with `bun run sync-upstream`",
         },
-      })
-      return HttpServerResponse.jsonUnsafe(result)
+        { status: 403 },
+      )
     })
 
     return handlers
