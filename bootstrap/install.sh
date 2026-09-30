@@ -24,7 +24,8 @@
 #      ~/.config/agent-hooks ~/.local/bin
 #   2  config: opencode.jsonc (copy+username-sed, or --link), auth.json (template,
 #      only if absent), env (template, only if absent)
-#   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db -> exec binary)
+#   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
+#      OPENCODE_EXPERIMENTAL_PLAN_MODE=1 -> exec binary)
 #   4  environment.d/10-opencode-db.conf (managed) + the other *.conf templates
 #      (only if absent, never overwritten)
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
@@ -120,6 +121,11 @@ write_wrapper() {
 # every launch flavor, including non-interactive PATH lookups that never
 # see environment.d. Managed by bootstrap/install.sh.
 export OPENCODE_DB=opencode-main.db
+# The four-profile config (plan allows plan_exit, edits only plan files) is
+# written for the plan-file workflow, which is gated on this flag
+# (packages/opencode/src/tool/registry.ts): without it plan_exit does not
+# exist and plan is prompt-only.
+export OPENCODE_EXPERIMENTAL_PLAN_MODE=1
 exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
   chmod +x "$SHIM"
@@ -287,7 +293,8 @@ require_private "$CFG/env"
 say ""
 say "-- step 3: ~/.local/bin/opencode shim (anti-fork pin wrapper)"
 SHIM="$TARGET_HOME/.local/bin/opencode"
-if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
+if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null \
+  && grep -q "OPENCODE_EXPERIMENTAL_PLAN_MODE=1" "$SHIM" 2>/dev/null; then
   note "unchanged $SHIM (pin wrapper already in place)"
 elif [ -e "$SHIM" ] || [ -L "$SHIM" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then

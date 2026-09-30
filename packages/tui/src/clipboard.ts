@@ -21,10 +21,11 @@ function command(command: string, args: string[] = [], input?: string) {
 }
 
 function writeOsc52(text: string) {
-  if (!process.stdout.isTTY) return
+  if (!process.stdout.isTTY) return false
   const sequence = `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`
   const passthrough = `\x1bPtmux;\x1b${sequence}\x1b\\`
   process.stdout.write(process.env.TMUX ? sequence + passthrough : process.env.STY ? passthrough : sequence)
+  return true
 }
 
 export async function read() {
@@ -121,7 +122,13 @@ function getCopyMethod() {
 }
 
 export async function write(text: string) {
-  writeOsc52(text)
+  const osc52 = writeOsc52(text)
   const method = await getCopyMethod()
-  await method(text)
+  // OSC 52 reaches the terminal's clipboard over SSH/tmux, where the local
+  // clipboard tool has no display and throws. Reject only when neither path
+  // could have copied, so callers never toast "copied" over a dead clipboard
+  // and never report a failure after a copy that went through the terminal.
+  await method(text).catch((error) => {
+    if (!osc52) throw error
+  })
 }

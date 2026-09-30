@@ -17,6 +17,7 @@ import PROMPT_BUILD_MODE from "./prompt/build-mode.txt"
 import PROMPT_GOAL_MODE from "./prompt/goal-mode.txt"
 
 const GOAL_REMINDER_MAX = 8000
+const INTERNAL_AGENTS = new Set(["compaction", "title", "summary"])
 
 // Standing mode cards: one per primary profile (auto / goal / build; plan uses
 // PROMPT_PLAN or PLAN_MODE), injected every turn so the model is told which
@@ -88,7 +89,11 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   // ran under plan and the current profile is not plan — any landing profile
   // (auto / goal / build), not just build. `findLast` keeps this transition-once
   // per landing; the old `some(...)` check re-fired on every later turn.
-  const previousAgent = input.messages.findLast((msg) => msg.info.role === "assistant")?.info.agent
+  // Internal agents (a compaction between the plan turn and the switch) do
+  // not count as the preceding turn.
+  const previousAgent = input.messages.findLast(
+    (msg) => msg.info.role === "assistant" && !INTERNAL_AGENTS.has(msg.info.agent),
+  )?.info.agent
   if (previousAgent !== "plan") return input.messages
 
   const plan = Session.plan(input.session, ctx)

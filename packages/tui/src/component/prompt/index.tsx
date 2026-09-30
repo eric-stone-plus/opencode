@@ -51,6 +51,7 @@ import { createFadeIn } from "../../util/signal"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { useArgs } from "../../context/args"
+import { followAgent, type AgentFollowState } from "../../prompt/agent-follow"
 import {
   OPENCODE_BASE_MODE,
   useBindings,
@@ -320,12 +321,11 @@ export function Prompt(props: PromptProps) {
   )
 
   // Initialize agent/model/variant from last user message when session
-  // changes; after that the agent follows the last user message id (M4), so
-  // synthetic turns like plan_exit's landing or /goal clear move the selector
-  // with them. Model/variant stay session-scoped: mid-session synthetic turns
-  // must not yank the model picker.
+  // changes; after that the agent follows a switch of the last user message's
+  // agent (M4, see followAgent). Model/variant stay session-scoped:
+  // mid-session synthetic turns must not yank the model picker.
   let syncedSessionID: string | undefined
-  let syncedMessageID: string | undefined
+  let synced: AgentFollowState = {}
   createEffect(() => {
     const sessionID = props.sessionID
     const msg = lastUserMessage()
@@ -334,7 +334,7 @@ export function Prompt(props: PromptProps) {
       if (!sessionID || !msg) return
 
       syncedSessionID = sessionID
-      syncedMessageID = msg.id
+      synced = { messageID: msg.id, agent: msg.agent }
 
       // Only set agent if it's a primary agent (not a subagent)
       const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
@@ -349,11 +349,14 @@ export function Prompt(props: PromptProps) {
       return
     }
 
-    if (!msg || msg.id === syncedMessageID) return
-    syncedMessageID = msg.id
+    if (!msg) return
+    const follow = followAgent(synced, msg)
+    synced = follow.state
+    const next = follow.agent
+    if (!next) return
 
-    const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
-    if (msg.agent && isPrimaryAgent && !args.agent) local.agent.set(msg.agent)
+    const isPrimaryAgent = local.agent.list().some((x) => x.name === next)
+    if (isPrimaryAgent && !args.agent) local.agent.set(next)
   })
 
   const promptCommands = createMemo(() =>
@@ -1077,11 +1080,13 @@ export function Prompt(props: PromptProps) {
     }
     // Local slash commands run in the TUI itself and must never reach the model
     // as a prompt: typing `/usage ` with a trailing space hides the slash
-    // autocomplete, so this submit path is the last line of defense.
-    const slash = store.prompt.input.split("\n")[0].split(" ")[0]
-    const localSlash = slash.startsWith("/")
-      ? slashes().find((entry) => entry.display === slash || entry.aliases?.includes(slash))
-      : undefined
+    // autocomplete, so this submit path is the last line of defense. Only a
+    // bare command is intercepted — "/models are slow" is a prompt, and a
+    // server command of the same name keeps its own route.
+    const localSlash =
+      trimmed.startsWith("/") && !/\s/.test(trimmed) && !sync.data.command.some((x) => "/" + x.name === trimmed)
+        ? slashes().find((entry) => entry.display === trimmed || entry.aliases?.includes(trimmed))
+        : undefined
     if (localSlash) {
       localSlash.onSelect()
       history.append({ ...store.prompt, mode: store.mode })

@@ -122,7 +122,9 @@ function splashInfo(title: string | undefined, history: RunPrompt[]) {
 }
 
 function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): FooterLabels {
-  const agentLabel = Locale.titlecase(input.agent ?? "build")
+  // No --agent: the server applies default_agent, which this client does not
+  // know at splash time — never claim a specific one.
+  const agentLabel = input.agent ? Locale.titlecase(input.agent) : "Default agent"
 
   if (!input.model) {
     return {
