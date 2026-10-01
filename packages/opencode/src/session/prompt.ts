@@ -731,12 +731,29 @@ const layer = Layer.effect(
       const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
-        !input.variant && ag.variant && same
+        input.variant || (ag.variant && same)
           ? yield* provider
               .getModel(model.providerID, model.modelID)
               .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
           : undefined
-      const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
+      // An explicit variant the resolved model does not define (e.g. "max"
+      // carried over from another model) would be silently ignored at request
+      // time; drop it so the stored message reflects what actually runs.
+      // "default" is the no-override sentinel and drops without a warning.
+      const unknown = !!input.variant && !!full && !full.variants?.[input.variant]
+      if (unknown && input.variant !== "default")
+        yield* Effect.logWarning("dropping variant not defined by the resolved model", {
+          "session.id": input.sessionID,
+          variant: input.variant,
+          providerID: model.providerID,
+          modelID: model.modelID,
+        })
+      const explicit = unknown ? undefined : input.variant
+      const variant = input.variant
+        ? explicit
+        : ag.variant && same && full?.variants?.[ag.variant]
+          ? ag.variant
+          : undefined
 
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),
@@ -1621,20 +1638,6 @@ const layer = Layer.effect(
       }
       template = template.trim()
 
-      const taskModel = yield* Effect.gen(function* () {
-        if (cmd.model) return Provider.parseModel(cmd.model)
-        // M3 guard: only follow the command's agent model when routing
-        // actually landed there (/goal clear lands on Auto instead).
-        if (cmd.agent && cmd.agent === agentName) {
-          const cmdAgent = yield* agents.get(cmd.agent)
-          if (cmdAgent?.model) return cmdAgent.model
-        }
-        if (input.model) return Provider.parseModel(input.model)
-        return yield* currentModel(input.sessionID)
-      })
-
-      yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
-
       const agent = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
       if (!agent) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
@@ -1644,6 +1647,26 @@ const layer = Layer.effect(
         throw error
       }
 
+      const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
+      // Same precedence as a plain prompt, with the command's own frontmatter
+      // model on top: cmd.model > the explicitly supplied model > the routed
+      // agent's pinned model > the session's current model, so a pinned agent
+      // model never overrides the model the user chose. The pinned model is
+      // the agent routing actually landed on (/goal clear lands on Auto, not
+      // the goal agent). A subtask routed to the command's own agent keeps
+      // that agent's pin above the supplied model: the supplied model belongs
+      // to the parent conversation (it still drives the parent user message
+      // below), as with Task-tool subagents.
+      const taskModel = yield* Effect.gen(function* () {
+        if (cmd.model) return Provider.parseModel(cmd.model)
+        if (isSubtask && cmd.agent === agent.name && agent.model) return agent.model
+        if (input.model) return Provider.parseModel(input.model)
+        if (agent.model) return agent.model
+        return yield* currentModel(input.sessionID)
+      })
+
+      yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
+
       const templateParts = yield* resolvePromptParts(template)
       const inputFiles = new Set(
         input.parts?.filter((part) => new URL(part.url).protocol === "file:").map((part) => fileURLToPath(part.url)),
@@ -1651,7 +1674,6 @@ const layer = Layer.effect(
       const uniqueTemplateParts = templateParts.filter(
         (part) => part.type !== "file" || !inputFiles.has(fileURLToPath(part.url)),
       )
-      const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
       const parts = isSubtask
         ? [
             {

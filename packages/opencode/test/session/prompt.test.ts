@@ -2877,6 +2877,105 @@ noLLMServer.instance(
   },
 )
 
+it.instance(
+  "command model precedence: explicit model beats the agent's pinned model",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig((url) => ({
+        ...providerCfg(url),
+        provider: {
+          test: {
+            ...providerCfg(url).provider.test,
+            models: {
+              ...cfg.provider.test.models,
+              "pinned-model": { ...cfg.provider.test.models["test-model"], id: "pinned-model", name: "Pinned" },
+            },
+          },
+        },
+        agent: { pinned: { mode: "primary", model: "test/pinned-model" } },
+        command: {
+          pin: { template: "pinned $ARGUMENTS", agent: "pinned" },
+          pinmodel: { template: "cmd $ARGUMENTS", agent: "pinned", model: "test/test-model" },
+        },
+      }))
+      const { prompt, sessions, chat } = yield* boot()
+      const lastUserModel = Effect.fn("test.lastUserModel")(function* () {
+        const msgs = yield* sessions.messages({ sessionID: chat.id })
+        const user = msgs.findLast((msg) => msg.info.role === "user")!
+        if (user.info.role !== "user") throw new Error("expected user message")
+        return user.info.model.modelID
+      })
+
+      // Explicitly supplied model wins over the command agent's pinned model.
+      yield* llm.text("one")
+      yield* prompt.command({ sessionID: chat.id, command: "pin", arguments: "a", model: "test/test-model" })
+      expect(yield* lastUserModel()).toBe(ModelV2.ID.make("test-model"))
+
+      // No explicit model: the routed agent's pinned model applies.
+      yield* llm.text("two")
+      yield* prompt.command({ sessionID: chat.id, command: "pin", arguments: "b" })
+      expect(yield* lastUserModel()).toBe(ModelV2.ID.make("pinned-model"))
+
+      // The command's own frontmatter model beats everything.
+      yield* llm.text("three")
+      yield* prompt.command({ sessionID: chat.id, command: "pinmodel", arguments: "c", model: "test/pinned-model" })
+      expect(yield* lastUserModel()).toBe(ModelV2.ID.make("test-model"))
+    }),
+  30_000,
+)
+
+noLLMServer.instance(
+  "drops an explicit variant the resolved model does not define",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({})
+
+      const kept = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        variant: "high",
+        noReply: true,
+        parts: [{ type: "text", text: "known variant" }],
+      })
+      if (kept.info.role !== "user") throw new Error("expected user message")
+      expect(kept.info.model.variant).toBe("high")
+
+      // "max" carried over from another model: not a test-model variant.
+      const dropped = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        variant: "max",
+        noReply: true,
+        parts: [{ type: "text", text: "unknown variant" }],
+      })
+      if (dropped.info.role !== "user") throw new Error("expected user message")
+      expect(dropped.info.model.variant).toBeUndefined()
+      expect((yield* sessions.get(session.id)).model?.variant).toBe("default")
+
+      yield* sessions.remove(session.id)
+    }),
+  {
+    config: {
+      ...cfg,
+      provider: {
+        ...cfg.provider,
+        test: {
+          ...cfg.provider.test,
+          models: {
+            "test-model": {
+              ...cfg.provider.test.models["test-model"],
+              variants: { low: {}, high: {} },
+            },
+          },
+        },
+      },
+      agent: { build: { model: "test/test-model" } },
+    },
+  },
+)
+
 // Agent / command resolution errors
 
 noLLMServer.instance(
