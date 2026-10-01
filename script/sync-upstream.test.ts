@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, open, readdir, rm, stat } from "fs/pro
 import { tmpdir } from "os"
 import path from "path"
 import { rejects } from "assert/strict"
-import { assertSyncReady, installBinary } from "./sync-upstream"
+import { assertForkInvariants, assertSyncReady, installBinary } from "./sync-upstream"
 
 const directories: string[] = []
 const gitBinary = Bun.which("git")!
@@ -55,7 +55,7 @@ async function repository() {
 }
 
 describe("sync preflight", () => {
-  test("allows a clean main after rebase", async () => {
+  test("allows a clean main after the merge", async () => {
     await assertSyncReady(await repository(), true)
   })
 
@@ -79,7 +79,7 @@ describe("sync preflight", () => {
     await git(directory, "commit", "--allow-empty", "-m", "upstream")
     await git(directory, "update-ref", "refs/remotes/upstream/dev", "HEAD")
     await git(directory, "checkout", "main")
-    await rejects(assertSyncReady(directory, true), /Rebase onto upstream\/dev is not complete/)
+    await rejects(assertSyncReady(directory, true), /Merge of upstream\/dev into main is not complete/)
   })
 
   test("detects rebase state through a linked worktree gitdir", async () => {
@@ -87,7 +87,69 @@ describe("sync preflight", () => {
     const linked = path.join(await temporary(), "linked")
     await git(directory, "worktree", "add", "-b", "linked", linked)
     await mkdir(path.resolve(linked, await git(linked, "rev-parse", "--git-path", "rebase-merge")))
-    await rejects(assertSyncReady(linked, true), /Finish the rebase first/)
+    await rejects(assertSyncReady(linked, true), /A rebase is in progress; this script merges/)
+  })
+
+  test("rejects an uncommitted merge", async () => {
+    const directory = await repository()
+    await Bun.write(path.resolve(directory, await git(directory, "rev-parse", "--git-path", "MERGE_HEAD")), "0".repeat(40))
+    await rejects(assertSyncReady(directory, false), /Finish the merge first/)
+  })
+})
+
+describe("fork invariants after the upstream merge", () => {
+  // Real repository with packages/ tracked: the guard greps committed content.
+  async function fork(files: Record<string, string>) {
+    const directory = await temporary()
+    await git(directory, "init", "--initial-branch=main", "--template=")
+    await git(directory, "config", "core.hooksPath", "/dev/null")
+    const base: Record<string, string> = {
+      "packages/opencode/src/index.ts": 'import { ServeCommand } from "./cli/cmd/serve"\ncli.command(ServeCommand)\n',
+      "packages/opencode/src/installation/index.ts":
+        'upgrade: Effect.fn("Installation.upgrade")(function* () {})\nexport const upgrade = (...a) => runPromise((s) => s.upgrade(...a))\n',
+      "packages/opencode/src/cli/upgrade.ts": "export async function upgrade() {}\n",
+      ...files,
+    }
+    for (const [file, text] of Object.entries(base)) {
+      await mkdir(path.dirname(path.join(directory, file)), { recursive: true })
+      await Bun.write(path.join(directory, file), text)
+    }
+    await git(directory, "add", ".")
+    await git(directory, "commit", "-m", "fork")
+    return directory
+  }
+
+  test("accepts the fork's current shape", async () => {
+    await assertForkInvariants(await fork({}))
+  })
+
+  test("rejects a reintroduced upgrade or web command file", async () => {
+    await rejects(
+      assertForkInvariants(await fork({ "packages/opencode/src/cli/cmd/upgrade.ts": "export {}\n" })),
+      /cli\/cmd\/upgrade\.ts exists again/,
+    )
+    await rejects(
+      assertForkInvariants(await fork({ "packages/opencode/src/cli/cmd/web.ts": "export {}\n" })),
+      /cli\/cmd\/web\.ts exists again/,
+    )
+  })
+
+  test("rejects a re-registered command", async () => {
+    const directory = await fork({
+      "packages/opencode/src/index.ts": 'import { WebCommand } from "./cli/cmd/web"\ncli.command(WebCommand)\n',
+    })
+    await rejects(assertForkInvariants(directory), /index\.ts references WebCommand/)
+  })
+
+  test("rejects a reintroduced Installation.upgrade call site", async () => {
+    const directory = await fork({
+      "packages/opencode/src/cli/upgrade.ts": "export async function upgrade() {\n  await Installation.upgrade(method, latest)\n}\n",
+    })
+    await rejects(assertForkInvariants(directory), /Installation\.upgrade call site[\s\S]*cli\/upgrade\.ts:2/)
+    const service = await fork({
+      "packages/opencode/src/server/global.ts": "const r = yield* installation.upgrade(method, target)\n",
+    })
+    await rejects(assertForkInvariants(service), /server\/global\.ts:1/)
   })
 })
 

@@ -5,15 +5,19 @@
  * Official default branch is `dev` (anomalyco/opencode).
  * This fork publishes a single `main`.
  *
- *   bun run sync-upstream              fetch, rebase, install, build, push
+ *   bun run sync-upstream              fetch, merge, check, install, build, push
  *   bun run sync-upstream --no-rebuild skip the binary rebuild
- *   bun run sync-upstream --continue   after fixing rebase conflicts
+ *   bun run sync-upstream --continue   after resolving merge conflicts and committing
+ *
+ * The flow merges upstream/dev into main (never rebases), then refuses to
+ * build or push if upstream reintroduced a self-upgrade or web path this fork
+ * deleted on purpose (see assertForkInvariants).
  */
 import { $ } from "bun"
 import { homedir } from "os"
 import path from "path"
 import { existsSync } from "fs"
-import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, rename, rm } from "fs/promises"
+import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm } from "fs/promises"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const UPSTREAM_URL = "https://github.com/anomalyco/opencode.git"
@@ -38,12 +42,20 @@ async function mustGit(args: string[], directory = ROOT) {
 }
 
 export async function assertSyncReady(directory: string, resume = false) {
+  const mergeHead = await mustGit(["rev-parse", "--git-path", "MERGE_HEAD"], directory)
+  if (existsSync(path.resolve(directory, mergeHead))) {
+    throw new Error(
+      "Finish the merge first: resolve files, then `git add -A && git commit --no-edit`.\n" +
+        "When the merge is committed, run: bun run sync-upstream --continue\n" +
+        "To abort: git merge --abort",
+    )
+  }
   for (const state of ["rebase-merge", "rebase-apply"]) {
     const location = await mustGit(["rev-parse", "--git-path", state], directory)
     if (existsSync(path.resolve(directory, location))) {
       throw new Error(
-        "Finish the rebase first: resolve files, then `git add` and `git rebase --continue`.\n" +
-          "When git rebase is done, run: bun run sync-upstream --continue",
+        "A rebase is in progress; this script merges and never rebases.\n" +
+          "Finish it (`git rebase --continue`) or drop it (`git rebase --abort`), then rerun bun run sync-upstream.",
       )
     }
   }
@@ -59,9 +71,52 @@ export async function assertSyncReady(directory: string, resume = false) {
   const ancestry = await git(["merge-base", "--is-ancestor", `upstream/${UPSTREAM_BRANCH}`, "HEAD"], directory)
   if (!ancestry.ok) {
     throw new Error(
-      ancestry.error || `Rebase onto upstream/${UPSTREAM_BRANCH} is not complete. Run bun run sync-upstream first.`,
+      ancestry.error ||
+        `Merge of upstream/${UPSTREAM_BRANCH} into ${LOCAL_BRANCH} is not complete. Run bun run sync-upstream first.`,
     )
   }
+}
+
+// Paths this fork deleted on purpose: every Installation.upgrade method (curl
+// script, npm, brew, ...) replaces the source-built ~/.opencode/bin/opencode
+// with an upstream release, and `opencode web` / `opencode upgrade` are the
+// CLI doors to it (commit "eric: drop self-upgrade paths that would overwrite
+// the fork binary"). A clean upstream merge can bring any of them back
+// silently, so the sync refuses to build or push until they are gone again.
+export const FORK_DELETED_FILES = [
+  "packages/opencode/src/cli/cmd/upgrade.ts",
+  "packages/opencode/src/cli/cmd/web.ts",
+]
+const CLI_ENTRY = "packages/opencode/src/index.ts"
+const FORK_DELETED_COMMANDS = ["UpgradeCommand", "WebCommand"]
+// ERE for git grep: a call (not the Effect.fn("Installation.upgrade") label or
+// a prose mention) on the Installation namespace or a yielded service.
+const UPGRADE_CALL = "(^|[^A-Za-z0-9_])[Ii]nstallation\\.upgrade\\("
+
+export async function assertForkInvariants(directory: string) {
+  const problems: string[] = []
+  for (const file of FORK_DELETED_FILES) {
+    if (existsSync(path.join(directory, file))) problems.push(`${file} exists again`)
+  }
+  const entry = path.join(directory, CLI_ENTRY)
+  if (existsSync(entry)) {
+    const source = await readFile(entry, "utf8")
+    for (const name of FORK_DELETED_COMMANDS) {
+      if (new RegExp(`\\b${name}\\b`).test(source)) problems.push(`${CLI_ENTRY} references ${name}`)
+    }
+  }
+  const calls = await git(["grep", "-n", "-E", UPGRADE_CALL, "--", "packages"], directory)
+  if (calls.ok && calls.text) {
+    problems.push(`Installation.upgrade call site(s):\n${calls.text.replace(/^/gm, "      ")}`)
+  } else if (!calls.ok && calls.code !== 1) {
+    throw new Error(calls.error || `git grep failed (${calls.code})`)
+  }
+  if (problems.length === 0) return
+  throw new Error(
+    "Upstream reintroduced self-upgrade/web paths this fork deleted (they would overwrite the source-built binary):\n" +
+      problems.map((problem) => `  - ${problem}`).join("\n") +
+      "\nRemove them again, commit, then run: bun run sync-upstream --continue",
+  )
 }
 
 export async function installBinary(source: string, destination: string) {
@@ -124,6 +179,7 @@ async function main() {
   }
 
   await assertSyncReady(ROOT, true)
+  await assertForkInvariants(ROOT)
   const personal = await mustGit(["log", "--oneline", `upstream/${UPSTREAM_BRANCH}..HEAD`])
   if (personal) {
     console.log("kept on top of upstream:")
@@ -156,6 +212,7 @@ async function main() {
   // A failed install/build must not publish an unverified merge. Also catch
   // tracked files accidentally changed by package lifecycle/build scripts.
   await assertSyncReady(ROOT, true)
+  await assertForkInvariants(ROOT)
   console.log("pushing origin/main…")
   await mustGit(["push", "origin", LOCAL_BRANCH])
 
