@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Effect, Layer, Context } from "effect"
+import { Clock, Effect, Layer, Context } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
@@ -13,6 +13,8 @@ import { withTransientReadRetry } from "@/util/effect-http-client"
 import { Global } from "@opencode-ai/core/global"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
+
+const REMOTE_TTL = 60 * 60 * 1000
 
 function extract(messages: SessionV1.WithParts[]) {
   const paths = new Set<string>()
@@ -92,14 +94,34 @@ const layer: Layer.Layer<
       return yield* fs.readFileString(filepath).pipe(Effect.catch(() => Effect.succeed("")))
     })
 
-    const fetch = Effect.fnUntraced(function* (url: string) {
+    // Remote instructions are cached per URL for the process: system() runs every
+    // loop step, so re-fetching would cost a request per step and a transient
+    // failure would silently drop the block (and the prompt cache with it).
+    // Within the TTL the cached body is reused; after it a refetch is tried and
+    // the last good body is kept when that fails.
+    const remote = new Map<string, { content: string; time: number }>()
+
+    const download = Effect.fnUntraced(function* (url: string) {
       const res = yield* http.execute(HttpClientRequest.get(url)).pipe(
         Effect.timeout(5000),
         Effect.catch(() => Effect.succeed(null)),
       )
-      if (!res) return ""
-      const body = yield* res.arrayBuffer.pipe(Effect.catch(() => Effect.succeed(new ArrayBuffer(0))))
-      return new TextDecoder().decode(body)
+      if (!res) return undefined
+      const body = yield* res.arrayBuffer.pipe(
+        Effect.map((body): ArrayBuffer | undefined => body),
+        Effect.catch(() => Effect.succeed(undefined)),
+      )
+      return body && new TextDecoder().decode(body)
+    })
+
+    const fetch = Effect.fnUntraced(function* (url: string) {
+      const now = yield* Clock.currentTimeMillis
+      const cached = remote.get(url)
+      if (cached && now - cached.time < REMOTE_TTL) return cached.content
+      const content = yield* download(url)
+      if (content === undefined) return cached?.content ?? ""
+      remote.set(url, { content, time: now })
+      return content
     })
 
     const clear = Effect.fn("Instruction.clear")(function* (messageID: MessageID) {
@@ -160,11 +182,11 @@ const layer: Layer.Layer<
       )
 
       const files = yield* Effect.forEach(Array.from(paths), read, { concurrency: 8 })
-      const remote = yield* Effect.forEach(urls, fetch, { concurrency: 4 })
+      const bodies = yield* Effect.forEach(urls, fetch, { concurrency: 4 })
 
       return [
         ...Array.from(paths).flatMap((item, i) => (files[i] ? [`Instructions from: ${item}\n${files[i]}`] : [])),
-        ...urls.flatMap((item, i) => (remote[i] ? [`Instructions from: ${item}\n${remote[i]}`] : [])),
+        ...urls.flatMap((item, i) => (bodies[i] ? [`Instructions from: ${item}\n${bodies[i]}`] : [])),
       ]
     })
 

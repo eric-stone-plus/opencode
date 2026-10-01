@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import path from "path"
 import { Effect, FileSystem, Layer } from "effect"
+import * as TestClock from "effect/testing/TestClock"
+import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 
 import { Instruction } from "../../src/session/instruction"
@@ -16,7 +18,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNodePlatform, httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { InstanceStore } from "@/project/instance-store"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Config } from "@/config/config"
@@ -206,7 +208,66 @@ describe("Instruction.resolve", () => {
     ),
   )
 
-  test.todo("fetches remote instructions from config URLs via HttpClient", () => {})
+})
+
+describe("Instruction.system remote", () => {
+  const url = "https://example.com/rules.md"
+  const remoteLayer = (respond: () => { status: number; body: string }, calls: { count: number }) =>
+    AppNodeBuilder.build(Instruction.node, [
+      [Config.node, Layer.succeed(Config.Service, TestConfig.make({ get: () => Effect.succeed({ instructions: [url] }) as any }))],
+      [Global.node, Global.layerWith({})],
+      [RuntimeFlags.node, RuntimeFlags.layer({})],
+      [
+        httpClient,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((req) =>
+            Effect.sync(() => {
+              calls.count++
+              const res = respond()
+              return HttpClientResponse.fromWeb(req, new Response(res.body, { status: res.status }))
+            }),
+          ),
+        ),
+      ],
+    ])
+
+  it.live("caches remote instructions by URL instead of fetching every step", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const calls = { count: 0 }
+        yield* Effect.gen(function* () {
+          const svc = yield* Instruction.Service
+          const remote = (rules: string[]) => rules.filter((rule) => rule.startsWith(`Instructions from: ${url}`))
+          expect(remote(yield* svc.system())).toEqual([`Instructions from: ${url}\n# Remote`])
+          expect(remote(yield* svc.system())).toEqual([`Instructions from: ${url}\n# Remote`])
+          expect(calls.count).toBe(1)
+        }).pipe(Effect.provide(remoteLayer(() => ({ status: 200, body: "# Remote" }), calls)))
+      }),
+    ),
+  )
+
+  it.effect("reuses the last good remote content when a refetch fails", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const calls = { count: 0 }
+        let ok = true
+        yield* Effect.gen(function* () {
+          const svc = yield* Instruction.Service
+          const remote = (rules: string[]) => rules.filter((rule) => rule.startsWith(`Instructions from: ${url}`))
+          expect(remote(yield* svc.system())).toEqual([`Instructions from: ${url}\n# Remote`])
+          ok = false
+          // Past the TTL a refetch is attempted; its failure keeps the cached body.
+          yield* TestClock.adjust("2 hours")
+          const rules = yield* svc.system()
+          expect(remote(rules)).toEqual([`Instructions from: ${url}\n# Remote`])
+          expect(calls.count).toBe(2)
+        }).pipe(
+          Effect.provide(remoteLayer(() => (ok ? { status: 200, body: "# Remote" } : { status: 404, body: "" }), calls)),
+        )
+      }),
+    ),
+  )
 })
 
 describe("Instruction.system", () => {
