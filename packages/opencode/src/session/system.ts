@@ -51,6 +51,13 @@ export function provider(model: Provider.Model) {
   return [PROMPT_DEFAULT]
 }
 
+// Lines that change while a session runs (the date rolls over on multi-day runs).
+// They go after every stable system block so a change only invalidates the
+// provider prompt cache from the end of the system prompt, not the whole prefix.
+export function volatile(now = new Date()) {
+  return `Today's date: ${now.toDateString()}`
+}
+
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
@@ -81,7 +88,6 @@ const layer = Layer.effect(
             `  Workspace root folder: ${ctx.worktree}`,
             `  Is directory a git repo: ${ctx.project.vcs === "git" ? "yes" : "no"}`,
             `  Platform: ${process.platform}`,
-            `  Today's date: ${new Date().toDateString()}`,
             `</env>`,
           ].join("\n"),
           references.length === 0

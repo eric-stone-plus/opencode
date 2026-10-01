@@ -207,3 +207,9 @@ describe("session.system", () => {
     }),
   )
 })
+
+describe("SystemPrompt.volatile", () => {
+  test("carries the date outside the stable env block", () => {
+    expect(SystemPrompt.volatile(new Date(2026, 9, 1))).toBe(`Today's date: ${new Date(2026, 9, 1).toDateString()}`)
+  })
+})
