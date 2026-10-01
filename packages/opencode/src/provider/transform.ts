@@ -356,13 +356,23 @@ function normalizeMessages(
   return msgs
 }
 
-function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+// `cacheTtl` ("5m" | "1h") in the model options sets the Anthropic cache_control
+// TTL for anthropic-npm providers; multi-hour runs with gaps longer than five
+// minutes keep their prefix warm with "1h". Other SDK keys keep the default.
+function cacheTtl(model: Provider.Model, options: Record<string, unknown>) {
+  if (model.api.npm !== "@ai-sdk/anthropic" && model.api.npm !== "@ai-sdk/google-vertex/anthropic") return
+  const ttl = options.cacheTtl ?? model.options.cacheTtl
+  return ttl === "5m" || ttl === "1h" ? ttl : undefined
+}
+
+function applyCaching(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown> = {}): ModelMessage[] {
   const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
   const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
+  const ttl = cacheTtl(model, options)
 
   const providerOptions = {
     anthropic: {
-      cacheControl: { type: "ephemeral" },
+      cacheControl: ttl ? { type: "ephemeral", ttl } : { type: "ephemeral" },
     },
     openrouter: {
       cacheControl: { type: "ephemeral" },
@@ -481,7 +491,7 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
     model.api.npm !== "@ai-sdk/gateway" &&
     !usesAnthropicAutomaticCaching
   ) {
-    msgs = applyCaching(msgs, model)
+    msgs = applyCaching(msgs, model, options)
   }
 
   // Remap providerOptions keys from stored providerID to expected SDK key

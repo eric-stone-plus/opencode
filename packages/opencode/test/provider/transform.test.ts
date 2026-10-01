@@ -3697,6 +3697,51 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     expect(result.every((message) => message.providerOptions === undefined)).toBe(true)
   })
 
+  test("cacheTtl sets the anthropic cache_control ttl for anthropic-npm providers", () => {
+    const model = createModel({
+      providerID: "bailian",
+      api: { id: "qwen3.8-max", url: "https://dashscope.aliyuncs.com/apps/anthropic", npm: "@ai-sdk/anthropic" },
+      options: { cacheTtl: "1h" },
+    })
+    const msgs = [
+      { role: "system", content: "You are a helpful assistant" },
+      { role: "user", content: "Hello" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+    for (const msg of result) {
+      expect(msg.providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "1h" })
+      expect(msg.providerOptions.openaiCompatible.cache_control).toEqual({ type: "ephemeral" })
+    }
+    // Merged request options (agent / variant) win over the model default.
+    const short = ProviderTransform.message(structuredClone(msgs), model, { cacheTtl: "5m" }) as any[]
+    expect(short[0].providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "5m" })
+  })
+
+  test("cacheTtl is ignored when invalid or for non-anthropic SDKs", () => {
+    const msgs = () =>
+      [
+        { role: "system", content: "You are a helpful assistant" },
+        { role: "user", content: "Hello" },
+      ] as any[]
+    const anthropic = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+      options: { cacheTtl: "24h" },
+    })
+    expect((ProviderTransform.message(msgs(), anthropic, {}) as any[])[0].providerOptions.anthropic.cacheControl).toEqual({
+      type: "ephemeral",
+    })
+    const alibaba = createModel({
+      providerID: "alibaba",
+      api: { id: "qwen3.8-max", url: "https://dashscope.aliyuncs.com", npm: "@ai-sdk/alibaba" },
+      options: { cacheTtl: "1h" },
+    })
+    expect((ProviderTransform.message(msgs(), alibaba, {}) as any[])[0].providerOptions.alibaba.cacheControl).toEqual({
+      type: "ephemeral",
+    })
+  })
+
   test("google-vertex-anthropic applies cache control", () => {
     const model = createModel({
       providerID: "google-vertex-anthropic",
