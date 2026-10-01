@@ -26,9 +26,10 @@ jq_rc="$?"
 # jq can exit non-zero AND still have extracted a command: a trailing-garbage
 # payload (`{"…valid json…"} TRAIL`) parses the object, prints the command,
 # then errors. A non-empty extraction must be scanned, never waved through.
-# Only an empty result with a failing jq is the documented degraded mode.
+# Only an empty result with a failing jq is the documented degraded mode:
+# jq is present here (checked above), the input itself would not parse.
 if [ -z "$cmd" ] && [ "$jq_rc" -ne 0 ]; then
-  printf '%s\n' "block-unsafe-kill: jq unavailable, guard degraded" >&2
+  printf '%s\n' "block-unsafe-kill: unparseable hook input, guard skipped" >&2
   exit 0
 fi
 
