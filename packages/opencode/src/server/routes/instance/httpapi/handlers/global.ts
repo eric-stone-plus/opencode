@@ -4,12 +4,13 @@ import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Effect, Queue } from "effect"
+import { Effect } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
+import { offerOrEnd, SUBSCRIBER_CAPACITY } from "./event"
 import { GlobalUpgradeInput } from "../groups/global"
 
 function eventData(data: unknown): Sse.Event {
@@ -24,13 +25,21 @@ function eventData(data: unknown): Sse.Event {
 function eventResponse() {
   return Effect.gen(function* () {
     yield* Effect.logInfo("global event connected")
-    const events = Stream.callback<GlobalBusEvent>((queue) => {
-      const handler = (event: GlobalBusEvent) => Queue.offerUnsafe(queue, event)
-      return Effect.acquireRelease(
-        Effect.sync(() => GlobalBus.on("event", handler)),
-        () => Effect.sync(() => GlobalBus.off("event", handler)),
-      )
-    })
+    // Bounded per-subscriber buffer: a stalled client ends its stream (and
+    // reconnects) instead of growing server memory without limit.
+    let overflowed = false
+    const events = Stream.callback<GlobalBusEvent>(
+      (queue) => {
+        const handler = (event: GlobalBusEvent) => {
+          if (offerOrEnd(queue, event)) overflowed = true
+        }
+        return Effect.acquireRelease(
+          Effect.sync(() => GlobalBus.on("event", handler)),
+          () => Effect.sync(() => GlobalBus.off("event", handler)),
+        )
+      },
+      { bufferSize: SUBSCRIBER_CAPACITY, strategy: "dropping" },
+    )
     const heartbeat = Stream.tick("10 seconds").pipe(
       Stream.drop(1),
       Stream.map(() => ({ payload: { id: EventV2.ID.create(), type: "server.heartbeat", properties: {} } })),
@@ -42,7 +51,15 @@ function eventResponse() {
         Stream.map(eventData),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
-        Stream.ensuring(Effect.logInfo("global event disconnected")),
+        Stream.ensuring(
+          Effect.suspend(() =>
+            overflowed
+              ? Effect.logWarning("global event subscriber overflowed, stream closed", {
+                  capacity: SUBSCRIBER_CAPACITY,
+                })
+              : Effect.logInfo("global event disconnected"),
+          ),
+        ),
       ),
       {
         contentType: "text/event-stream",

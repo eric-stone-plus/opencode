@@ -2,7 +2,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
-import { Effect, Queue } from "effect"
+import { Cause, Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -22,40 +22,64 @@ function eventID() {
   return EventV2.ID.create()
 }
 
+/**
+ * Per-subscriber SSE buffer. Events are only queued while the client socket is
+ * slower than the publishers, so this bounds memory held for a stalled client.
+ */
+export const SUBSCRIBER_CAPACITY = 4096
+
+/**
+ * Offers to a bounded subscriber queue. On overflow the queue is ended: the
+ * buffered events still drain, then the SSE stream closes so the client
+ * reconnects and re-hydrates instead of the server buffering without limit.
+ * Returns true only for the offer that overflowed (later offers are dropped).
+ */
+export function offerOrEnd<A>(queue: Queue.Queue<A, Cause.Done>, value: A) {
+  if (Queue.offerUnsafe(queue, value)) return false
+  return Queue.endUnsafe(queue)
+}
+
 function eventResponse(events: EventV2.Interface) {
   return Effect.gen(function* () {
     const instance = yield* InstanceState.context
     const workspaceID = yield* InstanceState.workspaceID
     // Listener registration is eager, so events published after this point cannot
     // be lost while the HTTP body fiber is starting or emitting server.connected.
-    const queue = yield* Queue.unbounded<EventV2.Payload>()
-    const unsubscribe = yield* events.listen((event) => Effect.sync(() => Queue.offerUnsafe(queue, event)))
-    yield* Effect.addFinalizer(() => unsubscribe)
+    // Filter before enqueueing so other instances' traffic never occupies this
+    // subscriber's bounded buffer.
+    const queue = yield* Queue.dropping<EventV2.Payload, Cause.Done>(SUBSCRIBER_CAPACITY)
+    const unsubscribe = yield* events.listen((event) =>
+      Effect.suspend(() => {
+        if (event.location?.directory !== instance.directory) return Effect.void
+        if (event.location.workspaceID !== undefined && event.location.workspaceID !== workspaceID) return Effect.void
+        if (!offerOrEnd(queue, event)) return Effect.void
+        return Effect.logWarning("event subscriber overflowed, closing stream", { capacity: SUBSCRIBER_CAPACITY })
+      }),
+    )
+    yield* Effect.addFinalizer(() => unsubscribe.pipe(Effect.andThen(Queue.shutdown(queue))))
     const stream = Stream.fromQueue(queue).pipe(
-      Stream.filter(
-        (event) =>
-          event.location?.directory === instance.directory &&
-          (event.location.workspaceID === undefined || event.location.workspaceID === workspaceID),
-      ),
       Stream.map((event) => ({ id: event.id, type: event.type, properties: event.data })),
     )
-    const disposed = Stream.callback<{ id: string; type: string; properties: unknown }>((queue) => {
-      const listener = (event: {
-        directory?: string
-        payload: { id?: string; type?: string; properties?: unknown }
-      }) => {
-        if (event.directory !== instance.directory || event.payload.type !== "server.instance.disposed") return
-        Queue.offerUnsafe(queue, {
-          id: event.payload.id ?? eventID(),
-          type: "server.instance.disposed",
-          properties: event.payload.properties ?? {},
-        })
-      }
-      return Effect.acquireRelease(
-        Effect.sync(() => GlobalBus.on("event", listener)),
-        () => Effect.sync(() => GlobalBus.off("event", listener)),
-      )
-    })
+    const disposed = Stream.callback<{ id: string; type: string; properties: unknown }>(
+      (queue) => {
+        const listener = (event: {
+          directory?: string
+          payload: { id?: string; type?: string; properties?: unknown }
+        }) => {
+          if (event.directory !== instance.directory || event.payload.type !== "server.instance.disposed") return
+          offerOrEnd(queue, {
+            id: event.payload.id ?? eventID(),
+            type: "server.instance.disposed",
+            properties: event.payload.properties ?? {},
+          })
+        }
+        return Effect.acquireRelease(
+          Effect.sync(() => GlobalBus.on("event", listener)),
+          () => Effect.sync(() => GlobalBus.off("event", listener)),
+        )
+      },
+      { bufferSize: 16, strategy: "dropping" },
+    )
     const output = stream.pipe(
       Stream.merge(disposed, { haltStrategy: "left" }),
       Stream.takeUntil((event) => event.type === "server.instance.disposed"),
