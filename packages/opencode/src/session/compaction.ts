@@ -32,6 +32,35 @@ export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
 const TOOL_OUTPUT_MAX_CHARS = 2_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
+export const PRUNED_OUTPUT = "[Old tool result content cleared]"
+// Metadata entries larger than this (serialized) are dropped when a part is pruned, so the
+// stored row actually shrinks. Small entries the UI relies on (truncated/outputPath, exit
+// codes, titles, counts) survive.
+const PRUNE_METADATA_ENTRY_LIMIT = 4_000
+// Never shown to the model, but rendered by the UI for old edits; keep regardless of size.
+const PRUNE_METADATA_KEEP = new Set(["diff", "filediff", "files"])
+
+export function pruneCompletedState(
+  state: SessionV1.ToolStateCompleted,
+  time = Date.now(),
+): SessionV1.ToolStateCompleted {
+  const metadata = Object.fromEntries(
+    Object.entries(state.metadata ?? {}).filter(([key, value]) => {
+      if (value === undefined) return false
+      if (PRUNE_METADATA_KEEP.has(key)) return true
+      if (typeof value === "string") return value.length <= PRUNE_METADATA_ENTRY_LIMIT
+      return (JSON.stringify(value)?.length ?? 0) <= PRUNE_METADATA_ENTRY_LIMIT
+    }),
+  )
+  // Attachments are already withheld from the model once compacted; drop their payload too.
+  const { attachments: _, ...rest } = state
+  return {
+    ...rest,
+    output: PRUNED_OUTPUT,
+    metadata,
+    time: { ...state.time, compacted: time },
+  }
+}
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 15_000
 // Extra summary attempts after the processor's own retries gave up on a transient error.
@@ -322,10 +351,11 @@ const layer = Layer.effect(
 
       yield* Effect.logInfo("found", { pruned, total })
       if (pruned > PRUNE_MINIMUM) {
+        const now = Date.now()
         for (const part of toPrune) {
           if (part.state.status === "completed") {
-            part.state.time.compacted = Date.now()
-            yield* session.updatePart(part)
+            // Replace the payload, not just flag it: the part row (and its durable event) shrink.
+            yield* session.updatePart({ ...part, state: pruneCompletedState(part.state, now) })
           }
         }
         yield* Effect.logInfo("pruned", { count: toPrune.length })

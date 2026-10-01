@@ -9,7 +9,7 @@ import { TestClock } from "effect/testing"
 import * as Stream from "effect/Stream"
 import { Config } from "@/config/config"
 import { LLM } from "../../src/session/llm"
-import { SessionCompaction } from "../../src/session/compaction"
+import { PRUNED_OUTPUT, SessionCompaction } from "../../src/session/compaction"
 import { Token } from "@/util/token"
 import { Plugin } from "../../src/plugin"
 import { provideTmpdirInstance, TestInstance } from "../fixture/fixture"
@@ -698,7 +698,7 @@ describe("session.compaction.prune", () => {
               input: {},
               output: "x".repeat(200_000),
               title: "done",
-              metadata: {},
+              metadata: { outputPath: "/tmp/tool-output.txt", truncated: true, output: "y".repeat(50_000) },
               time: { start: Date.now(), end: Date.now() },
             },
           })
@@ -728,6 +728,14 @@ describe("session.compaction.prune", () => {
           expect(part?.state.status).toBe("completed")
           if (part?.type === "tool" && part.state.status === "completed") {
             expect(part.state.time.compacted).toBeNumber()
+            // The stored payload is replaced, so the part row actually shrinks.
+            expect(part.state.output).toBe(PRUNED_OUTPUT)
+            expect(part.state.metadata).toEqual({ outputPath: "/tmp/tool-output.txt", truncated: true })
+            const model = yield* MessageV2.toModelMessagesEffect(
+              msgs.filter((msg) => msg.info.id === part.messageID),
+              createModel({ context: 100_000, output: 32_000 }),
+            )
+            expect(JSON.stringify(model)).toContain("[Old tool result content cleared]")
           }
         }),
 

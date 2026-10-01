@@ -1,4 +1,5 @@
 import { Formatter, Logger, type LogLevel } from "effect"
+import fs from "fs"
 import path from "path"
 import { Global } from "../global"
 import { runID } from "./shared"
@@ -46,7 +47,40 @@ function format(input: unknown) {
   return /^[^\s="\\]+$/.test(value) ? value : JSON.stringify(value)
 }
 
+export const ROTATE_BYTES = 20 * 1024 * 1024
+export const ROTATE_KEEP = 3
+const rotated = new Set<string>()
+
+/**
+ * Size-based rotation, once per process per file: when the log exceeds
+ * `maxBytes`, shift `file.N-1` -> `file.N` (dropping the oldest beyond `keep`)
+ * and move the current file to `file.1`. Best-effort; never throws.
+ */
+export function rotate(file: string, options?: { maxBytes?: number; keep?: number }) {
+  const maxBytes = options?.maxBytes ?? ROTATE_BYTES
+  const keep = Math.max(1, options?.keep ?? ROTATE_KEEP)
+  try {
+    if (fs.statSync(file).size <= maxBytes) return false
+  } catch {
+    return false
+  }
+  try {
+    fs.rmSync(`${file}.${keep}`, { force: true })
+    for (let index = keep - 1; index >= 1; index--) {
+      if (fs.existsSync(`${file}.${index}`)) fs.renameSync(`${file}.${index}`, `${file}.${index + 1}`)
+    }
+    fs.renameSync(file, `${file}.1`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id: string = runID) {
+  if (!rotated.has(file)) {
+    rotated.add(file)
+    rotate(file)
+  }
   // Do not set batchWindow to 0; it causes high idle CPU usage.
   return Logger.toFile(formatter(id), file, { flag: "a" })
 }
