@@ -976,7 +976,7 @@ const thinkingBlocks = (body: Record<string, unknown>) =>
       : [],
   )
 
-it.instance("loop drops thinking from earlier user turns on Anthropic-protocol models", () =>
+it.instance("loop keeps earlier turns' thinking on Anthropic-protocol models so the cached prefix is stable", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(anthropicCfg)
     const prompt = yield* SessionPrompt.Service
@@ -1012,8 +1012,9 @@ it.instance("loop drops thinking from earlier user turns on Anthropic-protocol m
     expect(requests.every((body) => body.model === "qwen-test")).toBe(true)
     // Inside the tool loop the previous step's thinking is still replayed.
     expect(thinkingBlocks(requests[1])).toStrictEqual(["think-one-a"])
-    // After the next user message, none of the first turn's thinking is resent.
-    expect(thinkingBlocks(requests[2])).toStrictEqual([])
+    // The next user message does not rewrite the first turn: its thinking stays
+    // until a compaction advances the drop boundary (see MessageV2 dropReasoning).
+    expect(thinkingBlocks(requests[2])).toStrictEqual(["think-one-a", "think-one-b"])
     expect(JSON.stringify(requests[2].messages)).toContain("done one")
     expect(result.parts.some((part) => part.type === "text" && part.text === "done two")).toBe(true)
   }),

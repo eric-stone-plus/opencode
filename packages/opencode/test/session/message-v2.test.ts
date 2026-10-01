@@ -1547,15 +1547,53 @@ describe("session.message-v2.toModelMessage", () => {
         Array.isArray(msg.content) ? msg.content.flatMap((part) => (part.type === "reasoning" ? [part.text] : [])) : [],
       )
 
-    test("keeps only the current turn for Anthropic-protocol models other than Claude", async () => {
+    test("keeps every turn's reasoning without a compaction so the prefix stays stable", async () => {
       const qwen = anthropicProtocol("qwen3.8-max")
-      const result = ProviderTransform.message(await MessageV2.toModelMessages(history(qwen), qwen), qwen, {})
+      // Compare before cache markers are placed (those sit on the last messages by design).
+      const before = await MessageV2.toModelMessages(history(qwen).slice(0, 3), qwen)
+      const after = await MessageV2.toModelMessages(history(qwen), qwen)
 
-      expect(thinking(result)).toStrictEqual(["current-thinking"])
-      // The earlier answer survives without its thinking or the empty separator,
+      expect(thinking(after)).toStrictEqual(["old-thinking", "old-only-thinking", "current-thinking"])
+      // A new turn never rewrites earlier messages: the old request is a strict prefix.
+      expect(after.slice(0, before.length)).toStrictEqual(before)
+    })
+
+    // Compacted history: [compaction-user, summary, retained tail (older), continue-user, ...].
+    const compacted = (target: Provider.Model): SessionV1.WithParts[] => {
+      const meta = { providerID: target.providerID, modelID: target.api.id }
+      const at = <T extends SessionV1.WithParts>(msg: T, created: number) => ({
+        ...msg,
+        info: { ...msg.info, time: { ...msg.info.time, created } },
+      })
+      const [u1, a1, a2, u2, a3] = history(target)
+      return [
+        at({ info: userInfo("c1"), parts: [{ ...basePart("c1", "p1"), type: "compaction", auto: true }] as SessionV1.Part[] }, 10),
+        at(
+          {
+            info: { ...assistantInfo("s1", "c1", undefined, meta), summary: true, finish: "end_turn" },
+            parts: [
+              { ...basePart("s1", "p1"), type: "reasoning", text: "summary-thinking", time: { start: 0, end: 1 }, metadata: { anthropic: { signature: "" } } },
+              { ...basePart("s1", "p2"), type: "text", text: "summary" },
+            ] as SessionV1.Part[],
+          },
+          11,
+        ),
+        at(u1!, 1),
+        at(a1!, 2),
+        at(a2!, 3),
+        at(u2!, 12),
+        at(a3!, 13),
+      ]
+    }
+
+    test("drops reasoning older than the active compaction marker for Anthropic-protocol models other than Claude", async () => {
+      const qwen = anthropicProtocol("qwen3.8-max")
+      const result = ProviderTransform.message(await MessageV2.toModelMessages(compacted(qwen), qwen), qwen, {})
+
+      expect(thinking(result)).toStrictEqual(["summary-thinking", "current-thinking"])
+      // The retained answer survives without its thinking or the empty separator,
       // and the reasoning-only step disappears instead of becoming an empty message.
-      expect(result.map((msg) => msg.role)).toStrictEqual(["user", "assistant", "user", "assistant"])
-      expect(JSON.stringify(result[1].content)).toContain("old answer")
+      expect(JSON.stringify(result)).toContain("old answer")
       expect(result.every((msg) => typeof msg.content === "string" || msg.content.length > 0)).toBe(true)
     })
 

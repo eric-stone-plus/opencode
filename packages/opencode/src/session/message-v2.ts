@@ -201,14 +201,22 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 
   // Anthropic strips thinking from earlier user turns before counting input tokens.
   // Anthropic-compatible endpoints serving other models (e.g. Qwen on Bailian) bill
-  // every replayed block instead, so keep reasoning only for the current turn there.
+  // every replayed block instead. Dropping it per user turn, though, rewrites the
+  // previous turn on every new user message and invalidates the prompt cache from
+  // there on, which costs more than cache-reading the replayed thinking. These
+  // endpoints only require the thinking of the in-flight tool loop (with its
+  // signature) and accept history with or without earlier thinking, so the drop
+  // boundary only advances at compaction: reasoning older than the active
+  // compaction marker (pre-compaction turns, including a retained tail) is
+  // dropped, everything since is replayed, and the prefix stays byte-identical
+  // until the next compaction rewrites it anyway.
   // `sendReasoning: true` in the model options restores full replay.
-  const currentTurn =
+  const compaction =
     model.api.npm === "@ai-sdk/anthropic" && !model.api.id.includes("claude") && model.options.sendReasoning !== true
-      ? input.findLastIndex((msg) => msg.info.role === "user")
-      : -1
+      ? input.findLast((msg) => msg.info.role === "user" && msg.parts.some((part) => part.type === "compaction"))?.info
+      : undefined
 
-  for (const [index, msg] of input.entries()) {
+  for (const msg of input) {
     if (msg.parts.length === 0) continue
 
     if (msg.info.role === "user") {
@@ -289,7 +297,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       // here is the only safe replay point we have.
       // Use a single space so the separator survives replay without changing
       // the neighboring signed reasoning blocks.
-      const dropReasoning = index < currentTurn
+      const dropReasoning = compaction !== undefined && msg.info.time.created < compaction.time.created
       const hasSignedReasoning = msg.parts.some((part) => {
         if (part.type !== "reasoning" || dropReasoning) return false
         return part.metadata?.anthropic?.signature != null
