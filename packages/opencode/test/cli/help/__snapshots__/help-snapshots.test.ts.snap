@@ -451,7 +451,7 @@ exports[`opencode CLI help-text snapshots every documented command emits stable 
 log in to a provider
 
 Positionals:
-  url  opencode auth provider                                                               [string]
+  url  well-known auth provider URL (disabled in this fork; errors)                         [string]
 
 Options:
   -h, --help        show help                                                              [boolean]

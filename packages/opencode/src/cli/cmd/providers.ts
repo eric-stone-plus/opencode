@@ -13,9 +13,7 @@ import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin } from "../../plugin"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
-import { text } from "node:stream/consumers"
 import { Effect, Option } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
@@ -209,6 +207,13 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
   return false
 })
 
+// Fork policy: only providers declared in the config `provider` block are ever loaded, so a
+// credential for anything else is stored but never used.
+export function undeclaredProviderWarning(declared: string[], provider: string) {
+  if (provider === "other" || declared.includes(provider)) return undefined
+  return `${provider} is not declared in your config \`provider\` block. This build only loads declared providers, so the credential stays unused until you declare it.`
+}
+
 export function resolvePluginProviders(input: {
   hooks: Hooks[]
   existingProviders: Record<string, unknown>
@@ -299,12 +304,12 @@ export const ProvidersListCommand = effectCmd({
 export const ProvidersLoginCommand = effectCmd({
   command: "login [url]",
   describe: "log in to a provider",
-  // URL login skips instance bootstrap, which would load remote config with the stale token and crash before re-auth.
+  // URL login is refused before any instance bootstrap (remote well-known config is disabled).
   instance: (args) => !args.url,
   builder: (yargs: Argv) =>
     yargs
       .positional("url", {
-        describe: "opencode auth provider",
+        describe: "well-known auth provider URL (disabled in this fork; errors)",
         type: "string",
       })
       .option("provider", {
@@ -323,38 +328,16 @@ export const ProvidersLoginCommand = effectCmd({
     UI.empty()
     yield* Prompt.intro("Add credential")
     if (args.url) {
-      const url = args.url.replace(/\/+$/, "")
-      const wellknown = (yield* cliTry(`Failed to load auth provider metadata from ${url}: `, () =>
-        fetch(`${url}/.well-known/opencode`).then((x) => x.json()),
-      )) as {
-        auth: { command: string[]; env: string }
-      }
-      yield* Prompt.log.info(`Running \`${wellknown.auth.command.join(" ")}\``)
-      const abort = new AbortController()
-      const proc = Process.spawn(wellknown.auth.command, { stdout: "pipe", stderr: "inherit", abort: abort.signal })
-      if (!proc.stdout) {
-        yield* Prompt.log.error("Failed")
-        yield* Prompt.outro("Done")
-        return
-      }
-      const [exit, token] = yield* cliTry("Failed to run auth provider command: ", () =>
-        Promise.all([proc.exited, text(proc.stdout!)]),
-      ).pipe(Effect.ensuring(Effect.sync(() => abort.abort())))
-      if (exit !== 0) {
-        yield* Prompt.log.error("Failed")
-        yield* Prompt.outro("Done")
-        return
-      }
-      yield* Effect.orDie(authSvc.set(url, { type: "wellknown", key: wellknown.auth.env, token: token.trim() }))
-      yield* Prompt.log.success("Logged into " + url)
-      yield* Prompt.outro("Done")
-      return
+      // Fork policy: well-known remote config is disabled (config.ts never fetches it), so a
+      // `wellknown` credential would be dead weight. Refuse instead of silently storing it.
+      return yield* fail(
+        `Remote well-known login (${args.url}) is disabled in this fork: remote config is never fetched or merged. Declare the provider in your opencode.json \`provider\` block and log in with \`opencode providers login --provider <id>\`.`,
+      )
     }
 
     const cfgSvc = yield* Config.Service
     const pluginSvc = yield* Plugin.Service
     const modelsDev = yield* ModelsDev.Service
-    yield* Effect.ignore(modelsDev.refresh(true))
 
     const config = yield* cfgSvc.get()
 
@@ -369,7 +352,6 @@ export const ProvidersLoginCommand = effectCmd({
     const hooks = yield* pluginSvc.list()
 
     const priority: Record<string, number> = {
-      opencode: 0,
       openai: 1,
       "github-copilot": 2,
       google: 3,
@@ -396,7 +378,6 @@ export const ProvidersLoginCommand = effectCmd({
           label: x.name,
           value: x.id,
           hint: {
-            opencode: "recommended",
             openai: "ChatGPT Plus/Pro or API key",
           }[x.id],
         })),
@@ -427,6 +408,9 @@ export const ProvidersLoginCommand = effectCmd({
         }),
       )
     }
+
+    const undeclared = undeclaredProviderWarning(Object.keys(config.provider ?? {}), provider)
+    if (undeclared) yield* Prompt.log.warn(undeclared)
 
     const plugin = hooks.findLast((x) => x.auth?.provider === provider)
     if (plugin && plugin.auth) {

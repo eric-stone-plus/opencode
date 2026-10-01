@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test"
-import { resolvePluginProviders } from "../../src/cli/cmd/providers"
+import { resolvePluginProviders, undeclaredProviderWarning } from "../../src/cli/cmd/providers"
 import type { Hooks } from "@opencode-ai/plugin"
 
 function hookWithAuth(provider: string): Hooks {
@@ -116,5 +116,21 @@ describe("resolvePluginProviders", () => {
       providerNames: {},
     })
     expect(result).toEqual([])
+  })
+})
+
+describe("undeclaredProviderWarning", () => {
+  test("is silent for providers declared in config", () => {
+    expect(undeclaredProviderWarning(["xiaomi-token-plan-cn", "glm-coding-plan"], "glm-coding-plan")).toBeUndefined()
+  })
+
+  test("warns that undeclared provider credentials are never used", () => {
+    const warning = undeclaredProviderWarning(["xiaomi-token-plan-cn"], "openrouter")
+    expect(warning).toContain("openrouter is not declared")
+    expect(warning).toContain("only loads declared providers")
+  })
+
+  test("defers the custom-id prompt path", () => {
+    expect(undeclaredProviderWarning([], "other")).toBeUndefined()
   })
 })
