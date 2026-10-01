@@ -54,4 +54,7 @@ export function path() {
   return join(Global.Path.data, `opencode-${InstallationChannel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`)
 }
 
-export const node = makeGlobalNode({ service: Service, layer: layerFromPath(path()), deps: [] })
+// Resolve the DB path when the layer is built, not at module load: embedders
+// and tests set Flag.OPENCODE_DB after import, and the ESM module cache would
+// otherwise freeze the first importer's path for the process lifetime.
+export const node = makeGlobalNode({ service: Service, layer: Layer.suspend(() => layerFromPath(path())), deps: [] })
