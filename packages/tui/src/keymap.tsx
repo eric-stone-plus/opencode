@@ -30,12 +30,13 @@ export { useBindings, useKeymapSelector }
 
 export type OpenTuiKeymap = ReturnType<typeof useKeymap>
 type OpencodeModeStack = ReturnType<typeof createOpencodeModeStack>
-type CommandSlashEntry = {
+export type CommandSlashEntry = {
   display: string
   description?: string
   aliases?: string[]
-  onSelect: () => void
+  onSelect: () => CommandDispatchResult
 }
+export type CommandDispatchResult = ReturnType<OpenTuiKeymap["dispatchCommand"]>
 type Command = ReturnType<OpenTuiKeymap["getCommands"]>[number]
 type BindingLookup = {
   get(command: string): readonly Binding<Renderable, KeyEvent>[]

@@ -59,6 +59,7 @@ import {
   useCommandSlashes,
   useLeaderActive,
   useOpencodeKeymap,
+  type CommandSlashEntry,
 } from "../../keymap"
 import { useTuiConfig } from "../../config"
 import { usePromptWorkspace } from "./workspace"
@@ -1057,6 +1058,24 @@ export function Prompt(props: PromptProps) {
     }
   }
 
+  function clearComposer() {
+    revision++
+    if (!input.isDestroyed) input.extmarks.clear()
+    setStore("prompt", { input: "", parts: [] })
+    setStore("extmarkToPartIndex", new Map())
+    if (!input.isDestroyed) input.clear()
+  }
+
+  function runLocalSlash(entry: CommandSlashEntry, draft: PromptInfo) {
+    if (entry.onSelect().ok) return
+    // Slash entries are listed by reachability, but dispatch requires the
+    // command to be active (and not reject) in the current focus; a command
+    // that did not run must not eat the user's input.
+    if (renderer.isDestroyed) return
+    if (!disposed && !input.isDestroyed && !input.plainText && store.prompt.parts.length === 0) ref.set(draft)
+    toast.show({ message: `${entry.display} is not available here`, variant: "warning", duration: 3000 })
+  }
+
   async function submitInner(force: boolean) {
     workspace.clearNotice()
 
@@ -1082,19 +1101,28 @@ export function Prompt(props: PromptProps) {
     // as a prompt: typing `/usage ` with a trailing space hides the slash
     // autocomplete, so this submit path is the last line of defense. Only a
     // bare command is intercepted — "/models are slow" is a prompt, and a
-    // server command of the same name keeps its own route.
+    // server command of the same name keeps its own route. Shell mode input
+    // is a shell command line, never a slash command.
     const localSlash =
-      trimmed.startsWith("/") && !/\s/.test(trimmed) && !sync.data.command.some((x) => "/" + x.name === trimmed)
+      store.mode !== "shell" &&
+      trimmed.startsWith("/") &&
+      !/\s/.test(trimmed) &&
+      !sync.data.command.some((x) => "/" + x.name === trimmed)
         ? slashes().find((entry) => entry.display === trimmed || entry.aliases?.includes(trimmed))
         : undefined
     if (localSlash) {
-      localSlash.onSelect()
-      history.append({ ...store.prompt, mode: store.mode })
-      input.extmarks.clear()
-      setStore("prompt", { input: "", parts: [] })
-      setStore("extmarkToPartIndex", new Map())
+      // Mirror the autocomplete path: clear the composer first, then run the
+      // command. Running it inline would let it observe `submitting` (e.g.
+      // /withdraw bails), see the stale draft (/editor), have its own
+      // prompt.set() wiped by this clear (/undo), or destroy the renderer
+      // before we touch the input again (/exit).
+      const draft = structuredClone(unwrap(store.prompt))
+      clearComposer()
       props.onSubmit?.()
-      input.clear()
+      // Dispatch only after submit() has fully settled (`submitting` reset in
+      // its finally block, and callers like prompt.submit done with their
+      // dialog.clear()).
+      setTimeout(() => runLocalSlash(localSlash, draft), 0)
       return true
     }
     const selectedModel = local.model.current()
