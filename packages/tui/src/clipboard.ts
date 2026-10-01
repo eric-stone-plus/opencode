@@ -20,12 +20,20 @@ function command(command: string, args: string[] = [], input?: string) {
   })
 }
 
-function writeOsc52(text: string) {
-  if (!process.stdout.isTTY) return false
+export type ClipboardEnv = Readonly<Record<string, string | undefined>>
+
+export function osc52Sequence(text: string, env: ClipboardEnv) {
   const sequence = `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`
   const passthrough = `\x1bPtmux;\x1b${sequence}\x1b\\`
-  process.stdout.write(process.env.TMUX ? sequence + passthrough : process.env.STY ? passthrough : sequence)
-  return true
+  return env.TMUX ? sequence + passthrough : env.STY ? passthrough : sequence
+}
+
+// OSC 52 is fire-and-forget: the terminal never acknowledges it, and many
+// (Terminal.app, tmux without set-clipboard) silently drop it. It only counts
+// as the copy path when the session is remote, where the host's clipboard
+// tool cannot reach the user's machine and OSC 52 is the intended route.
+export function isRemoteTerminal(env: ClipboardEnv) {
+  return Boolean(env.SSH_TTY || env.SSH_CONNECTION || env.SSH_CLIENT)
 }
 
 export async function read() {
@@ -95,40 +103,78 @@ export function copyCommand(
   }
 }
 
+export type CopyDeps = {
+  platform: NodeJS.Platform
+  env: ClipboardEnv
+  which(name: string): boolean
+  run(command: string, args: string[], input?: string): Promise<unknown>
+  fallback(text: string): Promise<void>
+}
+
+export function createCopyMethod(deps: CopyDeps): (text: string) => Promise<void> {
+  const native = copyCommand(deps.platform, Boolean(deps.env.WAYLAND_DISPLAY), deps.which)
+  if (native?.[0] === "osascript") {
+    return async (text) => {
+      const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      await deps.run("osascript", ["-e", `set the clipboard to "${escaped}"`])
+    }
+  }
+  if (native) {
+    return async (text) => {
+      await deps.run(native[0], native.slice(1), text)
+    }
+  }
+  return deps.fallback
+}
+
+export type WriteDeps = {
+  env: ClipboardEnv
+  tty: boolean
+  emit(sequence: string): void
+  copy(text: string): Promise<void>
+}
+
+export async function writeWith(text: string, deps: WriteDeps) {
+  // Emit OSC 52 whenever there is a terminal: it is harmless where it is
+  // ignored, and over SSH even a "successful" native copy lands on the remote
+  // host's clipboard rather than the user's.
+  const osc52 = deps.tty
+  if (osc52) deps.emit(osc52Sequence(text, deps.env))
+  try {
+    await deps.copy(text)
+  } catch (error) {
+    // A native failure is only covered by OSC 52 when OSC 52 is the intended
+    // path. Locally there is no way to know the terminal honored it, so report
+    // the failure instead of letting callers toast "copied" over nothing.
+    if (osc52 && isRemoteTerminal(deps.env)) return
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`Clipboard unavailable: ${reason}`, { cause: error })
+  }
+}
+
 let copyMethod: Promise<(text: string) => Promise<void>> | undefined
 
 function getCopyMethod() {
   return (copyMethod ??= (async () => {
     const { which } = await import("@opencode-ai/core/util/which")
-    const native = copyCommand(platform(), Boolean(process.env.WAYLAND_DISPLAY), (name) => Boolean(which(name)))
-    if (native?.[0] === "osascript") {
-      return async (text: string) => {
-        const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-        // Failures propagate: swallowing them made write() always resolve and
-        // every caller toast "copied" over a dead clipboard.
-        await command("osascript", ["-e", `set the clipboard to "${escaped}"`])
-      }
-    }
-    if (native) {
-      return async (text: string) => {
-        await command(native[0], native.slice(1), text)
-      }
-    }
-    return async (text: string) => {
-      const { default: clipboardy } = await import("clipboardy")
-      await clipboardy.write(text)
-    }
+    return createCopyMethod({
+      platform: platform(),
+      env: process.env,
+      which: (name) => Boolean(which(name)),
+      run: command,
+      fallback: async (text) => {
+        const { default: clipboardy } = await import("clipboardy")
+        await clipboardy.write(text)
+      },
+    })
   })())
 }
 
 export async function write(text: string) {
-  const osc52 = writeOsc52(text)
-  const method = await getCopyMethod()
-  // OSC 52 reaches the terminal's clipboard over SSH/tmux, where the local
-  // clipboard tool has no display and throws. Reject only when neither path
-  // could have copied, so callers never toast "copied" over a dead clipboard
-  // and never report a failure after a copy that went through the terminal.
-  await method(text).catch((error) => {
-    if (!osc52) throw error
+  await writeWith(text, {
+    env: process.env,
+    tty: Boolean(process.stdout.isTTY),
+    emit: (sequence) => process.stdout.write(sequence),
+    copy: await getCopyMethod(),
   })
 }
