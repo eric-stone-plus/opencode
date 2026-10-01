@@ -1357,7 +1357,10 @@ const layer = Layer.effect(
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
-          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
+          const subagents = new Set(
+            (yield* agents.list()).filter((item) => item.mode === "subagent").map((item) => item.name),
+          )
+          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session, subagents }).pipe(
             Effect.provideService(RuntimeFlags.Service, flags),
             Effect.provideService(FSUtil.Service, fsys),
             Effect.provideService(Session.Service, sessions),

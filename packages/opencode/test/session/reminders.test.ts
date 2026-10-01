@@ -61,11 +61,11 @@ const assistant = Effect.fn("test.assistant")(function* (sessionID: SessionID, p
   })
 })
 
-const apply = Effect.fn("test.apply")(function* (sessionID: SessionID, name: string) {
+const apply = Effect.fn("test.apply")(function* (sessionID: SessionID, name: string, subagents?: ReadonlySet<string>) {
   const session = yield* Session.Service
   const info = yield* session.get(sessionID)
   const messages = yield* session.messages({ sessionID })
-  return yield* SessionReminders.apply({ messages, agent: agent(name), session: info })
+  return yield* SessionReminders.apply({ messages, agent: agent(name), session: info, subagents })
 })
 
 const texts = (messages: readonly SessionV1.WithParts[]) =>
@@ -142,6 +142,23 @@ describe("SessionReminders.apply", () => {
         yield* assistant(id, first.id, "auto")
         yield* user(id, "auto")
         expect(texts(yield* apply(id, "auto"))).not.toContain(BUILD_SWITCH)
+      }),
+    ),
+  )
+
+  it.live(
+    "a subtask turn between the plan turn and the switch does not hide the transition",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const { id } = yield* session.create({})
+        const first = yield* user(id, "plan")
+        yield* assistant(id, first.id, "plan")
+        // A subtask command (e.g. /review) records its assistant message under the subagent's name.
+        const second = yield* user(id, "plan")
+        yield* assistant(id, second.id, "explore")
+        yield* user(id, "auto")
+        expect(texts(yield* apply(id, "auto", new Set(["explore"])))).toContain(BUILD_SWITCH)
       }),
     ),
   )

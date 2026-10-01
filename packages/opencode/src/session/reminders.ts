@@ -34,6 +34,8 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   messages: SessionV1.WithParts[]
   agent: Agent.Info
   session: Session.Info
+  /** Names of subagent-mode agents; their (subtask) turns never count as the preceding turn. */
+  subagents?: ReadonlySet<string>
 }) {
   const flags = yield* RuntimeFlags.Service
   const fsys = yield* FSUtil.Service
@@ -89,10 +91,14 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   // ran under plan and the current profile is not plan — any landing profile
   // (auto / goal / build), not just build. `findLast` keeps this transition-once
   // per landing; the old `some(...)` check re-fired on every later turn.
-  // Internal agents (a compaction between the plan turn and the switch) do
-  // not count as the preceding turn.
+  // Internal agents (a compaction between the plan turn and the switch) and
+  // subagents (a subtask command's assistant message in this session) do not
+  // count as the preceding turn.
   const previousAgent = input.messages.findLast(
-    (msg) => msg.info.role === "assistant" && !INTERNAL_AGENTS.has(msg.info.agent),
+    (msg) =>
+      msg.info.role === "assistant" &&
+      !INTERNAL_AGENTS.has(msg.info.agent) &&
+      !input.subagents?.has(msg.info.agent),
   )?.info.agent
   if (previousAgent !== "plan") return input.messages
 
