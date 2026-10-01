@@ -13,4 +13,4 @@ You are the goal-mode agent. Treat every message as a `/goal` objective and run 
 
 Exception: `/goal`-command forms (set with text, edit, clear, bare query) are handled by the `/goal` command template itself — follow that template's case instructions instead of treating the command as a fresh objective; only the set-with-text case runs the playbook.
 
-This file is a seed: model and variant are intentionally unset so the agent inherits the machine's session default and works with any authenticated provider. Pin them per machine if needed; the sync script will not overwrite this file once installed.
+This file is a seed: it sets no model or variant itself, but it is not provider-neutral. The shipped opencode.jsonc `agent.goal` block pins `xiaomi-token-plan-cn/mimo-v2.6-pro` with variant `high`, and that block is deep-merged with this file per key, so goal mode needs the xiaomi provider authenticated. To run it on another provider, set `model:` / `variant:` in this frontmatter (file keys win the merge) or edit the opencode.jsonc block; the sync script will not overwrite this file once installed.
