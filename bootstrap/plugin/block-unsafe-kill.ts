@@ -229,11 +229,32 @@ function scanText(text: string, keepQuotes = false): string {
     if (!segFirst) segFirst = tok
   }
 
-  const isPayload = () =>
-    PAYLOAD_CMDS.has(segFirst) ||
-    (lastTok === "-c" && (CODE_SHELLS.has(prevTok) || (CODE_SHELLS.has(segInterp) && !sawPositional))) ||
-    (lastTok === "-m" && PYTHONS.has(prevTok)) ||
-    (lastTok === "-e" && CODE_E.has(prevTok))
+  // Short flags bundle (`bash -ec '…'`, `perl -ne '…'`): getopt still takes
+  // the next word as the payload, so a cluster carrying the payload letter
+  // behaves exactly like the bare flag. Long options never bundle. Read at
+  // call time: the tokenizer keeps advancing while quotes are masked.
+  const payloadLetter = (): string => {
+    if (lastTok === "-c") return "c"
+    if (lastTok === "-m") return "m"
+    if (lastTok === "-e") return "e"
+    if (/^-[^-].+/.test(lastTok)) {
+      if (lastTok.includes("c")) return "c"
+      if (lastTok.includes("m")) return "m"
+      if (lastTok.includes("e")) return "e"
+    }
+    return ""
+  }
+
+  const isPayload = () => {
+    const flag = payloadLetter()
+    return (
+      PAYLOAD_CMDS.has(segFirst) ||
+      (flag === "c" &&
+        (CODE_SHELLS.has(prevTok) || (CODE_SHELLS.has(segInterp) && !sawPositional))) ||
+      (flag === "m" && PYTHONS.has(prevTok)) ||
+      (flag === "e" && CODE_E.has(prevTok))
+    )
+  }
 
   // A double-quoted span is data, but substitutions inside it still run.
   const maskDouble = (inner: string) => {
@@ -280,19 +301,28 @@ function scanText(text: string, keepQuotes = false): string {
         j++
       }
       const inner = text.slice(i + 1, j)
+      let tok = "<q>"
       if (c === "'") {
         // single quotes are pure data (no substitutions inside), unless the
         // span is executed text
-        out += isPayload() ? inner : "<q>"
+        if (isPayload()) out += inner
+        else if (isOptionToken(inner)) {
+          out += inner
+          tok = inner
+        } else out += "<q>"
       } else if (c === '"') {
         if (isPayload()) out += inner
-        else maskDouble(inner)
+        else if (isOptionToken(inner)) {
+          out += inner
+          tok = inner
+        } else maskDouble(inner)
       } else {
         out += "`" + scanText(inner) + "`"
+        tok = "<sub>"
       }
       maskNext = false
       prevTok = lastTok
-      lastTok = c === "`" ? "<sub>" : "<q>"
+      lastTok = tok
       i = j + 1
       continue
     }
@@ -356,7 +386,10 @@ function hasKillSink(stmt: string): boolean {
 // with "option doesn't allow an argument").
 function hasFlag(seg: string, letter: string, longName: string): boolean {
   const prefix = longName.endsWith("*") ? longName.slice(0, -1) : null
-  for (const w of seg.trim().split(/\s+/)) {
+  for (const raw of seg.trim().split(/\s+/)) {
+    // A quoted flag (`pkill "-f" x`) still hands -f to getopt once the shell
+    // strips the quotes; classify the de-quoted token or the guard goes blind.
+    const w = dequote(raw)
     if (w.startsWith("--")) {
       if (w.includes("=")) continue
       if (prefix !== null ? w.startsWith(`--${prefix}`) : w === `--${longName}`) return true
@@ -365,6 +398,23 @@ function hasFlag(seg: string, letter: string, longName: string): boolean {
     if (w.length > 1 && w.startsWith("-") && w.includes(letter)) return true
   }
   return false
+}
+
+// Strip one layer of matching shell quotes from a word.
+function dequote(word: string): string {
+  if (word.length >= 2) {
+    const q = word[0]
+    if ((q === '"' || q === "'") && word[word.length - 1] === q) return word.slice(1, -1)
+  }
+  return word
+}
+
+// Is a quoted span exactly one option token (`-f`, `--full`, `-9f`)? The shell
+// strips the quotes before getopt sees the word, so a quoted flag is still a
+// flag — the mask must keep it visible or hasFlag goes blind. A span with
+// whitespace is prose, not a flag.
+function isOptionToken(inner: string): boolean {
+  return /^-\S+$/.test(inner)
 }
 
 function segsWith(stmt: string, prog: string): string[] {

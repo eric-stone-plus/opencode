@@ -267,10 +267,42 @@ m_flush() {
   [ -n "$M_SEGFIRST" ] || M_SEGFIRST="$tok"
 }
 
+# Is a quoted span exactly one option token (`-f`, `--full`, `-9f`)? The shell
+# strips the quotes before getopt sees the word, so a quoted flag is still a
+# flag — the mask must keep it visible or has_flag goes blind. A span with
+# whitespace is prose, not a flag.
+m_opt_token() {
+  case "$1" in
+    -?*)
+      case "$1" in
+        *[[:space:]]*) return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 m_is_payload() {
   case "$PAYLOAD_CMDS" in *" $M_SEGFIRST "*) return 0 ;; esac
+  # Short flags bundle (`bash -ec '…'`, `perl -ne '…'`): getopt still takes
+  # the next word as the payload, so a cluster carrying the payload letter
+  # behaves exactly like the bare flag. Long options never bundle.
+  local flag=""
   case "$M_LASTTOK" in
-    -c)
+    -c) flag=c ;;
+    -m) flag=m ;;
+    -e) flag=e ;;
+    -[!-]?*)
+      case "$M_LASTTOK" in
+        *c*) flag=c ;;
+        *m*) flag=m ;;
+        *e*) flag=e ;;
+      esac
+      ;;
+  esac
+  case "$flag" in
+    c)
       case "$CODE_SHELLS" in *" $M_PREVTOK "*) return 0 ;; esac
       case "$M_SEGINTERP" in
         '')
@@ -282,8 +314,8 @@ m_is_payload() {
           ;;
       esac
       ;;
-    -m) case "$PY_WORDS" in *" $M_PREVTOK "*) return 0 ;; esac ;;
-    -e) case "$CODE_E" in *" $M_PREVTOK "*) return 0 ;; esac ;;
+    m) case "$PY_WORDS" in *" $M_PREVTOK "*) return 0 ;; esac ;;
+    e) case "$CODE_E" in *" $M_PREVTOK "*) return 0 ;; esac ;;
   esac
   return 1
 }
@@ -367,10 +399,19 @@ scan_text() { # $1 = text -> M_SCAN_OUT (recursion-safe: state saved per frame)
         done
         inner="${text:i+1:j-i-1}"
         # single quotes are literal data unless they are executed text
-        if m_is_payload; then M_OUT+="$inner"; else M_OUT+="<q>"; fi
+        if m_is_payload; then
+          M_OUT+="$inner"
+          tok="<q>"
+        elif m_opt_token "$inner"; then
+          M_OUT+="$inner"
+          tok="$inner"
+        else
+          M_OUT+="<q>"
+          tok="<q>"
+        fi
         M_MASKNEXT=0
         M_PREVTOK="$M_LASTTOK"
-        M_LASTTOK="<q>"
+        M_LASTTOK="$tok"
         i=$((j+1))
         ;;
       '"'|'`')
@@ -383,16 +424,26 @@ scan_text() { # $1 = text -> M_SCAN_OUT (recursion-safe: state saved per frame)
         inner="${text:i+1:j-i-1}"
         case "$c" in
           '"')
-            if m_is_payload; then M_OUT+="$inner"; else mask_double "$inner"; fi
+            if m_is_payload; then
+              M_OUT+="$inner"
+              tok="<q>"
+            elif m_opt_token "$inner"; then
+              M_OUT+="$inner"
+              tok="$inner"
+            else
+              mask_double "$inner"
+              tok="<q>"
+            fi
             ;;
           '`')
             scan_text "$inner"
             M_OUT+="\`${M_SCAN_OUT}\`"
+            tok="<sub>"
             ;;
         esac
         M_MASKNEXT=0
         M_PREVTOK="$M_LASTTOK"
-        if [ "$c" = '`' ]; then M_LASTTOK="<sub>"; else M_LASTTOK="<q>"; fi
+        M_LASTTOK="$tok"
         i=$((j+1))
         ;;
       '$')
@@ -483,6 +534,12 @@ has_kill_sink() {
 has_flag() {
   local w
   for w in $1; do
+    # A quoted flag (`pkill "-f" x`) still hands -f to getopt once the shell
+    # strips the quotes; classify the de-quoted token or the guard goes blind.
+    case "$w" in
+      \"*\") w="${w#\"}"; w="${w%\"}" ;;
+      \'*\') w="${w#\'}"; w="${w%\'}" ;;
+    esac
     case "$w" in
       --*=*) continue ;;
       --*)

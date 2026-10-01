@@ -194,8 +194,8 @@
   {
     "label": "quoted flag",
     "cmd": "pkill \"-f\" vite",
-    "expect": "allow",
-    "note": "known limitation: pattern matcher, not a shell parser"
+    "expect": "block",
+    "note": "quote-stripped flag token still hands -f to getopt"
   },
   {
     "label": "--full with bogus arg",
@@ -525,5 +525,77 @@
     "label": "F21 pgrep --f=x invalid form",
     "cmd": "pgrep --full=v vite",
     "expect": "allow"
+  },
+  {
+    "label": "quoted long flag",
+    "cmd": "pkill \"--full\" vite",
+    "expect": "block"
+  },
+  {
+    "label": "quoted clustered flag",
+    "cmd": "pkill \"-9f\" vite",
+    "expect": "block"
+  },
+  {
+    "label": "single-quoted flag",
+    "cmd": "pkill '-f' vite",
+    "expect": "block"
+  },
+  {
+    "label": "bundled interpreter flags: bash -ec",
+    "cmd": "bash -ec \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "bundled interpreter flags: bash -lc",
+    "cmd": "bash -lc \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "bundled interpreter flags: bash -ec single-quoted",
+    "cmd": "bash -ec 'pkill -f x'",
+    "expect": "block"
+  },
+  {
+    "label": "bundled interpreter flags: perl -ne",
+    "cmd": "perl -ne 'system q(pkill -f x)'",
+    "expect": "block"
+  },
+  {
+    "label": "bundled flag after a positional is the script's",
+    "cmd": "bash script.sh -ec \"pkill -f x\"",
+    "expect": "allow"
+  },
+  {
+    "label": "grep -c is not an interpreter payload",
+    "cmd": "grep -c \"pkill -f x\" notes.txt",
+    "expect": "allow"
+  },
+  {
+    "label": "git -c is not an interpreter payload",
+    "cmd": "git -c alias.x=\"pkill -f x\" status",
+    "expect": "allow"
+  },
+  {
+    "label": "backtick substitution in unquoted heredoc runs",
+    "cmd": "cat <<EOF\n`pkill -f x`\nEOF",
+    "expect": "block"
+  },
+  {
+    "label": "trailing garbage after the JSON is a crash-to-deny",
+    "cmd": "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"pkill -f x\"}} TRAIL",
+    "expect": "block",
+    "raw": true
+  },
+  {
+    "label": "killall --regexp= invalid form is not a flag",
+    "cmd": "killall --regexp=x",
+    "expect": "allow"
+  },
+  {
+    "label": "pkill -- end of options is not -f",
+    "cmd": "pkill -- -f x",
+    "expect": "block",
+    "note": "conservative: -- terminates options but the guard keeps blocking rather than reasoning about getopt"
   }
 ]

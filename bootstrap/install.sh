@@ -390,6 +390,12 @@ def rewrite_guard_paths(s: str, guard: str) -> str:
             out.append(s[i:end])
             i = end
             continue
+        # Embedded sibling name (`myblock-unsafe-kill.sh`) is a different file,
+        # matching verify.sh's ref extractor: data, not a path reference.
+        if j > 0 and s[j - 1] not in BOUNDARY + "/~=":
+            out.append(s[i:end])
+            i = end
+            continue
         # Path run: walk left over word characters.
         start = j
         while start > 0 and s[start - 1] not in BOUNDARY:
@@ -405,6 +411,12 @@ def rewrite_guard_paths(s: str, guard: str) -> str:
         ):
             start += eq + 1
             run = run[eq + 1 :]
+        # A bare name mention (`git commit -m "fix block-unsafe-kill.sh docs"`)
+        # is prose, not a path reference — leave it verbatim like verify.sh does.
+        if "/" not in run:
+            out.append(s[i:end])
+            i = end
+            continue
         # Unrooted fragment with slashes (`user/.config/…`) continues a path
         # whose root is an earlier word (`/home/my user/.config/…`). Extend
         # left over non-flag words until a rooted word; if none is found
