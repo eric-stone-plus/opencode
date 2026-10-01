@@ -8,7 +8,6 @@ import {
   Match,
   on,
   onCleanup,
-  onMount,
   Show,
   Switch,
   untrack,
@@ -2188,11 +2187,6 @@ function Task(props: ToolProps) {
   const sync = useSync()
   const dialog = useDialog()
 
-  onMount(() => {
-    const sessionID = stringValue(props.metadata.sessionId)
-    if (sessionID && !sync.data.message[sessionID]?.length) void sync.session.sync(sessionID)
-  })
-
   const sessionID = createMemo(() => stringValue(props.metadata.sessionId))
   const messages = createMemo(() => sync.data.message[sessionID() ?? ""] ?? [])
 
@@ -2222,11 +2216,22 @@ function Task(props: ToolProps) {
     return value
   })
 
+  // Only a running task hydrates its child session (for the live tool line);
+  // finished ones render from the part itself, so a long transcript does not
+  // pull every child session into memory. Opening the task syncs it in full.
+  createEffect(() => {
+    const id = sessionID()
+    if (!id || !isRunning()) return
+    if (untrack(() => sync.data.message[id]?.length)) return
+    void sync.session.sync(id)
+  })
+
   const duration = createMemo(() => {
     const first = messages().find((x) => x.role === "user")?.time.created
     const assistant = messages().findLast((x) => x.role === "assistant")?.time.completed
-    if (!first || !assistant) return 0
-    return assistant - first
+    if (first && assistant) return assistant - first
+    const state = props.part.state
+    return state.status === "completed" ? state.time.end - state.time.start : 0
   })
 
   const content = createMemo(() => {

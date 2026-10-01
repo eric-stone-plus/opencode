@@ -21,6 +21,11 @@ function global(payload: Event): GlobalEvent {
   return { directory, project: "proj_test", payload }
 }
 
+const loadedSession = (url: URL) => {
+  if (url.pathname === "/api/session/session-1/message") return json({ data: [] })
+  return undefined
+}
+
 function emitEvent(events: ReturnType<typeof createEventSource>, payload: Event) {
   events.emit(global(payload))
 }
@@ -243,7 +248,7 @@ test("refreshes references after updates", async () => {
 
 test("settles pending tools when a live failure arrives", async () => {
   const events = createEventSource()
-  const calls = createFetch(undefined, events)
+  const calls = createFetch(loadedSession, events)
   let sync!: ReturnType<typeof useData>
   let ready!: () => void
   const mounted = new Promise<void>((resolve) => {
@@ -270,6 +275,8 @@ test("settles pending tools when a live failure arrives", async () => {
 
   try {
     await mounted
+    // Live projection only applies to sessions whose message list was loaded.
+    await sync.session.message.refresh("session-1")
     emitEvent(events, {
       id: "evt_agent_1",
       type: "session.next.agent.switched",
@@ -372,7 +379,7 @@ test("settles pending tools when a live failure arrives", async () => {
 
 test("renders admitted prompts only after they become model-visible", async () => {
   const events = createEventSource()
-  const calls = createFetch(undefined, events)
+  const calls = createFetch(loadedSession, events)
   let sync!: ReturnType<typeof useData>
   let ready!: () => void
   const mounted = new Promise<void>((resolve) => {
@@ -399,6 +406,8 @@ test("renders admitted prompts only after they become model-visible", async () =
 
   try {
     await mounted
+    // Live projection only applies to sessions whose message list was loaded.
+    await sync.session.message.refresh("session-1")
     emitEvent(events, {
       id: "evt_admitted_1",
       type: "session.next.prompt.admitted",
@@ -436,7 +445,7 @@ test("renders admitted prompts only after they become model-visible", async () =
 
 test("projects live context updates with their message ID", async () => {
   const events = createEventSource()
-  const calls = createFetch(undefined, events)
+  const calls = createFetch(loadedSession, events)
   let sync!: ReturnType<typeof useData>
   let ready!: () => void
   const mounted = new Promise<void>((resolve) => {
@@ -463,6 +472,8 @@ test("projects live context updates with their message ID", async () => {
 
   try {
     await mounted
+    // Live projection only applies to sessions whose message list was loaded.
+    await sync.session.message.refresh("session-1")
     emitEvent(events, {
       id: "evt_context_1",
       type: "session.next.context.updated",

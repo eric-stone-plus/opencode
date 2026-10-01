@@ -28,10 +28,12 @@ import { useTuiStartup } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, createEffect, onMount, untrack } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
+import { useRoute } from "./route"
+import { SESSION_CACHE_MAX, createSessionLRU, knownMessage, protectedSessions, sessionsToEvict } from "./sync-cache"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -161,6 +163,50 @@ export const {
       hydratingSessions.get(sessionID)?.parts.add(partID)
     }
 
+    // Per-session caches (messages, parts, todo, diff, goal) are bounded: the
+    // route session, its parent and their running children stay resident, plus
+    // the SESSION_CACHE_MAX most recently used others. Evicted sessions are
+    // re-hydrated by session.sync() when opened again.
+    const route = useRoute()
+    const recent = createSessionLRU()
+    const routeSessionID = () => (route.data.type === "session" ? route.data.sessionID : undefined)
+    function clearSession(sessionID: string, deleted = false) {
+      recent.delete(sessionID)
+      fullSyncedSessions.delete(sessionID)
+      setStore(
+        produce((draft) => {
+          for (const message of draft.message[sessionID] ?? []) delete draft.part[message.id]
+          delete draft.message[sessionID]
+          delete draft.todo[sessionID]
+          delete draft.session_diff[sessionID]
+          delete draft.goal[sessionID]
+          if (!deleted) return
+          delete draft.permission[sessionID]
+          delete draft.question[sessionID]
+          delete draft.session_status[sessionID]
+        }),
+      )
+    }
+    function evictSessions() {
+      const keep = protectedSessions({
+        route: routeSessionID(),
+        sessions: store.session,
+        busy: (sessionID) => {
+          const status = store.session_status[sessionID]
+          return status !== undefined && status.type !== "idle"
+        },
+      })
+      for (const sessionID of syncingSessions.keys()) keep.add(sessionID)
+      const evicted = sessionsToEvict({ order: recent.keys(), keep, max: SESSION_CACHE_MAX })
+      if (evicted.length === 0) return
+      batch(() => {
+        for (const sessionID of evicted) clearSession(sessionID)
+      })
+    }
+    const touchSession = (sessionID: string) => {
+      if (recent.touch(sessionID)) evictSessions()
+    }
+
     function sessionListQuery(): { scope?: "project"; path?: string } {
       if (!kv.get("session_directory_filter_enabled", true)) return { scope: "project" }
       if (!project.data.instance.path.worktree || !project.data.instance.path.directory) return { scope: "project" }
@@ -267,10 +313,12 @@ export const {
         }
 
         case "todo.updated":
+          touchSession(event.properties.sessionID)
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
 
         case "goal.updated":
+          touchSession(event.properties.sessionID)
           setStore("goal", event.properties.sessionID, {
             text: event.properties.text,
             path: event.properties.path,
@@ -278,6 +326,7 @@ export const {
           break
 
         case "session.diff":
+          touchSession(event.properties.sessionID)
           setStore("session_diff", event.properties.sessionID, event.properties.diff)
           break
 
@@ -291,6 +340,7 @@ export const {
               }),
             )
           }
+          clearSession(event.properties.info.id, true)
           break
         }
         case "session.updated": {
@@ -331,6 +381,7 @@ export const {
 
         case "message.updated": {
           touchMessage(event.properties.info.sessionID, event.properties.info.id)
+          touchSession(event.properties.info.sessionID)
           const messages = store.message[event.properties.info.sessionID]
           if (!messages) {
             setStore("message", event.properties.info.sessionID, [event.properties.info])
@@ -391,6 +442,15 @@ export const {
           break
         }
         case "message.part.updated": {
+          // A part whose message is not resident (pruned past the 100-message
+          // window, or its session evicted) would become an orphan store.part
+          // entry that nothing ever deletes. While the session hydrates the
+          // event is kept: the tracker merges it into the fetched snapshot.
+          if (
+            !hydratingSessions.has(event.properties.part.sessionID) &&
+            !knownMessage(store.message[event.properties.part.sessionID], event.properties.part.messageID)
+          )
+            break
           touchPart(event.properties.part.sessionID, event.properties.part.id)
           const parts = store.part[event.properties.part.messageID]
           if (!parts) {
@@ -573,6 +633,14 @@ export const {
       void bootstrap()
     })
 
+    createEffect(() => {
+      const sessionID = routeSessionID()
+      untrack(() => {
+        if (sessionID) recent.touch(sessionID)
+        evictSessions()
+      })
+    })
+
     const result = {
       data: store,
       set: setStore,
@@ -611,6 +679,7 @@ export const {
         },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
+          recent.touch(sessionID)
           const syncing = syncingSessions.get(sessionID)
           if (syncing) return syncing
           const tracker = { messages: new Set<string>(), parts: new Set<string>() }

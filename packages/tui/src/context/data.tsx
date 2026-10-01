@@ -47,6 +47,9 @@ type Data = {
   location: Record<string, LocationData>
 }
 
+/** Upper bound of live-updated v2 messages kept per loaded session. */
+export const DATA_MESSAGE_MAX = 200
+
 function locationKey(location: LocationRef) {
   return JSON.stringify([location.directory, location.workspaceID])
 }
@@ -78,12 +81,20 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     })
 
     const message = {
+      // Live session.next.* events are applied only to sessions whose message
+      // list was explicitly loaded via session.message.refresh(); nothing reads
+      // the others, and accumulating every event of every session for the life
+      // of the TUI grows without bound. Loaded lists are capped (newest first).
       update(sessionID: string, fn: (messages: SessionMessage[]) => void) {
+        if (!store.session.message[sessionID]) return
         setStore(
           "session",
           "message",
           produce((draft) => {
-            fn((draft[sessionID] ??= []))
+            const messages = draft[sessionID]
+            if (!messages) return
+            fn(messages)
+            if (messages.length > DATA_MESSAGE_MAX) messages.splice(DATA_MESSAGE_MAX)
           }),
         )
       },
