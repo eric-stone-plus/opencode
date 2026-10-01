@@ -26,7 +26,7 @@ import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { TuiEvent } from "@/server/tui-event"
-import { Cause, Effect, Exit, Layer, Context, Schema, Stream } from "effect"
+import { Cause, Duration, Effect, Exit, Fiber, Layer, Context, Schema, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -36,6 +36,12 @@ import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
 
 const DEFAULT_TIMEOUT = 30_000
+const RECONNECT_INITIAL_DELAY = 1_000
+const RECONNECT_MAX_DELAY = 5 * 60_000
+
+export function reconnectDelay(attempt: number) {
+  return Math.min(RECONNECT_INITIAL_DELAY * 2 ** Math.min(attempt - 1, 30), RECONNECT_MAX_DELAY)
+}
 const CLIENT_OPTIONS = {
   capabilities: {
     // https://github.com/anomalyco/opencode/issues/11948
@@ -139,12 +145,23 @@ interface AuthResult {
 
 // --- Effect Service ---
 
+interface Reconnect {
+  fiber?: Fiber.Fiber<void>
+}
+
 interface State {
   config: Record<string, ConfigMCPV1.Info>
   status: Record<string, Status>
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
+  /**
+   * Servers whose connection closed unexpectedly and are being reconnected in the background.
+   * Their last client, tool definitions and instructions stay registered so the tool list (and
+   * the prompt cache built on it) does not churn; calls fail fast until the reconnect lands.
+   */
+  reconnecting: Record<string, Reconnect>
+  disposed: boolean
 }
 
 export interface ServerInstructions {
@@ -439,17 +456,94 @@ const layer = Layer.effect(
       Effect.catch(() => Effect.succeed([] as number[])),
     )
 
-    function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
+    // Settles one reconnect attempt. Returns true when the loop should stop.
+    const settleReconnect = Effect.fnUntraced(function* (
+      s: State,
+      name: string,
+      mcp: ConfigMCPV1.Info,
+      token: Reconnect,
+      result: CreateResult,
+    ) {
+      if (s.disposed || s.reconnecting[name] !== token) {
+        if (result.mcpClient) yield* Effect.tryPromise(() => result.mcpClient!.close()).pipe(Effect.ignore)
+        return true
+      }
+      if (result.mcpClient) {
+        delete s.reconnecting[name]
+        const changed = JSON.stringify(s.defs[name]) !== JSON.stringify(result.defs)
+        s.clients[name] = result.mcpClient
+        s.defs[name] = result.defs!
+        if (result.instructions) s.instructions[name] = result.instructions
+        else delete s.instructions[name]
+        s.status[name] = { status: "connected" }
+        watch(s, name, result.mcpClient, yield* EffectBridge.make(), mcp)
+        yield* Effect.logInfo("MCP server reconnected", { server: name })
+        if (changed) yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+        return true
+      }
+      // Transient failure (server still down): keep the registration and try again later.
+      if (result.status.status === "failed") return false
+      // Auth or config problems cannot heal by retrying; drop the server's tools.
+      delete s.reconnecting[name]
+      delete s.clients[name]
+      delete s.defs[name]
+      delete s.instructions[name]
+      s.status[name] = result.status
+      yield* Effect.logWarning("MCP reconnect stopped", { server: name, status: result.status.status })
+      yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+      return true
+    })
+
+    const reconnectLoop = Effect.fnUntraced(function* (
+      s: State,
+      name: string,
+      mcp: ConfigMCPV1.Info,
+      token: Reconnect,
+    ) {
+      for (let attempt = 1; ; attempt++) {
+        const wait = reconnectDelay(attempt)
+        if (s.reconnecting[name] !== token) return
+        s.status[name] = {
+          status: "failed",
+          error: `Connection closed; reconnecting (attempt ${attempt} in ${Math.ceil(wait / 1000)}s)`,
+        }
+        yield* Effect.sleep(Duration.millis(wait))
+        if (s.disposed || s.reconnecting[name] !== token) return
+        // The connect itself may be interrupted (disconnect/dispose); storing its result may not,
+        // or a freshly connected client would leak.
+        const done = yield* Effect.uninterruptibleMask((restore) =>
+          restore(create(name, mcp)).pipe(Effect.flatMap((result) => settleReconnect(s, name, mcp, token, result))),
+        )
+        if (done) return
+      }
+    })
+
+    function cancelReconnect(s: State, name: string) {
+      const pending = s.reconnecting[name]
+      delete s.reconnecting[name]
+      if (!pending?.fiber) return Effect.void
+      return Fiber.interrupt(pending.fiber).pipe(Effect.ignore)
+    }
+
+    function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, mcp: ConfigMCPV1.Info) {
+      const timeout = mcp.timeout
       client.onclose = () => {
-        if (s.clients[name] !== client) return
-        delete s.clients[name]
-        delete s.defs[name]
-        delete s.instructions[name]
-        s.status[name] = { status: "failed", error: "Connection closed" }
-        bridge.fork(
-          Effect.logWarning("MCP connection closed", { server: name }).pipe(
-            Effect.andThen(events.publish(ToolsChanged, { server: name })),
-            Effect.ignore,
+        // Explicit disconnects, replacements and disposal detach the client first.
+        if (s.disposed || s.clients[name] !== client || s.reconnecting[name]) return
+        const token: Reconnect = {}
+        s.reconnecting[name] = token
+        s.status[name] = { status: "failed", error: "Connection closed; reconnecting" }
+        token.fiber = bridge.fork(
+          Effect.logWarning("MCP connection closed; reconnecting", { server: name }).pipe(
+            Effect.andThen(reconnectLoop(s, name, mcp, token)),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) return Effect.void
+              if (s.reconnecting[name] === token) {
+                delete s.reconnecting[name]
+                s.status[name] = { status: "failed", error: "Reconnect failed" }
+              }
+              return Effect.logError("MCP reconnect loop failed", { server: name, cause: Cause.pretty(cause) })
+            }),
           ),
         )
       }
@@ -500,6 +594,8 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
+          reconnecting: {},
+          disposed: false,
         }
 
         yield* Effect.forEach(
@@ -522,7 +618,7 @@ const layer = Layer.effect(
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
                 if (result.instructions) s.instructions[key] = result.instructions
-                watch(s, key, result.mcpClient, bridge, mcp.timeout)
+                watch(s, key, result.mcpClient, bridge, mcp)
               }
             }),
           { concurrency: "unbounded" },
@@ -530,6 +626,9 @@ const layer = Layer.effect(
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            s.disposed = true
+            const reconnecting = Object.keys(s.reconnecting)
+            yield* Effect.forEach(reconnecting, (name) => cancelReconnect(s, name), { concurrency: "unbounded" })
             const clients = Object.values(s.clients)
             s.clients = {}
             s.defs = {}
@@ -559,14 +658,15 @@ const layer = Layer.effect(
       }),
     )
 
-    function closeClient(s: State, name: string) {
+    const closeClient = Effect.fnUntraced(function* (s: State, name: string) {
       const client = s.clients[name]
       delete s.clients[name]
       delete s.defs[name]
       delete s.instructions[name]
-      if (!client) return Effect.void
-      return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-    }
+      yield* cancelReconnect(s, name)
+      if (!client) return
+      yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+    })
 
     const storeClient = Effect.fnUntraced(function* (
       s: State,
@@ -574,17 +674,18 @@ const layer = Layer.effect(
       client: MCPClient,
       listed: MCPToolDef[],
       instructions: string | undefined,
-      timeout?: number,
+      mcp: ConfigMCPV1.Info,
     ) {
       const bridge = yield* EffectBridge.make()
+      yield* cancelReconnect(s, name)
       const previous = s.clients[name]
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
       if (instructions) s.instructions[name] = instructions
       else delete s.instructions[name]
-      watch(s, name, client, bridge, timeout)
-      if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
+      watch(s, name, client, bridge, mcp)
+      if (previous && previous !== client) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
       return s.status[name]
     })
 
@@ -615,7 +716,7 @@ const layer = Layer.effect(
     const instructions = Effect.fn("MCP.instructions")(function* () {
       const s = yield* InstanceState.get(state)
       return Object.entries(s.instructions)
-        .filter(([name]) => s.status[name]?.status === "connected")
+        .filter(([name]) => s.status[name]?.status === "connected" || s.reconnecting[name])
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([name, item]) => ({
           name,
@@ -635,7 +736,7 @@ const layer = Layer.effect(
         return result.status
       }
 
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, mcp.timeout)
+      return yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, mcp)
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
@@ -663,6 +764,32 @@ const layer = Layer.effect(
       return s.config[name]?.timeout ?? staticTimeout ?? fallback
     }
 
+    /**
+     * The client handed to tool consumers. `callTool` resolves the server's current client at call
+     * time (so tools built before a reconnect keep working after it), fails fast while the server
+     * is reconnecting, and enforces a total wall-clock deadline. Everything else is the client.
+     */
+    function callable(s: State, name: string, client: MCPClient): MCPClient {
+      type Args = Parameters<MCPClient["callTool"]>
+      const callTool = (params: Args[0], schema?: Args[1], options?: Args[2]) => {
+        const current = s.clients[name]
+        if (s.reconnecting[name])
+          return Promise.reject(
+            new Error(`MCP server "${name}" is reconnecting after its connection closed; retry later`),
+          )
+        if (!current || s.status[name]?.status !== "connected")
+          return Promise.reject(new Error(`MCP server "${name}" is not connected`))
+        return McpCatalog.callWithDeadline(current, params, schema, options)
+      }
+      return new Proxy(client, {
+        get(target, prop) {
+          if (prop === "callTool") return callTool
+          const value = Reflect.get(target, prop, target)
+          return typeof value === "function" ? value.bind(target) : value
+        },
+      })
+    }
+
     const tools = Effect.fn("MCP.tools")(function* () {
       const result: Record<string, McpTool> = {}
       const s = yield* InstanceState.get(state)
@@ -672,7 +799,7 @@ const layer = Layer.effect(
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
       for (const [clientName, client] of Object.entries(s.clients)) {
-        if (s.status[clientName]?.status !== "connected") continue
+        if (s.status[clientName]?.status !== "connected" && !s.reconnecting[clientName]) continue
         const mcpConfig = config[clientName]
         const listed = s.defs[clientName]
         if (!listed) {
@@ -681,7 +808,7 @@ const layer = Layer.effect(
         }
         const timeout = requestTimeout(s, clientName, mcpConfig, defaultTimeout)
         for (const def of listed) {
-          result[McpCatalog.toolName(clientName, def.name)] = { def, client, timeout }
+          result[McpCatalog.toolName(clientName, def.name)] = { def, client: callable(s, clientName, client), timeout }
         }
       }
       return result
@@ -745,8 +872,8 @@ const layer = Layer.effect(
     ) {
       const s = yield* InstanceState.get(state)
       const client = s.clients[clientName]
-      if (!client) {
-        yield* Effect.logWarning(`client not found for ${label}`, { clientName })
+      if (!client || s.reconnecting[clientName]) {
+        yield* Effect.logWarning(`client not available for ${label}`, { clientName })
         return undefined
       }
       const cfg = yield* cfgSvc.get()
@@ -892,7 +1019,7 @@ const layer = Layer.effect(
 
         const s = yield* InstanceState.get(state)
         yield* auth.clearOAuthState(mcpName)
-        return yield* storeClient(s, mcpName, client, listed, client.getInstructions()?.trim(), mcpConfig.timeout)
+        return yield* storeClient(s, mcpName, client, listed, client.getInstructions()?.trim(), mcpConfig)
       }
 
       const callbackPromise = McpOAuthCallback.waitForCallback(result.oauthState, mcpName)

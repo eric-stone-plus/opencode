@@ -82,6 +82,45 @@ export function convertTool(mcpTool: MCPToolDef, client: Client, timeout?: numbe
   })
 }
 
+// Wall-clock ceiling for a single tools/call. Per-request `timeout` resets on every progress
+// notification, so a server that keeps reporting progress could otherwise hold a turn forever.
+export const MAX_TOTAL_TIMEOUT = 10 * 60_000
+const MAX_TIMER_DELAY = 2_147_483_647
+
+export function maxTotalTimeout(timeout?: number) {
+  return Math.min(Math.max(MAX_TOTAL_TIMEOUT, timeout ?? 0), MAX_TIMER_DELAY)
+}
+
+type CallToolArgs = Parameters<Client["callTool"]>
+
+/**
+ * Call a tool with a hard total deadline. `maxTotalTimeout` is passed to the SDK (enforced when
+ * progress arrives) and an abort timer enforces it even when the server goes silent mid-call.
+ */
+export async function callWithDeadline(
+  client: Client,
+  params: CallToolArgs[0],
+  schema?: CallToolArgs[1],
+  options?: CallToolArgs[2],
+  deadline = maxTotalTimeout(options?.timeout),
+) {
+  const total = Math.min(options?.maxTotalTimeout ?? deadline, MAX_TIMER_DELAY)
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () => controller.abort(new Error(`MCP tool call "${params.name}" exceeded the total timeout of ${total}ms`)),
+    total,
+  )
+  try {
+    return await client.callTool(params, schema, {
+      ...options,
+      maxTotalTimeout: total,
+      signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function fetch<T extends { name: string }>(
   clientName: string,
   client: Client,
