@@ -43,6 +43,24 @@ interface FetchDecompressionError extends Error {
   path: string
 }
 
+// Socket/DNS failure codes from Node and Bun fetch. The request may never have
+// reached the provider, so it is safe to retry.
+const NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EPIPE",
+  "ConnectionRefused",
+  "ConnectionClosed",
+  "FailedToOpenSocket",
+])
+
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
 export { isMedia }
 
@@ -689,6 +707,18 @@ export function fromError(
           cause: e,
         },
       ).toObject()
+    // AbortSignal.timeout() from provider.options.timeout: the request ran past
+    // its wall-clock limit, which a later attempt can still meet.
+    case (e instanceof DOMException || e instanceof Error) && e.name === "TimeoutError":
+      if (ctx.aborted) return new AbortedError({ message: e.message }, { cause: e }).toObject()
+      return new APIError(
+        {
+          message: `Provider request timed out: ${e.message}`,
+          isRetryable: true,
+          metadata: { code: "TimeoutError" },
+        },
+        { cause: e },
+      ).toObject()
     case OutputLengthError.isInstance(e):
       return e
     case LoadAPIKeyError.isInstance(e):
@@ -699,10 +729,13 @@ export function fromError(
         },
         { cause: e },
       ).toObject()
-    case (e as SystemError)?.code === "ECONNRESET":
+    case typeof (e as SystemError)?.code === "string" && NETWORK_CODES.has((e as SystemError).code!):
       return new APIError(
         {
-          message: "Connection reset by server",
+          message:
+            (e as SystemError).code === "ECONNRESET"
+              ? "Connection reset by server"
+              : `Network error (${(e as SystemError).code}): ${(e as SystemError).message ?? ""}`,
           isRetryable: true,
           metadata: {
             code: (e as SystemError).code ?? "",

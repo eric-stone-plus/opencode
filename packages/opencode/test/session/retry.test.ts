@@ -224,6 +224,98 @@ describe("session.retry.delay", () => {
   )
 })
 
+describe("session.retry transient budget", () => {
+  const network = () =>
+    Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({
+        message: "Connection reset by server",
+        isRetryable: true,
+        metadata: { code: "ECONNRESET" },
+      }).toObject(),
+    )
+  const status = (statusCode: number, headers?: Record<string, string>) =>
+    Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({ message: "busy", statusCode, isRetryable: true, responseHeaders: headers }).toObject(),
+    )
+
+  const run = (error: SessionV1.APIError, budget?: Parameters<typeof SessionRetry.policy>[0]["budget"]) =>
+    Effect.gen(function* () {
+      const waits: number[] = []
+      const fiber = yield* Effect.fail(error).pipe(
+        Effect.retry(
+          SessionRetry.policy({
+            provider: "test",
+            budget,
+            parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
+            set: (info) =>
+              Effect.gen(function* () {
+                waits.push(info.next - (yield* Clock.currentTimeMillis))
+              }),
+          }),
+        ),
+        Effect.exit,
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust("10 hours")
+      yield* Fiber.join(fiber)
+      return waits
+    })
+
+  test("classifies network, rate limit and server errors as transient", () => {
+    expect(SessionRetry.transient(network())).toBe(true)
+    expect(SessionRetry.transient(status(429))).toBe(true)
+    expect(SessionRetry.transient(status(503))).toBe(true)
+    expect(SessionRetry.transient(wrap("fetch failed"))).toBe(true)
+    expect(SessionRetry.transient(wrap("Unable to connect. Is the computer able to access the url?"))).toBe(true)
+    expect(SessionRetry.transient(apiError())).toBe(false)
+    expect(SessionRetry.transient(status(400))).toBe(false)
+  })
+
+  it.effect("retries network errors for 30 minutes, at most 5 minutes apart", () =>
+    Effect.gen(function* () {
+      const waits = yield* run(network())
+      const total = waits.reduce((sum, wait) => sum + wait, 0)
+      expect(waits.length).toBeGreaterThan(SessionRetry.RETRY_MAX_RETRIES)
+      expect(Math.max(...waits)).toBe(SessionRetry.RETRY_TRANSIENT_MAX_DELAY)
+      expect(total).toBeLessThanOrEqual(SessionRetry.RETRY_TRANSIENT_BUDGET)
+      expect(total + SessionRetry.RETRY_TRANSIENT_MAX_DELAY).toBeGreaterThan(SessionRetry.RETRY_TRANSIENT_BUDGET)
+    }),
+  )
+
+  it.effect("caps a long retry-after at the max delay instead of sleeping past the budget", () =>
+    Effect.gen(function* () {
+      const waits = yield* run(status(429, { "retry-after": "86400" }))
+      expect(waits.length).toBeGreaterThan(1)
+      expect(waits.every((wait) => wait === SessionRetry.RETRY_TRANSIENT_MAX_DELAY)).toBe(true)
+      const capped = yield* run(status(429, { "retry-after": "86400" }), { max_delay_ms: 60_000, max_attempts: 2 })
+      expect(capped).toEqual([60_000, 60_000])
+    }),
+  )
+
+  it.effect("keeps configured retry limits for transient errors", () =>
+    Effect.gen(function* () {
+      expect(yield* run(network(), { max_attempts: 2 })).toHaveLength(2)
+      const waits = yield* run(network(), { max_elapsed_ms: 60_000 })
+      expect(waits.reduce((sum, wait) => sum + wait, 0)).toBeLessThanOrEqual(60_000)
+    }),
+  )
+
+  it.effect("keeps the five-attempt default for other retryable errors", () =>
+    Effect.gen(function* () {
+      expect(yield* run(apiError())).toHaveLength(SessionRetry.RETRY_MAX_RETRIES)
+    }),
+  )
+
+  it.effect("does not retry non-transient errors", () =>
+    Effect.gen(function* () {
+      const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+        new SessionV1.APIError({ message: "invalid request", statusCode: 400, isRetryable: false }).toObject(),
+      )
+      expect(yield* run(error)).toHaveLength(0)
+    }),
+  )
+})
+
 describe("session.retry.retryable", () => {
   test("retries serialized too_many_requests messages", () => {
     const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))

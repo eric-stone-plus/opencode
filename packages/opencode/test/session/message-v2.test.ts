@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { APICallError } from "ai"
+import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "@/provider/transform"
 import type { Provider } from "@/provider/provider"
@@ -1614,6 +1615,28 @@ describe("session.message-v2.toModelMessage", () => {
 })
 
 describe("session.message-v2.fromError", () => {
+  test("maps a provider request timeout to a retryable API error", () => {
+    const result = MessageV2.fromError(new DOMException("The operation timed out.", "TimeoutError"), { providerID })
+    expect(result.name).toBe("APIError")
+    expect(SessionRetry.retryable(result, providerID)).toBeDefined()
+    expect(SessionRetry.transient(result)).toBe(true)
+    // A user abort that surfaces as a timeout is still an abort.
+    const aborted = MessageV2.fromError(new DOMException("The operation timed out.", "TimeoutError"), {
+      providerID,
+      aborted: true,
+    })
+    expect(aborted.name).toBe("MessageAbortedError")
+  })
+
+  test("maps Bun socket failures to retryable API errors", () => {
+    for (const code of ["ConnectionRefused", "ECONNREFUSED", "ENOTFOUND"]) {
+      const error = Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), { code })
+      const result = MessageV2.fromError(error, { providerID })
+      expect(result.name).toBe("APIError")
+      expect(SessionRetry.transient(result)).toBe(true)
+    }
+  })
+
   test("serializes context_length_exceeded as ContextOverflowError", () => {
     const input = {
       type: "error",

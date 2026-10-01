@@ -29,6 +29,11 @@ export const RETRY_JITTER_FACTOR = 0.25
 export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds
 export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for setTimeout
 export const RETRY_MAX_RETRIES = 5
+// Transient failures (network drops, rate limits, 5xx, stalled streams) are
+// retried against a wall-clock budget instead of a count: a laptop that sleeps
+// or switches networks, or a provider outage, outlasts five quick attempts.
+export const RETRY_TRANSIENT_BUDGET = 30 * 60_000 // 30 minutes
+export const RETRY_TRANSIENT_MAX_DELAY = 5 * 60_000 // 5 minutes
 
 const RETRYABLE_MESSAGE_PATTERNS = [
   // Status codes only count as a standalone token in a status-like position
@@ -38,49 +43,87 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests/i,
   /overloaded|bad gateway|gateway time-?out|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
   /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout/i,
+  // Bun fetch and AI SDK wording for a request that never reached the server.
+  /unable to connect|cannot connect to api|connectionrefused|connectionclosed|econnaborted|ehostunreach|enetunreach|enetdown|network is unreachable/i,
   /^timeout$|\b(?:request|response|connection|network|stream|read) (?:timeout|timed out|time out)\b/i,
   /try your request again|retry your request|resource exhausted|resource_exhausted/i,
   /\btry again (?:later|in\b)|\b(?:currently|temporarily) at capacity\b/i,
 ]
 
+// Network-class failures: the request may never have reached the provider.
+const NETWORK_MESSAGE_PATTERN =
+  /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection reset|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout|unable to connect|cannot connect to api|connectionrefused|connectionclosed|econnaborted|ehostunreach|enetunreach|enetdown|network is unreachable|timed out|timeout/i
+const TRANSIENT_MESSAGE_PATTERN =
+  /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests|too_many_requests|overloaded|exhausted|unavailable|bad gateway|gateway time-?out|at capacity/i
+const TRANSIENT_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EPIPE",
+  "ConnectionRefused",
+  "ConnectionClosed",
+  "FailedToOpenSocket",
+  "ZlibError",
+  "TimeoutError",
+  "ProviderHeaderTimeoutError",
+  "ProviderResponseStreamError",
+])
+
 function cap(ms: number) {
   return Math.min(ms, RETRY_MAX_DELAY)
 }
 
-export function delay(
-  attempt: number,
-  error?: SessionV1.APIError,
-  random = Math.random(),
-  maxDelay?: number,
-) {
-  if (error) {
-    const headers = error.data.responseHeaders
-    if (headers) {
-      const retryAfterMs = headers["retry-after-ms"]
-      if (retryAfterMs) {
-        const parsedMs = Number.parseFloat(retryAfterMs)
-        if (!Number.isNaN(parsedMs)) {
-          return cap(parsedMs)
-        }
-      }
-
-      const retryAfter = headers["retry-after"]
-      if (retryAfter) {
-        const parsedSeconds = Number.parseFloat(retryAfter)
-        if (!Number.isNaN(parsedSeconds)) {
-          // convert seconds to milliseconds
-          return cap(Math.ceil(parsedSeconds * 1000))
-        }
-        // Try parsing as HTTP date format
-        const parsed = Date.parse(retryAfter) - Date.now()
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          return cap(Math.ceil(parsed))
-        }
-      }
-    }
+// Wait requested by the provider's retry-after headers, if any.
+export function hint(error: SessionV1.APIError) {
+  const headers = error.data.responseHeaders
+  if (!headers) return undefined
+  const retryAfterMs = headers["retry-after-ms"]
+  if (retryAfterMs) {
+    const parsedMs = Number.parseFloat(retryAfterMs)
+    if (!Number.isNaN(parsedMs)) return cap(parsedMs)
   }
 
+  const retryAfter = headers["retry-after"]
+  if (!retryAfter) return undefined
+  const parsedSeconds = Number.parseFloat(retryAfter)
+  // convert seconds to milliseconds
+  if (!Number.isNaN(parsedSeconds)) return cap(Math.ceil(parsedSeconds * 1000))
+  // Try parsing as HTTP date format
+  const parsed = Date.parse(retryAfter) - Date.now()
+  if (!Number.isNaN(parsed) && parsed > 0) return cap(Math.ceil(parsed))
+  return undefined
+}
+
+export function delay(attempt: number, error?: SessionV1.APIError, random = Math.random(), maxDelay?: number) {
+  const hinted = error ? hint(error) : undefined
+  if (hinted !== undefined) return hinted
   return cap(Math.min(exponential(attempt, random), maxDelay ?? RETRY_MAX_DELAY_NO_HEADERS))
+}
+
+// Retryable errors that are expected to clear on their own given time: network
+// failures, stalled streams, rate limits and server-side (5xx) failures.
+export function transient(error: Err) {
+  if (SessionV1.APIError.isInstance(error)) {
+    const status = error.data.statusCode
+    if (status === 429 || (status !== undefined && status >= 500)) return true
+    const code = error.data.metadata?.code
+    if (code && TRANSIENT_CODES.has(code)) return true
+    if (status !== undefined) return false
+    return [error.data.message, error.data.responseBody].some(
+      (value) =>
+        typeof value === "string" && (NETWORK_MESSAGE_PATTERN.test(value) || TRANSIENT_MESSAGE_PATTERN.test(value)),
+    )
+  }
+  const message = isRecord(error.data) ? error.data.message : undefined
+  return (
+    typeof message === "string" && (NETWORK_MESSAGE_PATTERN.test(message) || TRANSIENT_MESSAGE_PATTERN.test(message))
+  )
 }
 
 function exponential(attempt: number, random: number) {
@@ -136,23 +179,28 @@ export function policy(opts: {
   set: (input: { attempt: number; message: string; action?: Retryable["action"]; next: number }) => Effect.Effect<void>
   budget?: ConfigV1.Info["retry"]
 }) {
-  // A wall-clock budget alone means "keep trying until it runs out".
-  const attempts =
-    opts.budget?.max_attempts ?? (opts.budget?.max_elapsed_ms !== undefined ? Infinity : RETRY_MAX_RETRIES)
   return Schedule.fromStepWithMetadata(
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
       const error = opts.parse(meta.input)
       const retry = retryable(error, opts.provider)
       if (!retry) return Cause.done(meta.attempt)
+      // Configured retry.* values win. Otherwise transient failures get a
+      // wall-clock budget and the rest keep the short count-based default.
+      const lasting = transient(error)
+      const budget =
+        opts.budget?.max_elapsed_ms ??
+        (lasting && opts.budget?.max_attempts === undefined ? RETRY_TRANSIENT_BUDGET : undefined)
+      // A wall-clock budget alone means "keep trying until it runs out".
+      const attempts = opts.budget?.max_attempts ?? (budget !== undefined ? Infinity : RETRY_MAX_RETRIES)
       if (meta.attempt > attempts) return Cause.done(meta.attempt)
-      const wait = delay(
-        meta.attempt,
-        SessionV1.APIError.isInstance(error) ? error : undefined,
-        Math.random(),
-        opts.budget?.max_delay_ms,
-      )
-      if (opts.budget?.max_elapsed_ms !== undefined && meta.elapsed + wait > opts.budget.max_elapsed_ms)
-        return Cause.done(meta.attempt)
+      const maxDelay = opts.budget?.max_delay_ms ?? (lasting ? RETRY_TRANSIENT_MAX_DELAY : undefined)
+      // retry-after is honored up to the max delay; a longer wait just polls again.
+      const hinted = SessionV1.APIError.isInstance(error) ? hint(error) : undefined
+      const wait =
+        hinted !== undefined
+          ? Math.min(hinted, maxDelay ?? RETRY_MAX_DELAY)
+          : delay(meta.attempt, undefined, Math.random(), maxDelay)
+      if (budget !== undefined && meta.elapsed + wait > budget) return Cause.done(meta.attempt)
       return Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         yield* opts.set({
