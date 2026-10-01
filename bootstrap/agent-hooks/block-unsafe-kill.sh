@@ -273,7 +273,10 @@ m_flush() {
 # flag — the mask must keep it visible or has_flag goes blind. Only a plain
 # option name qualifies: anything else (`=`, `|`, `;`, `&`, `$`, backticks,
 # whitespace, non-ASCII) is unmasked operator text and would leak into the
-# statement scanner as a phantom `pkill -f`.
+# statement scanner as a phantom `pkill -f`. The accepted charset (any `-`-led
+# run of [A-Za-z0-9._+-] except `-` and `--`) is wider than what getopt accepts
+# (`-+f` errors out in pkill) — fail-safe on purpose, and mirrored exactly by
+# isOptionToken in the TS plugin.
 m_opt_token() {
   case "$1" in
     -*) ;;
@@ -660,7 +663,9 @@ scan_flag_stmt() { # $1=statement $2=program $3=short letter $4=long name
 }
 
 # gateway.cgroup_cleanup (hermes) SIGKILLs every PID in the caller's own
-# cgroup — it is the gateway unit's ExecStopPost, never a shell command.
+# cgroup — it was the gateway unit's ExecStopPost, never a shell command.
+# The hermes-gateway-penetrate unit was retired 2026-09-28; the module must
+# never be run manually and this rule stays as defense-in-depth.
 # From an agent shell the caller's cgroup IS the agent's process tree
 # (2026-09-19: three opencode TUI deaths, "Process Exited from Signal 9").
 # Match it as an INVOCATION token only, not as a bare substring: interpreter
@@ -698,7 +703,7 @@ STMT_REASON=""
 stmt_denied() {
   local stmt="$1"
   if reaps_own_cgroup "$stmt"; then
-    STMT_REASON="gateway.cgroup_cleanup SIGKILLs every PID in the caller's own cgroup — from an agent shell that is the agent's own process tree. It is the hermes-gateway unit's ExecStopPost; run it only via systemctl --user stop/restart hermes-gateway-penetrate."
+    STMT_REASON="gateway.cgroup_cleanup SIGKILLs every PID in the caller's own cgroup — from an agent shell that is the agent's own process tree. The hermes-gateway unit it served as ExecStopPost was retired 2026-09-28; the module must never be run manually. This rule stays as defense-in-depth."
     return 0
   fi
   # getopt_long runs any unique prefix of a long option: `--f` IS `--full`

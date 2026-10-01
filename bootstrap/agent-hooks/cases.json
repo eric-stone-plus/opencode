@@ -629,6 +629,33 @@
     "expect": "allow"
   },
   {
+    "label": "option-token charset: quoted -+f stays visible and blocks",
+    "cmd": "pkill \"-+f\" x",
+    "expect": "block",
+    "note": "getopt rejects -+f (invalid option), so this is over-strict by design: the wide charset is fail-safe and bash/TS must agree on it"
+  },
+  {
+    "label": "option-token charset: single-quoted -+f",
+    "cmd": "pkill '-+f' x",
+    "expect": "block"
+  },
+  {
+    "label": "option-token charset: quoted -.f stays visible and blocks",
+    "cmd": "pkill \"-.f\" x",
+    "expect": "block"
+  },
+  {
+    "label": "option-token charset: ---f is not the --f family",
+    "cmd": "pkill \"---f\" x",
+    "expect": "allow",
+    "note": "kept visible as an option token by both implementations, but has_flag treats it as a long option and ---f matches no --f* prefix; real pkill rejects it in getopt"
+  },
+  {
+    "label": "option-token charset: benign -+f as inspector argument",
+    "cmd": "echo \"-+f\"",
+    "expect": "allow"
+  },
+  {
     "label": "bash -nc is a syntax check, not a payload",
     "cmd": "bash -nc \"pkill -f x\"",
     "expect": "allow"
