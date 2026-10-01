@@ -1,6 +1,6 @@
 export * as BackgroundJob from "./background-job"
 
-import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, SynchronizedRef } from "effect"
+import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, Layer, Scope, SynchronizedRef } from "effect"
 import { Identifier } from "./id/id"
 import { makeGlobalNode } from "./effect/app-node"
 
@@ -32,14 +32,24 @@ type Active = {
 }
 
 type State = {
+  // Mutated in place under the SynchronizedRef lock; never copied per update.
   jobs: SynchronizedRef.SynchronizedRef<Map<string, Active>>
+  // Finished jobs still retained for late observers, in completion order,
+  // keyed by id with the owning token so a restarted id is never evicted.
+  finished: Map<string, object>
   scope: Scope.Scope
 }
+
+/** How long a finished job (and its output) stays observable after settling. */
+export const FINISHED_RETENTION = Duration.minutes(10)
+/** Upper bound on retained finished jobs; the oldest are evicted first. */
+export const FINISHED_MAX = 100
 
 type FinishResult = {
   info?: Info
   done?: Deferred.Deferred<Info>
   scope?: Scope.Closeable
+  token?: object
 }
 
 type PromoteResult = {
@@ -120,8 +130,37 @@ function errorText(error: unknown) {
 export const make = Effect.gen(function* () {
   const state: State = {
     jobs: yield* SynchronizedRef.make(new Map()),
+    finished: new Map(),
     scope: yield* Scope.Scope,
   }
+
+  // Must run inside a state.jobs modification so it is serialized with writers.
+  const evict = (jobs: Map<string, Active>, id: string, token: object) => {
+    if (state.finished.get(id) !== token) return
+    state.finished.delete(id)
+    const job = jobs.get(id)
+    if (job?.token === token && job.info.status !== "running") jobs.delete(id)
+  }
+
+  // Finished jobs are retained only long enough for late wait()/get() callers
+  // (a foreground task settling before it is awaited, a promotion notifier),
+  // then dropped so the registry and the task outputs it holds do not grow
+  // for the life of the process.
+  const retire = Effect.fn("BackgroundJob.retire")(function* (id: string, token: object) {
+    yield* SynchronizedRef.update(state.jobs, (jobs) => {
+      state.finished.delete(id)
+      state.finished.set(id, token)
+      while (state.finished.size > FINISHED_MAX) {
+        const [oldest, owner] = state.finished.entries().next().value!
+        evict(jobs, oldest, owner)
+      }
+      return jobs
+    })
+    yield* Effect.sleep(FINISHED_RETENTION).pipe(
+      Effect.andThen(SynchronizedRef.update(state.jobs, (jobs) => (evict(jobs, id, token), jobs))),
+      Effect.forkIn(state.scope, { startImmediately: true }),
+    )
+  })
 
   const settle = Effect.fn("BackgroundJob.settle")(function* (
     id: string,
@@ -141,7 +180,7 @@ export const make = Effect.gen(function* () {
           ? { sequence, text: exit.value }
           : job.output
       if (Exit.isSuccess(exit) && pending > 0) {
-        return [{}, new Map(jobs).set(id, { ...job, pending, output })]
+        return [{}, jobs.set(id, { ...job, pending, output })]
       }
       const status: Exclude<Status, "running"> = Exit.isSuccess(exit)
         ? "completed"
@@ -161,9 +200,10 @@ export const make = Effect.gen(function* () {
           ...(Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : {}),
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [{ info: snapshot(next), done: job.done, scope: job.scope, token }, jobs.set(id, next)]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
+    if (result.token) yield* retire(id, result.token)
     if (result.scope) {
       yield* Scope.close(result.scope, Exit.void).pipe(Effect.forkIn(state.scope, { startImmediately: true }))
     }
@@ -234,7 +274,9 @@ export const make = Effect.gen(function* () {
               promoted,
               onPromote: input.onPromote,
             }
-            return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
+            // A finished entry being replaced is no longer retained.
+            state.finished.delete(id)
+            return [{ info: snapshot(job), scope, token }, jobs.set(id, job)] as readonly [
               StartResult,
               Map<string, Active>,
             ]
@@ -264,7 +306,7 @@ export const make = Effect.gen(function* () {
             if (!job || job.info.status !== "running") return [{ extended: false }, jobs]
             return [
               { extended: true, previous: job.tail, scope: job.scope, tail, token: job.token, sequence: job.next },
-              new Map(jobs).set(input.id, {
+              jobs.set(input.id, {
                 ...job,
                 pending: job.pending + 1,
                 next: job.next + 1,
@@ -325,7 +367,7 @@ export const make = Effect.gen(function* () {
         }
         return [
           { info: snapshot(next), onPromote: job.onPromote, promoted: job.promoted },
-          new Map(jobs).set(id, next),
+          jobs.set(id, next),
         ] as readonly [PromoteResult, Map<string, Active>]
       }),
     )
@@ -350,9 +392,10 @@ export const make = Effect.gen(function* () {
           completed_at,
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [{ info: snapshot(next), done: job.done, scope: job.scope, token: job.token }, jobs.set(id, next)]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
+    if (result.token) yield* retire(id, result.token)
     if (result.scope) yield* Scope.close(result.scope, Exit.void)
     return result.info
   })
