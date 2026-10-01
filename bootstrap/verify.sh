@@ -606,10 +606,10 @@ for f in autonomy.md AGENTS.goal.md; do
   fi
 done
 if [ -f "$CFG/command/goal.md" ]; then
-  if grep -q 'starts with "edit "' "$CFG/command/goal.md"; then
-    pass "command/goal.md carries the /goal edit rules"
+  if grep -q 'Server result: \$GOAL_RESULT' "$CFG/command/goal.md"; then
+    pass "command/goal.md carries the server-authoritative /goal template"
   else
-    fail "command/goal.md lacks the /goal edit rules (stale template — re-sync from dotfiles)"
+    fail "command/goal.md lacks the \$GOAL_RESULT server-result line (stale template — re-run install.sh)"
   fi
 fi
 
