@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Duration, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -18,15 +18,41 @@ import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
-import type { Provider } from "@/provider/provider"
+import { Provider } from "@/provider/provider"
+import { ProviderError } from "@/provider/error"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
+import { NamedError } from "@opencode-ai/core/util/error"
 
 const DOOM_LOOP_THRESHOLD = 3
+// Non-interactive agents cannot answer a doom_loop prompt. The model is told to
+// change approach on the third identical call; the run stops on the sixth.
+const DOOM_LOOP_STOP = DOOM_LOOP_THRESHOLD * 2
+// Longest time the model may produce no stream event (text, reasoning, tool
+// call, finish) before the request is treated as stalled. SSE keep-alive pings
+// reset the transport chunk timeout but never produce an event, so a hung
+// stream would otherwise wait forever. Time spent running tools is excluded.
+export const STREAM_IDLE_TIMEOUT = 10 * 60_000
+const TIMER_MAX = 2_147_483_647
+
+export function idleTimeout(options: Record<string, unknown> | undefined) {
+  const value = options?.["idleTimeout"]
+  if (value === false || value === 0) return undefined
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value
+  return STREAM_IDLE_TIMEOUT
+}
+
+export function doomLoopMessage(tool: string, count: number) {
+  return (
+    `You have called the ${tool} tool with identical input ${count} times in a row, so this call was not executed. ` +
+    "Repeating it will not produce a different result. Change your approach: use different input, a different tool, " +
+    "or move on to the next step. If you keep repeating this exact call, the run will be stopped."
+  )
+}
 export type Result = "compact" | "stop" | "continue"
 
 export interface Handle {
@@ -67,6 +93,7 @@ type ToolCall = {
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
   shouldBreak: boolean
+  doomStopped: boolean
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
@@ -94,6 +121,10 @@ const layer = Layer.effect(
     const image = yield* Image.Service
     const events = yield* EventV2Bridge.Service
     const database = yield* Database.Service
+    const provider = yield* Provider.Service
+    // Consecutive identical tool calls per session, across steps. In-memory only:
+    // a restart starts the count over.
+    const streaks = new Map<SessionID, { key: string; count: number }>()
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -106,6 +137,7 @@ const layer = Layer.effect(
         model: input.model,
         toolcalls: {},
         shouldBreak: false,
+        doomStopped: false,
         snapshot: initialSnapshot,
         blocked: false,
         needsCompaction: false,
@@ -113,6 +145,8 @@ const layer = Layer.effect(
         reasoningMap: {},
       }
       let aborted = false
+      // Agents that cannot ask the user (question permission denied) run unattended.
+      let interactive = true
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
@@ -349,6 +383,9 @@ const layer = Layer.effect(
                 ? { ...value.providerMetadata, providerExecuted: true }
                 : value.providerMetadata,
             }))
+
+            // Non-interactive agents handle repeats in the tool wrapper instead.
+            if (!interactive) return
 
             const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
               Effect.provideService(Database.Service, database),
@@ -653,6 +690,15 @@ const layer = Layer.effect(
         yield* status.set(ctx.sessionID, { type: "idle" })
       })
 
+      // Length of the current run of identical calls ending with this one.
+      const repeat = (tool: string, args: unknown) => {
+        const key = `${tool}\u0000${JSON.stringify(args ?? null)}`
+        const prev = streaks.get(ctx.sessionID)
+        const count = prev?.key === key ? prev.count + 1 : 1
+        streaks.set(ctx.sessionID, { key, count })
+        return count
+      }
+
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         yield* Effect.logInfo("process", {
           "session.id": input.sessionID,
@@ -661,7 +707,19 @@ const layer = Layer.effect(
         const cfg = yield* config.get()
         ctx.needsCompaction = false
         ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
+        interactive =
+          Permission.evaluate("question", "*", streamInput.agent.permission, streamInput.permission ?? []).action !==
+          "deny"
+        const idle = idleTimeout((yield* provider.getProvider(input.model.providerID))?.options)
         let toolsStarted = false
+        // Stream idle tracking: `active` counts running tools and event handlers
+        // (which may wait on a permission prompt); neither is model silence.
+        let active = 0
+        let last = Date.now()
+        const release = () => {
+          active--
+          last = Date.now()
+        }
         const tools = Object.fromEntries(
           Object.entries(streamInput.tools).map(([name, item]) => {
             const execute = item.execute
@@ -674,12 +732,36 @@ const layer = Layer.effect(
                   // SDKs can invoke tools before their stream events are consumed.
                   // Retrying this request would replay history without those effects.
                   toolsStarted = true
-                  return execute.apply(item, args)
+                  if (!interactive) {
+                    const count = repeat(name, args[0])
+                    if (count >= DOOM_LOOP_STOP) {
+                      ctx.doomStopped = true
+                      return Promise.reject(new Error(doomLoopMessage(name, count)))
+                    }
+                    if (count >= DOOM_LOOP_THRESHOLD) return Promise.reject(new Error(doomLoopMessage(name, count)))
+                  }
+                  const result = execute.apply(item, args)
+                  if (!(result instanceof Promise)) return result
+                  active++
+                  return result.finally(release)
                 },
               },
             ]
           }),
         )
+        const watchdog = Effect.gen(function* () {
+          if (idle === undefined) return yield* Effect.never
+          while (true) {
+            const left = active > 0 ? idle : last + idle - Date.now()
+            if (left <= 0)
+              return yield* Effect.fail(
+                new ProviderError.ResponseStreamError(
+                  `No response from the model for ${Math.round(idle / 1000)}s (stream idle timeout)`,
+                ),
+              )
+            yield* Effect.sleep(Duration.millis(Math.min(left, TIMER_MAX)))
+          }
+        })
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -687,15 +769,18 @@ const layer = Layer.effect(
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
             const stream = llm.stream({ ...streamInput, tools })
+            last = Date.now()
 
-            yield* stream.pipe(
+            const drain = stream.pipe(
               Stream.tap((event) => {
                 if (event.type === "tool-call") toolsStarted = true
-                return handleEvent(event)
+                active++
+                return handleEvent(event).pipe(Effect.ensuring(Effect.sync(release)))
               }),
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
+            yield* Effect.raceFirst(drain, watchdog)
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
@@ -730,6 +815,20 @@ const layer = Layer.effect(
             Effect.ensuring(cleanup()),
           )
 
+          if (ctx.doomStopped) {
+            streaks.delete(ctx.sessionID)
+            if (!ctx.assistantMessage.error) {
+              ctx.assistantMessage.error = new NamedError.Unknown({
+                message: `Stopped: the model repeated an identical tool call ${DOOM_LOOP_STOP} times in a row after being told to change approach (doom loop).`,
+              }).toObject()
+              yield* session.updateMessage(ctx.assistantMessage)
+              yield* events.publish(Session.Event.Error, {
+                sessionID: ctx.sessionID,
+                error: ctx.assistantMessage.error,
+              })
+            }
+            return "stop"
+          }
           if (ctx.needsCompaction) return "compact"
           if (ctx.blocked || ctx.assistantMessage.error) return "stop"
           return "continue"
@@ -766,6 +865,7 @@ export const node = LayerNode.make({
     Image.node,
     EventV2Bridge.node,
     Database.node,
+    Provider.node,
   ],
 })
 

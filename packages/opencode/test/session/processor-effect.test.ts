@@ -1378,3 +1378,250 @@ itFragmentFailure.live("session.processor effect tests retain partial legacy par
     { config: cfg },
   ),
 )
+
+// ---------------------------------------------------------------------------
+// Stream idle timeout and non-interactive doom loop
+// ---------------------------------------------------------------------------
+
+// Emits a text delta, then stalls until `release` resolves: a stream kept
+// alive by keep-alive pings that never carry an event. `tool` (when set) is
+// called with the tools so a test can run one mid-stream.
+function stallingLLM(opts: { tool?: (tools: LLM.StreamInput["tools"]) => Promise<unknown> }) {
+  const state = { calls: 0 }
+  const layer = Layer.succeed(
+    LLM.Service,
+    LLM.Service.of({
+      stream: (input) => {
+        state.calls++
+        const call = state.calls
+        if (call > 1)
+          return Stream.make(
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.textStart({ id: "text-2" }),
+            LLMEvent.textDelta({ id: "text-2", text: "recovered" }),
+            LLMEvent.textEnd({ id: "text-2" }),
+            LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+            LLMEvent.finish({ reason: "stop" }),
+          )
+        const tool = opts.tool
+        return Stream.make(LLMEvent.stepStart({ index: 0 }), LLMEvent.textStart({ id: "text-1" })).pipe(
+          Stream.concat(
+            tool
+              ? Stream.fromEffect(Effect.promise(() => tool(input.tools))).pipe(
+                  Stream.flatMap(() =>
+                    Stream.make(
+                      LLMEvent.textDelta({ id: "text-1", text: "after tool" }),
+                      LLMEvent.textEnd({ id: "text-1" }),
+                      LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+                      LLMEvent.finish({ reason: "stop" }),
+                    ),
+                  ),
+                )
+              : Stream.never,
+          ),
+        )
+      },
+    }),
+  )
+  return { state, layer }
+}
+
+const idleCfg = (idleTimeout: number) => ({
+  ...cfg,
+  provider: { test: { ...cfg.provider.test, options: { ...cfg.provider.test.options, idleTimeout } } },
+})
+
+const streamInput = (
+  chat: { id: SessionID },
+  parent: SessionV1.User,
+  mdl: Provider.Model,
+  extra?: Partial<LLM.StreamInput>,
+) =>
+  ({
+    user: {
+      id: parent.id,
+      sessionID: chat.id,
+      role: "user",
+      time: parent.time,
+      agent: parent.agent,
+      model: { providerID: ref.providerID, modelID: ref.modelID },
+    } satisfies SessionV1.User,
+    sessionID: chat.id,
+    model: mdl,
+    agent: agent(),
+    system: [],
+    messages: [{ role: "user", content: "hi" }],
+    tools: {},
+    ...extra,
+  }) satisfies LLM.StreamInput
+
+const stalled = stallingLLM({})
+const itStalled = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, stalled.layer]]))
+
+itStalled.live("session.processor aborts a silent stream after the idle timeout and retries it", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+        const statuses: string[] = []
+        const events = yield* EventV2Bridge.Service
+        const off = yield* events.listen((event) => {
+          if (event.type === SessionStatus.Event.Status.type) {
+            const data = event.data as { status: { type: string; message?: string } }
+            if (data.status.type === "retry") statuses.push(data.status.message ?? "")
+          }
+          return Effect.void
+        })
+
+        const result = yield* handle.process(streamInput(chat, parent, mdl))
+        yield* off
+
+        expect(result).toBe("continue")
+        expect(stalled.state.calls).toBe(2)
+        expect(statuses.some((message) => message.includes("stream idle timeout"))).toBe(true)
+        const parts = yield* MessageV2.parts(msg.id)
+        expect(parts.some((part) => part.type === "text" && part.text === "recovered")).toBe(true)
+      }),
+    { config: idleCfg(200) },
+  ),
+)
+
+const slowTool = stallingLLM({
+  tool: (tools) => tools.slow!.execute!({}, { toolCallId: "call-slow", messages: [] }) as Promise<unknown>,
+})
+const itSlowTool = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, slowTool.layer]]))
+
+itSlowTool.live("session.processor does not count tool execution time as stream idle time", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+        const slow = tool({
+          description: "slow",
+          inputSchema: z.object({}),
+          execute: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 600))
+            return "done"
+          },
+        })
+
+        const result = yield* handle.process(streamInput(chat, parent, mdl, { tools: { slow } }))
+
+        expect(result).toBe("continue")
+        expect(slowTool.state.calls).toBe(1)
+        expect(handle.message.error).toBeUndefined()
+        const parts = yield* MessageV2.parts(msg.id)
+        expect(parts.some((part) => part.type === "text" && part.text === "after tool")).toBe(true)
+      }),
+    { config: idleCfg(200) },
+  ),
+)
+
+// Calls the `repeat` tool with identical input `count` times within one stream.
+function repeatingLLM(count: number) {
+  const results: Array<{ ok: boolean; message: string }> = []
+  const layer = Layer.succeed(
+    LLM.Service,
+    LLM.Service.of({
+      stream: (input) =>
+        Stream.fromEffect(
+          Effect.promise(async () => {
+            for (let i = 0; i < count; i++) {
+              const out = await Promise.resolve(
+                input.tools.repeat!.execute!({ path: "a" }, { toolCallId: `call-${i}`, messages: [] }),
+              ).then(
+                (value) => ({ ok: true, message: String(value) }),
+                (error: Error) => ({ ok: false, message: error.message }),
+              )
+              results.push(out)
+            }
+          }),
+        ).pipe(
+          Stream.flatMap(() =>
+            Stream.make(
+              LLMEvent.stepStart({ index: 0 }),
+              LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+              LLMEvent.finish({ reason: "tool-calls" }),
+            ),
+          ),
+        ),
+    }),
+  )
+  return { results, layer }
+}
+
+const repeatTool = tool({
+  description: "repeat",
+  inputSchema: z.object({ path: z.string() }),
+  execute: async () => "same",
+})
+const unattended = (): Agent.Info => ({
+  ...agent(),
+  name: "auto",
+  permission: [
+    { permission: "*", pattern: "*", action: "allow" },
+    { permission: "question", pattern: "*", action: "deny" },
+  ],
+})
+
+const warned = repeatingLLM(4)
+const itWarned = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, warned.layer]]))
+
+itWarned.live("session.processor returns a tool error to an unattended agent repeating an identical call", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+
+        const result = yield* handle.process(
+          streamInput(chat, parent, mdl, { agent: unattended(), tools: { repeat: repeatTool } }),
+        )
+
+        expect(warned.results.map((item) => item.ok)).toEqual([true, true, false, false])
+        expect(warned.results[2]!.message).toContain("identical input 3 times")
+        expect(result).toBe("continue")
+        expect(handle.message.error).toBeUndefined()
+      }),
+    { config: cfg },
+  ),
+)
+
+const stopped = repeatingLLM(6)
+const itStopped = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, stopped.layer]]))
+
+itStopped.live("session.processor stops an unattended agent that keeps repeating after the warning", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+
+        const result = yield* handle.process(
+          streamInput(chat, parent, mdl, { agent: unattended(), tools: { repeat: repeatTool } }),
+        )
+
+        expect(result).toBe("stop")
+        expect(JSON.stringify(handle.message.error)).toContain("doom loop")
+      }),
+    { config: cfg },
+  ),
+)
