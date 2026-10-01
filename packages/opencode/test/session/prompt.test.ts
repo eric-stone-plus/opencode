@@ -56,6 +56,7 @@ import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionGoal } from "@opencode-ai/schema/session-goal"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 
 const summary = Layer.succeed(
@@ -2276,6 +2277,67 @@ unix(
       }),
     ),
   30_000,
+)
+
+const userText = (msgs: readonly SessionV1.WithParts[]) =>
+  msgs
+    .filter((msg) => msg.info.role === "user")
+    .flatMap((msg) => msg.parts.flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : [])))
+    .join("\n")
+
+it.instance("command arguments land verbatim: no replacement patterns, no re-expansion", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      command: { echo: { template: "All: <$ARGUMENTS> First: <$1> Rest: <$2>" } },
+    }))
+    const { prompt, sessions, chat } = yield* boot()
+    yield* llm.text("done")
+
+    const args = "a$&b $$ $` $ARGUMENTS $1 $GOAL_RESULT $'"
+    yield* prompt.command({ sessionID: chat.id, command: "echo", arguments: args })
+
+    const text = userText(yield* sessions.messages({ sessionID: chat.id }))
+    // Positional tokenizing drops the unpaired trailing quote; $ARGUMENTS is the raw text.
+    expect(text).toBe(`All: <${args}> First: <a$&b> Rest: <$$ $\` $ARGUMENTS $1 $GOAL_RESULT $>`)
+  }),
+)
+
+it.instance("/goal tells the template the server-side result and keeps edit-leading goal text", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const { prompt, sessions, chat } = yield* boot()
+    const goals: string[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type === SessionGoal.Event.Updated.type) goals.push((event.data as { text: string }).text)
+      return Effect.void
+    })
+    const run = Effect.fn("test.goal")(function* (args: string) {
+      yield* llm.text("ok")
+      yield* prompt.command({ sessionID: chat.id, command: "goal", arguments: args, agent: "build" })
+      const msgs = yield* sessions.messages({ sessionID: chat.id })
+      return msgs.findLast((msg) => msg.info.role === "user")!.parts.flatMap((part) =>
+        part.type === "text" && !part.synthetic ? [part.text] : [],
+      )[0]
+    })
+
+    const set = yield* run("Edit the README to add install steps $&")
+    expect(set).toContain("Server result: set")
+    expect(set).toContain("Argument as typed (for reference only): Edit the README to add install steps $&")
+    const quoted = yield* run('"edit the README"')
+    expect(quoted).toContain("Server result: set")
+    const updated = yield* run("edit new direction")
+    expect(updated).toContain("Server result: updated")
+    const shown = yield* run('edit ""')
+    expect(shown).toContain("Server result: unchanged")
+    const cleared = yield* run("clear")
+    expect(cleared).toContain("Server result: cleared")
+    expect(cleared).not.toContain("$GOAL_RESULT")
+    yield* off
+    // The capitalized first word is part of the goal, not an eaten subcommand.
+    expect(goals).toEqual(["Edit the README to add install steps $&", "edit the README", "new direction", ""])
+  }),
 )
 
 unixNoLLMServer(

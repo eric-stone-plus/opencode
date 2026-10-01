@@ -1,10 +1,14 @@
-The user issued the /goal command, which sets a persistent goal for this session.
+The user issued the /goal command, which sets a persistent goal for this session. The server has already parsed the argument and applied it: it wrote, replaced, or cleared the session goal file (or left it untouched), and the current session goal, if one is set, is re-stated to you as a system reminder every turn, including after compaction, until cleared. The server's result is authoritative. Never reconstruct, re-derive, or rewrite the goal from the argument text, and never edit the goal file yourself; the session goal is exactly what the system reminder shows.
 
-Goal argument: $ARGUMENTS
+Server result: $GOAL_RESULT
 
-Interpret the argument as follows:
+Argument as typed (for reference only): $ARGUMENTS
 
-1. Argument starts with "edit " (case-insensitive): the goal is being replaced. The intended content is everything after "edit " (with one wrapping quote pair removed if present), verbatim. If that content is empty (e.g. `edit ""`), treat it as case 2 instead. Otherwise the goal file at the path named in the system reminder should contain exactly that text (a trailing newline is fine either way). Then confirm in one short sentence ("Goal updated: <first line>"); do not continue working toward the old goal.
-2. Argument is exactly "edit" (case-insensitive), or the argument is empty: nothing was changed. State the current session goal in one short sentence (it appears in the system reminder when set), or say that no goal is set.
-3. Argument is "clear", "none", or "remove" (case-insensitive): the session goal has been removed. Confirm in one short sentence.
-4. Any other non-empty argument: this text is now the session goal. It has been persisted and will be re-stated to you automatically on every turn, including after compaction. Acknowledge the goal in one short sentence, then continue working toward it.
+The grammar the server applied: an argument starting with lowercase `edit` followed by a space replaces the goal with the rest (one wrapping quote pair removed); bare `edit`, `edit ""`, or no argument shows the current goal and changes nothing; a bare `clear`, `none`, or `remove` (any case) removes the goal; anything else is the new goal text verbatim, with one wrapping quote pair removed. To start a goal with the word edit, capitalize it (`/goal Edit the README …`) or quote the whole argument (`/goal "edit the README …"`).
+
+Act on the server result:
+
+1. `updated`: the goal was replaced. Confirm in one short sentence ("Goal updated: <first line of the session goal shown in the system reminder>"); do not continue working toward the old goal.
+2. `unchanged`: nothing was changed. State the current session goal in one short sentence (from the system reminder), or say that no goal is set.
+3. `cleared`: the session goal was removed. Confirm in one short sentence.
+4. `set`: the session goal shown in the system reminder is the new goal. Acknowledge it in one short sentence, then continue working toward it.

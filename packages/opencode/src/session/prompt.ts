@@ -1587,18 +1587,21 @@ const layer = Layer.effect(
         if (value > last) last = value
       }
 
-      const withArgs = templateCommand.replaceAll(placeholderRegex, (_, index) => {
+      const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
+      // One pass with a function replacer: user text containing `$$`, `$&`,
+      // `` $` `` or `$'` lands verbatim instead of being read as a replacement
+      // pattern, and an argument that itself contains `$ARGUMENTS` or `$2` is
+      // not expanded again. /goal's `$GOAL_RESULT` is the outcome the server
+      // already applied, so the template never re-derives it from the text.
+      let template = templateCommand.replaceAll(substitutionRegex, (match, index: string | undefined) => {
+        if (match === "$ARGUMENTS") return input.arguments
+        if (match === "$GOAL_RESULT") return goal ? goalResult(goal) : match
         const position = Number(index)
         const argIndex = position - 1
         if (argIndex >= args.length) return ""
         if (position === last) return args.slice(argIndex).join(" ")
         return args[argIndex]
       })
-      const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
-      // R6: goal templates see the quote-stripped argument text — the run CLI
-      // wraps space-containing argv words in quotes, which would otherwise leak
-      // into the template's interpretation of "edit …" / "clear".
-      let template = withArgs.replaceAll("$ARGUMENTS", goal ? goal.text : input.arguments)
 
       if (placeholders.length === 0 && !usesArgumentsPlaceholder && input.arguments.trim()) {
         template = template + "\n\n" + input.arguments
@@ -1805,11 +1808,16 @@ export function createStructuredOutputTool(input: {
 const bashRegex = /!`([^`]+)`/g
 
 /**
- * Parse /goal's argument grammar: strip one wrapping quote layer (the run CLI
- * quotes space-containing argv words), then classify. `cleared` is only a bare
- * clear/none/remove — "/goal edit clear" stores the literal word as the goal
- * text. `showOnly` covers the two read-only forms (bare "/goal edit", bare
- * "/goal") that report the current goal and write nothing.
+ * Parse /goal's argument grammar. The edit subcommand is only a lowercase
+ * `edit` followed by whitespace or the end, checked on the raw argument before
+ * any unquoting, so ordinary goal text that happens to begin with the word
+ * ("Edit the README …") or a wholly quoted argument (`"edit the README"`, the
+ * way to start a goal with "edit") is never eaten as the subcommand. Otherwise
+ * one wrapping quote layer is stripped (the run CLI quotes space-containing
+ * argv words). `cleared` is only a bare clear/none/remove — "/goal edit clear"
+ * stores the literal word as the goal text. `showOnly` covers the two
+ * read-only forms (bare "/goal edit", bare "/goal") that report the current
+ * goal and write nothing.
  *
  * @internal Exported for testing
  */
@@ -1821,13 +1829,12 @@ export function parseGoalArguments(raw: string): {
   cleared: boolean
 } {
   const trimmed = raw.trim()
-  const text = unquoteGoalText(trimmed).trim()
-  const editMatch = /^edit(?:\s+([\s\S]+))?$/i.exec(text)
+  const editMatch = /^edit(?:\s+([\s\S]*))?$/.exec(trimmed)
+  const text = editMatch === null ? unquoteGoalText(trimmed).trim() : trimmed
   // A quoted empty update (`/goal edit ""`) is an empty update, not the
   // literal two-quote goal text: strip one wrapping quote layer from the
-  // update the same way the CLI's argv quoting is stripped above.
-  const updateRaw = editMatch === null ? text : (editMatch[1] ?? "").trim()
-  const update = (editMatch === null ? updateRaw : unquoteGoalText(updateRaw)).trim()
+  // update the same way the CLI's argv quoting is stripped from a plain goal.
+  const update = editMatch === null ? text : unquoteGoalText((editMatch[1] ?? "").trim()).trim()
   return {
     text,
     edit: editMatch !== null,
@@ -1835,6 +1842,21 @@ export function parseGoalArguments(raw: string): {
     showOnly: text === "" || (editMatch !== null && update === ""),
     cleared: editMatch === null && /^(clear|none|remove)$/i.test(text),
   }
+}
+
+/**
+ * The server-side outcome of a /goal argument, substituted for `$GOAL_RESULT`
+ * in the goal command template: `set` (a new goal was written), `updated`
+ * (edit replaced the goal), `unchanged` (show-only, nothing written),
+ * `cleared` (the goal was removed).
+ *
+ * @internal Exported for testing
+ */
+export function goalResult(goal: ReturnType<typeof parseGoalArguments>) {
+  if (goal.cleared) return "cleared"
+  if (goal.showOnly) return "unchanged"
+  if (goal.edit) return "updated"
+  return "set"
 }
 
 /**
@@ -1859,6 +1881,7 @@ const goalWordsRegex = /^(?:"(?:\\"|[^"])*"|'[^']*'|[^\s"']+)(?:\s+(?:"(?:\\"|[^
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g
+const substitutionRegex = /\$(?:(\d+)|ARGUMENTS|GOAL_RESULT)/g
 const quoteTrimRegex = /^["']|["']$/g
 
 export const node = LayerNode.make({

@@ -74,7 +74,7 @@ const layer = Layer.effect(
         description: "guided AGENTS.md setup",
         source: "command",
         get template() {
-          return PROMPT_INITIALIZE.replace("${path}", ctx.worktree)
+          return PROMPT_INITIALIZE.replace("${path}", () => ctx.worktree)
         },
         hints: hints(PROMPT_INITIALIZE),
       }
@@ -83,14 +83,14 @@ const layer = Layer.effect(
         description: "review changes [commit|branch|pr], defaults to uncommitted",
         source: "command",
         get template() {
-          return PROMPT_REVIEW.replace("${path}", ctx.worktree)
+          return PROMPT_REVIEW.replace("${path}", () => ctx.worktree)
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
       }
       commands[Default.GOAL] = {
         name: Default.GOAL,
-        description: "set a persistent session goal, re-stated every turn; 'clear' removes it",
+        description: "set a persistent session goal, re-stated every turn; 'clear' removes it, 'edit <text>' replaces it",
         source: "command",
         get template() {
           return PROMPT_GOAL
