@@ -314,7 +314,7 @@ Background `@opencode-ai/plugin` npm install failures are **logged only**. After
 first launch check:
 
 ```sh
-grep -E 'plugin config hook failed|background dependency install failed' \
+grep -E 'level=ERROR.*message="plugin config hook failed"|level=WARN.*message="background dependency install failed"' \
   ~/.local/share/opencode/log/opencode.log
 ```
 

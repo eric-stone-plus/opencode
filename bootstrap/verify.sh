@@ -559,8 +559,11 @@ echo "-- log sweep (first-launch silent failures are logged only)"
 if [ ! -f "$LOG" ]; then
   pass "no opencode log yet at $LOG (nothing to sweep)"
 else
-  n1=$(grep -c 'plugin config hook failed' "$LOG" 2>/dev/null || true)
-  n2=$(grep -c 'background dependency install failed' "$LOG" 2>/dev/null || true)
+  # Match the structured severity and message fields. A raw keyword search
+  # also counts commands recorded in the log that happen to inspect these
+  # messages, which turns the audit into a self-referential false positive.
+  n1=$(grep -cE 'level=ERROR.*message="plugin config hook failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
+  n2=$(grep -cE 'level=WARN.*message="background dependency install failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
   if [ "${n1:-0}" -gt 0 ]; then
     warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (a dangling motoko.ts is the usual cause; mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
   else
