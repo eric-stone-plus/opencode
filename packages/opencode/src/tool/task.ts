@@ -10,7 +10,7 @@ import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
-import { Effect, Exit, Schema, Scope } from "effect"
+import { Duration, Effect, Exit, Option, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
@@ -331,10 +331,32 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(
+            const waited = Effect.raceFirst(
               background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
               background.waitForPromotion(nextSession.id),
             )
+            // Optional wall-clock limit (off by default). A child stalled on the
+            // provider is already bounded by the retry budget and the stream
+            // idle timeout; this only caps long but healthy runs.
+            const limit = flags.taskTimeoutMs
+            const result = limit
+              ? yield* waited.pipe(
+                  Effect.timeoutOption(Duration.millis(Math.min(limit, 2_147_483_647))),
+                  Effect.flatMap((done) =>
+                    Option.isSome(done)
+                      ? Effect.succeed(done.value)
+                      : Effect.all([cancel, background.cancel(nextSession.id)], { discard: true }).pipe(
+                          Effect.andThen(
+                            Effect.fail(
+                              new Error(
+                                `Task exceeded the ${Math.round(limit / 1000)}s limit (OPENCODE_EXPERIMENTAL_TASK_TIMEOUT_MS) and was cancelled. Its session ${nextSession.id} keeps the work done so far; resume it with task_id.`,
+                              ),
+                            ),
+                          ),
+                        ),
+                  ),
+                )
+              : yield* waited
             if (result?.metadata?.background === true) return backgroundResult()
             if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
             if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))

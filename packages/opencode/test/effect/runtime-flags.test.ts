@@ -293,6 +293,17 @@ describe("RuntimeFlags", () => {
     }),
   )
 
+  it.effect("parses taskTimeoutMs from config and leaves it off by default", () =>
+    Effect.gen(function* () {
+      const set = yield* readFlags.pipe(
+        Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL_TASK_TIMEOUT_MS: "7200000" })),
+      )
+      expect(set.taskTimeoutMs).toBe(7_200_000)
+      const unset = yield* readFlags.pipe(Effect.provide(fromConfig({})))
+      expect(unset.taskTimeoutMs).toBeUndefined()
+    }),
+  )
+
   for (const input of [
     { name: "absent", config: {}, expected: undefined },
     {
