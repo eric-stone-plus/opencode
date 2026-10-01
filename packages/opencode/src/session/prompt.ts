@@ -80,9 +80,10 @@ IMPORTANT:
 - Complete all necessary research and tool calls BEFORE calling this tool
 - This tool provides your final answer - no further actions are taken after calling it`
 
-// Automatic continuations after a stream failure that arrived once tools had
-// started, per user turn. Each continuation resends history with the saved
-// tool results, so no tool runs twice.
+// Consecutive automatic continuations after a stream failure that arrived once
+// tools had started; a step without such a failure resets the count. Each
+// continuation resends history with the saved tool results, so no tool runs
+// twice.
 const TOOL_STREAM_RESUME_MAX = 3
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
@@ -1495,11 +1496,15 @@ const layer = Layer.effect(
               }
             }
 
-            if (
+            const toolStreamFailure =
               result === "stop" &&
               SessionV1.APIError.isInstance(handle.message.error) &&
               handle.message.error.data.metadata?.retryStopped === "tool_execution_started"
-            ) {
+            // The limit bounds consecutive mid-tool stream failures: a step
+            // that got through without one resets it, so a long run is not cut
+            // off by failures spread across days.
+            if (!toolStreamFailure) resumes = 0
+            if (toolStreamFailure) {
               if (resumes < TOOL_STREAM_RESUME_MAX) {
                 resumes++
                 yield* Effect.logWarning("continuing after stream failure once tools had started", {

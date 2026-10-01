@@ -1230,6 +1230,49 @@ unix("loop gives up after a bounded number of late stream errors", () =>
   }),
 )
 
+unix("late stream error budget counts consecutive failures, not the whole run", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(anthropicCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Spread late stream errors",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const marker = path.join(dir, "runs.txt")
+    const errors: string[] = []
+    const events = yield* EventV2Bridge.Service
+    const off = yield* events.listen((event) => {
+      if (event.type !== Session.Event.Error.type) return Effect.void
+      const data = event.data as typeof Session.Event.Error.data.Type
+      if (data.sessionID === session.id && data.error) errors.push(JSON.stringify(data.error))
+      return Effect.void
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: qwen,
+      noReply: true,
+      parts: [{ type: "text", text: "append" }],
+    })
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 500))
+    // Three failures (the whole budget), a clean tool step, then three more:
+    // the clean step resets the budget, so the run still finishes.
+    for (const n of [1, 2, 3]) yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, settle, `toolu_${n}`))
+    yield* llm.push(reply().tool("glob", { pattern: "**/*.none" }))
+    for (const n of [4, 5, 6]) yield* llm.push(toolThenStreamError(`echo run >> ${marker}`, settle, `toolu_${n}`))
+    yield* llm.push(reply().text("done").stop())
+    const result = yield* prompt.loop({ sessionID: session.id })
+    yield* off
+
+    expect(modelRequests(yield* llm.hits)).toHaveLength(8)
+    expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("run\n".repeat(6))
+    expect(errors).toHaveLength(0)
+    expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+  }),
+)
+
 it.instance("loop stops on a Bailian moderation rejection with recovery guidance", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(anthropicCfg)
