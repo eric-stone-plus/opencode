@@ -17,6 +17,6 @@ On machine B: clone motoko and pass the real path via
 symlink with a regular file copy: run-time edits must land in the checkout.
 
 The other two plugin files (block-unsafe-kill.ts, mpskills-update.ts) ARE
-regular files and are installed as copies. mpskills-update.ts hardcodes
-/home/eric/.local/bin/mpskills-update and is shipped as-is on purpose — see
-README "Known portability hazards".
+regular files and are installed as copies. mpskills-update.ts resolves
+${HOME}/.local/bin/mpskills-update at run time (no hardcoded home), so the
+copy is portable as-is.
