@@ -371,7 +371,11 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const imageModel: Provider.Model = {
+      ...model,
+      capabilities: { ...model.capabilities, input: { ...model.capabilities.input, image: true } },
+    }
+    expect(await MessageV2.toModelMessages(input, imageModel)).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],
@@ -409,6 +413,135 @@ describe("session.message-v2.toModelMessage", () => {
         ],
       },
     ])
+  })
+
+  test("replaces tool-result media with a placeholder for text-only anthropic-protocol models", async () => {
+    // glm-coding-plan/glm-5.3: @ai-sdk/anthropic transport, text-only model
+    const glm: Provider.Model = {
+      ...model,
+      id: ModelV2.ID.make("glm-5.3"),
+      providerID: ProviderV2.ID.make("glm-coding-plan"),
+      api: { id: "glm-5.3", url: "https://open.bigmodel.cn/api/anthropic", npm: "@ai-sdk/anthropic" },
+    }
+    const userID = "m-user-glm"
+    const assistantID = "m-assistant-glm"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1-glm"), type: "text", text: "run tool" }] as SessionV1.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID, undefined, { providerID: "glm-coding-plan", modelID: "glm-5.3" }),
+        parts: [
+          {
+            ...basePart(assistantID, "a1-glm"),
+            type: "tool",
+            callID: "call-glm-1",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/tmp/shot.png" },
+              output: "Image read successfully",
+              title: "Read",
+              metadata: {},
+              time: { start: 0, end: 1 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-glm-1"),
+                  type: "file",
+                  mime: "image/png",
+                  filename: "shot.png",
+                  url: "data:image/png;base64,Zm9v",
+                },
+                {
+                  ...basePart(assistantID, "file-glm-2"),
+                  type: "file",
+                  mime: "application/pdf",
+                  filename: "doc.pdf",
+                  url: "data:application/pdf;base64,Zm9v",
+                },
+              ],
+            },
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const result = ProviderTransform.message(await MessageV2.toModelMessages(input, glm), glm, {})
+    expect(result).toHaveLength(3)
+    expect(result[2].content[0]).toMatchObject({
+      type: "tool-result",
+      toolCallId: "call-glm-1",
+      output: {
+        type: "text",
+        value:
+          "Image read successfully\n" +
+          "[Attached image/png: shot.png (this model does not support image input)]\n" +
+          "[Attached application/pdf: doc.pdf (this model does not support pdf input)]",
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain("Zm9v")
+  })
+
+  test("keeps readable tool-result media and drops only the unsupported kind", async () => {
+    const imageOnly: Provider.Model = {
+      ...model,
+      api: { ...model.api, npm: "@ai-sdk/anthropic" },
+      capabilities: { ...model.capabilities, input: { ...model.capabilities.input, image: true } },
+    }
+    const userID = "m-user-mixed"
+    const assistantID = "m-assistant-mixed"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1-mixed"), type: "text", text: "run tool" }] as SessionV1.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1-mixed"),
+            type: "tool",
+            callID: "call-mixed-1",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: {},
+              output: "",
+              title: "Read",
+              metadata: {},
+              time: { start: 0, end: 1 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-mixed-1"),
+                  type: "file",
+                  mime: "image/png",
+                  url: "data:image/png;base64,Zm9v",
+                },
+                {
+                  ...basePart(assistantID, "file-mixed-2"),
+                  type: "file",
+                  mime: "application/pdf",
+                  url: "data:application/pdf;base64,YmFy",
+                },
+              ],
+            },
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, imageOnly)
+    expect(result[2].content[0]).toMatchObject({
+      type: "tool-result",
+      output: {
+        type: "content",
+        value: [
+          { type: "text", text: "[Attached application/pdf: file (this model does not support pdf input)]" },
+          { type: "media", mediaType: "image/png", data: "Zm9v" },
+        ],
+      },
+    })
   })
 
   test("preserves jpeg tool-result media for anthropic models", async () => {

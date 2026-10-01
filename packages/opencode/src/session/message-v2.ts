@@ -144,6 +144,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   //
   // Only apply this workaround if the model actually supports that media input -
   // otherwise unsupportedParts() will turn it into a user-visible error.
+  const supportsMediaInput = (attachment: { mime: string }) =>
+    attachment.mime === "application/pdf" ? model.capabilities.input.pdf : model.capabilities.input.image
+
   const supportsMediaInToolResult = (attachment: { mime: string }) => {
     if (model.api.npm === "@ai-sdk/anthropic") return true
     if (model.api.npm === "@ai-sdk/openai") return true
@@ -307,10 +310,23 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         if (part.type === "tool") {
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
-            const outputText = part.state.time.compacted
+            const baseOutputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
-            const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            const stored = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            // Media the model cannot read at all (e.g. text-only GLM behind @ai-sdk/anthropic)
+            // becomes a text placeholder instead of being sent in the tool result.
+            const unreadable = stored.filter((a) => isMedia(a.mime) && !supportsMediaInput(a))
+            const attachments = stored.filter((a) => !unreadable.includes(a))
+            const outputText = [
+              baseOutputText,
+              ...unreadable.map(
+                (a) =>
+                  `[Attached ${a.mime}: ${a.filename ?? "file"} (this model does not support ${a.mime === "application/pdf" ? "pdf" : "image"} input)]`,
+              ),
+            ]
+              .filter((text) => text !== "")
+              .join("\n")
 
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
@@ -566,33 +582,41 @@ function compactionBoundary() {
 
 function orderCompacted(result: WithParts[]) {
   result.reverse()
-  const compactionIndex = result.findLastIndex(
-    (msg) =>
-      msg.info.role === "user" &&
-      msg.parts.some((item): item is CompactionPart => item.type === "compaction" && item.tail_start_id !== undefined),
-  )
-  const compaction = result[compactionIndex]
-  const part = compaction?.parts.find(
-    (item): item is CompactionPart => item.type === "compaction" && item.tail_start_id !== undefined,
-  )
-  const summaryIndex = compaction
-    ? result.findIndex(
-        (msg, index) =>
-          index > compactionIndex &&
-          msg.info.role === "assistant" &&
-          msg.info.summary &&
-          msg.info.parentID === compaction.info.id,
-      )
-    : -1
-  const tailIndex = part?.tail_start_id ? result.findIndex((msg) => msg.info.id === part.tail_start_id) : -1
-  if (tailIndex >= 0 && tailIndex < compactionIndex && summaryIndex > compactionIndex) {
-    return [
-      ...result.slice(compactionIndex, summaryIndex + 1),
-      ...result.slice(tailIndex, compactionIndex),
-      ...result.slice(summaryIndex + 1),
-    ]
+  const summaryOf = (index: number) =>
+    result.findIndex(
+      (msg, i) =>
+        i > index &&
+        msg.info.role === "assistant" &&
+        msg.info.summary &&
+        msg.info.finish &&
+        !msg.info.error &&
+        msg.info.parentID === result[index]!.info.id,
+    )
+  let compactionIndex = -1
+  let summaryIndex = -1
+  for (let i = result.length - 1; i >= 0; i--) {
+    const msg = result[i]!
+    if (msg.info.role !== "user" || !msg.parts.some((item) => item.type === "compaction")) continue
+    summaryIndex = summaryOf(i)
+    if (summaryIndex === -1) continue
+    compactionIndex = i
+    break
   }
-  return result
+  if (compactionIndex === -1) return result
+  const part = result[compactionIndex]!.parts.find((item): item is CompactionPart => item.type === "compaction")
+  const tailIndex = part?.tail_start_id ? result.findIndex((msg) => msg.info.id === part.tail_start_id) : -1
+  const tail = tailIndex >= 0 && tailIndex < compactionIndex
+  // Messages sent between the marker and its summary (a user message that arrived
+  // while a compaction was failing) belong after the summary, not before it.
+  if (!tail && summaryIndex === compactionIndex + 1) return result
+  return [
+    ...(tail ? [] : result.slice(0, compactionIndex)),
+    result[compactionIndex]!,
+    result[summaryIndex]!,
+    ...(tail ? result.slice(tailIndex, compactionIndex) : []),
+    ...result.slice(compactionIndex + 1, summaryIndex),
+    ...result.slice(summaryIndex + 1),
+  ]
 }
 
 export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
