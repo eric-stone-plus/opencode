@@ -88,16 +88,29 @@ export function modelScope(route: Route) {
 
 // Precedence: the session's explicit choice > the agent's pinned model > the
 // global fallback (--model, config model, recents, provider default). Invalid
-// candidates (disconnected provider, removed model) are skipped.
+// candidates (disconnected provider, removed model) are skipped — except an
+// explicitly configured fallback (`configured`), which is kept as-is so the
+// server reports ModelNotFound instead of the TUI silently using another model.
 export function resolveModel(input: {
   choice: ModelChoice
   agentModel: ModelRef | undefined
   fallback: ModelRef | undefined
+  configured?: boolean
   valid(model: ModelRef): boolean
 }) {
   for (const model of [input.choice, input.agentModel, input.fallback]) {
     if (model && input.valid(model)) return model
   }
+  if (input.configured) return input.fallback
+}
+
+// The explicitly requested global model (--model, else config `model`). It is
+// authoritative: when it is not in the provider list the TUI keeps it (and
+// warns) rather than falling through to recents or a provider default.
+export function configuredModel(input: { arg?: string; config?: string }) {
+  const value = input.arg || input.config
+  if (!value) return undefined
+  return { ...parseModel(value), source: input.arg ? ("--model" as const) : ("config" as const) }
 }
 
 // Variants are stored per model. A stored variant the newly chosen model does
@@ -241,26 +254,27 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (state.pending) save()
         })
 
-      const fallbackModel = createMemo(() => {
-        if (args.model) {
-          const { providerID, modelID } = parseModel(args.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
+      const configured = createMemo(() => configuredModel({ arg: args.model, config: sync.data.config.model }))
 
-        if (sync.data.config.model) {
-          const { providerID, modelID } = parseModel(sync.data.config.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
+      // Warn (once per value) when the configured model is not offered by any
+      // connected provider; it is still used so the server reports the error.
+      let warned: string | undefined
+      createEffect(() => {
+        const model = configured()
+        if (!model || sync.status === "loading") return
+        const key = `${model.providerID}/${model.modelID}`
+        if (isModelValid(model) || warned === key) return
+        warned = key
+        toast.show({
+          variant: "warning",
+          message: `Configured model ${key} (${model.source}) is not available from any connected provider`,
+          duration: 5000,
+        })
+      })
+
+      const fallbackModel = createMemo(() => {
+        const explicit = configured()
+        if (explicit) return { providerID: explicit.providerID, modelID: explicit.modelID }
 
         for (const item of modelStore.recent) {
           if (isModelValid(item)) {
@@ -287,6 +301,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           choice: modelStore.model[scope()],
           agentModel: agent.current()?.model,
           fallback: fallbackModel(),
+          configured: configured() !== undefined,
           valid: isModelValid,
         }),
       )

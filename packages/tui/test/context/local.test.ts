@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  configuredModel,
   DRAFT_MODEL_SCOPE,
   modelScope,
   parseModel,
@@ -154,6 +155,24 @@ describe("session-scoped model", () => {
     const only = (model: { modelID: string }) => model.modelID === "mimo"
     expect(resolveModel({ choice: qwen, agentModel: opus, fallback: mimo, valid: only })).toEqual(mimo)
     expect(resolveModel({ choice: qwen, agentModel: opus, fallback: undefined, valid: only })).toBeUndefined()
+  })
+
+  test("an invalid configured fallback is kept so the server reports ModelNotFound", () => {
+    const none = () => false
+    expect(
+      resolveModel({ choice: undefined, agentModel: undefined, fallback: mimo, configured: true, valid: none }),
+    ).toEqual(mimo)
+    expect(resolveModel({ choice: undefined, agentModel: undefined, fallback: mimo, valid: none })).toBeUndefined()
+    const onlyOpus = (model: { modelID: string }) => model.modelID === opus.modelID
+    expect(
+      resolveModel({ choice: undefined, agentModel: opus, fallback: mimo, configured: true, valid: onlyOpus }),
+    ).toEqual(opus)
+  })
+
+  test("--model takes precedence over the config model", () => {
+    expect(configuredModel({ arg: "a/x", config: "b/y" })).toEqual({ providerID: "a", modelID: "x", source: "--model" })
+    expect(configuredModel({ config: "b/y/z" })).toEqual({ providerID: "b", modelID: "y/z", source: "config" })
+    expect(configuredModel({})).toBeUndefined()
   })
 
   test("a stored variant the new model does not offer is dropped", () => {
