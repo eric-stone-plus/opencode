@@ -1,6 +1,10 @@
 import { Context } from "effect"
 
-const opencodeOrigin = /^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/
+// Personal fork: upstream also trusted every https://*.opencode.ai origin so the
+// hosted web app could drive a local server. That handed any page on those
+// origins full API access; only local/desktop origins and explicit --cors
+// entries are trusted here.
+const localOrigin = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/
 
 export type CorsOptions = { readonly cors?: ReadonlyArray<string> }
 
@@ -10,12 +14,10 @@ export const CorsConfig = Context.Reference<CorsOptions | undefined>("@opencode/
 
 export function isAllowedCorsOrigin(input: string | undefined, opts?: CorsOptions) {
   if (!input) return true
-  if (input.startsWith("http://localhost:")) return true
-  if (input.startsWith("http://127.0.0.1:")) return true
-  if (input.startsWith("oc://renderer")) return true
+  if (localOrigin.test(input)) return true
+  if (input === "oc://renderer") return true
   if (input === "tauri://localhost" || input === "http://tauri.localhost" || input === "https://tauri.localhost")
     return true
-  if (opencodeOrigin.test(input)) return true
   return opts?.cors?.includes(input) ?? false
 }
 

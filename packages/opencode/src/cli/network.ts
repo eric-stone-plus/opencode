@@ -11,12 +11,12 @@ const options = {
   },
   hostname: {
     type: "string" as const,
-    describe: "hostname to listen on",
+    describe: "hostname to listen on (non-loopback requires OPENCODE_SERVER_PASSWORD)",
     default: "127.0.0.1",
   },
   mdns: {
     type: "boolean" as const,
-    describe: "enable mDNS service discovery (defaults hostname to 0.0.0.0)",
+    describe: "enable mDNS service discovery (defaults hostname to 0.0.0.0; requires OPENCODE_SERVER_PASSWORD)",
     default: false,
   },
   "mdns-domain": {

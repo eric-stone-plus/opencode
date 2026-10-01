@@ -10,6 +10,7 @@ import { disposeMiddleware } from "./routes/instance/httpapi/lifecycle"
 import { WebSocketTracker } from "./routes/instance/httpapi/websocket-tracker"
 import { PublicApi } from "./routes/instance/httpapi/public"
 import type { CorsOptions } from "@opencode-ai/server/cors"
+import { isLoopbackHostname } from "@opencode-ai/server/request-guard"
 import { lazy } from "@/util/lazy"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
@@ -68,7 +69,21 @@ export async function openapi() {
 
 export let url: URL | undefined
 
+// Anything reachable beyond this machine (0.0.0.0, a LAN address, --mdns) can
+// run shell commands and edit files, so it must require credentials. The
+// listener's auth reads process.env (see listenerLayer), so check the same.
+export function unsecuredListenError(opts: { hostname: string }) {
+  if (isLoopbackHostname(opts.hostname)) return
+  if (process.env.OPENCODE_SERVER_PASSWORD) return
+  return (
+    `Refusing to listen on non-loopback hostname "${opts.hostname}" without OPENCODE_SERVER_PASSWORD. ` +
+    `Set OPENCODE_SERVER_PASSWORD (and optionally OPENCODE_SERVER_USERNAME), or bind to 127.0.0.1.`
+  )
+}
+
 export async function listen(opts: ListenOptions): Promise<Listener> {
+  const unsecured = unsecuredListenError(opts)
+  if (unsecured) throw new Error(unsecured)
   const listener = await Effect.runPromise(listenEffect(opts))
   return {
     hostname: listener.hostname,

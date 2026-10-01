@@ -25,7 +25,7 @@ const layer = Layer.effect(
 
     const share = Effect.fn("SessionShare.share")(function* (sessionID: SessionID) {
       const conf = yield* cfg.get()
-      if (conf.share === "disabled") throw new Error("Sharing is disabled in configuration")
+      if (ShareNext.mode(conf.share) === "disabled") throw new Error("Sharing is disabled in configuration")
       const result = yield* shareNext.create(sessionID)
       yield* session.setShare({ sessionID, share: { url: result.url } })
       return result
@@ -40,7 +40,10 @@ const layer = Layer.effect(
       const result = yield* session.create(input)
       if (result.parentID) return result
       const conf = yield* cfg.get()
-      if (!(flags.autoShare || conf.share === "auto")) return result
+      const current = ShareNext.mode(conf.share)
+      // OPENCODE_AUTO_SHARE only upgrades an explicit opt-in to auto.
+      if (current === "disabled") return result
+      if (!(flags.autoShare || current === "auto")) return result
       yield* share(result.id).pipe(Effect.ignore, Effect.forkIn(scope))
       return result
     })

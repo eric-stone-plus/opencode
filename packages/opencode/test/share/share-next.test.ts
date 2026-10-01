@@ -97,7 +97,7 @@ describe("ShareNext", () => {
             expect(req.headers).toEqual({})
           }),
         ).pipe(Effect.provide(requestLayer(none))),
-      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+      { config: { share: "manual", enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 
@@ -171,7 +171,7 @@ describe("ShareNext", () => {
           expect(createRequests[0].url).toBe("https://legacy-share.example.com/api/share")
         }).pipe(Effect.provide(integrationLayer(client)))
       },
-      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+      { config: { share: "manual", enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 
@@ -206,20 +206,62 @@ describe("ShareNext", () => {
           ])
         }).pipe(Effect.provide(integrationLayer(client)))
       },
-      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+      { config: { share: "manual", enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 
   it.live("create fails on a non-ok response and does not persist a share", () =>
-    provideTmpdirInstance(() => {
-      const client = HttpClient.make((req) => Effect.succeed(json(req, { error: "bad" }, 500)))
-      return Effect.gen(function* () {
+    provideTmpdirInstance(
+      () => {
+        const client = HttpClient.make((req) => Effect.succeed(json(req, { error: "bad" }, 500)))
+        return Effect.gen(function* () {
+          const session = yield* (yield* Session.Service).create({ title: "test" })
+
+          const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.create(session.id)))
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          expect(yield* share(session.id)).toBeUndefined()
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { share: "manual" } },
+    ),
+  )
+
+  // Personal fork: sharing uploads transcripts, so it stays off unless the
+  // config opts in with share: "manual" | "auto".
+  it.live("create refuses without an explicit share opt-in and makes no request", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
         const session = yield* (yield* Session.Service).create({ title: "test" })
-
         const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.create(session.id)))
-
         expect(Exit.isFailure(exit)).toBe(true)
         expect(yield* share(session.id)).toBeUndefined()
+      }).pipe(Effect.provide(integrationLayer(none))),
+    ),
+  )
+
+  it.live("previously shared sessions stop syncing once sharing is not opted in", () =>
+    provideTmpdirInstance(() => {
+      const seen: string[] = []
+      const client = HttpClient.make((req) => {
+        seen.push(req.url)
+        return Effect.succeed(json(req, { ok: true }))
+      })
+      return Effect.gen(function* () {
+        const events = yield* EventV2Bridge.Service
+        const svc = yield* ShareNext.Service
+        const session = yield* Session.Service
+        const info = yield* session.create({ title: "first" })
+        const { db } = yield* Database.Service
+        yield* db
+          .insert(SessionShareTable)
+          .values({ session_id: info.id, id: "shr_old", url: "https://opncd.ai/share/old", secret: "sec_old" })
+          .run()
+          .pipe(Effect.orDie)
+        yield* svc.init()
+        yield* events.publish(Session.Event.Diff, { sessionID: info.id, diff: [] })
+        yield* Effect.sleep(1_500)
+        expect(seen).toEqual([])
       }).pipe(Effect.provide(integrationLayer(client)))
     }),
   )
@@ -318,7 +360,7 @@ describe("ShareNext", () => {
           ])
         }).pipe(Effect.provide(integrationLayer(client)))
       },
-      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+      { config: { share: "manual", enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 })

@@ -11,6 +11,7 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { ProviderAuthApiError } from "../groups/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { isJsonContentType, unsupportedMediaType } from "@opencode-ai/server/request-guard"
 
 function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R>) {
   return self.pipe(
@@ -82,6 +83,9 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       params: { providerID: ProviderV2.ID }
       request: HttpServerRequest.HttpServerRequest
     }) {
+      // Raw handler: enforce JSON like typed handlers do (415 otherwise).
+      const contentType = ctx.request.headers["content-type"]
+      if (!isJsonContentType(contentType)) return unsupportedMediaType(contentType)
       const body = yield* Effect.orDie(ctx.request.text)
       const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ProviderAuth.AuthorizeInput))(body).pipe(
         Effect.mapError(() => new ProviderAuthApiError({ name: "BadRequest", data: {} })),

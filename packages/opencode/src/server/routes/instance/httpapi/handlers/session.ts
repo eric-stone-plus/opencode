@@ -40,6 +40,7 @@ import {
 } from "../groups/session"
 import { ConflictError, PermissionNotFoundError, notFound } from "../errors"
 import * as SessionError from "./session-errors"
+import { isJsonContentType, unsupportedMediaType } from "@opencode-ai/server/request-guard"
 
 const tryParseJson = (text: string) =>
   Effect.try({
@@ -171,6 +172,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const createRaw = Effect.fn("SessionHttpApi.createRaw")(function* (ctx: {
       request: HttpServerRequest.HttpServerRequest
     }) {
+      // Raw handlers bypass HttpApi's content-type negotiation; refuse
+      // text/plain and form bodies so cross-site forms cannot create sessions.
+      const contentType = ctx.request.headers["content-type"]
+      if (!isJsonContentType(contentType)) return unsupportedMediaType(contentType)
       const body = yield* Effect.orDie(ctx.request.text)
       if (body.trim().length === 0) return yield* create({})
 
@@ -231,6 +236,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       request: HttpServerRequest.HttpServerRequest
     }) {
+      const contentType = ctx.request.headers["content-type"]
+      if (!isJsonContentType(contentType)) return unsupportedMediaType(contentType)
       const body = yield* Effect.orDie(ctx.request.text)
       if (body.trim().length === 0) return yield* fork({ params: ctx.params })
 

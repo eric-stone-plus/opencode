@@ -22,6 +22,13 @@ import { EventV2 } from "@opencode-ai/core/event"
 
 const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
 
+// Personal fork: sharing uploads full transcripts to opncd.ai (or the
+// enterprise/console host), so it is off unless the config explicitly opts in
+// with `share: "manual"` or `share: "auto"`.
+export function mode(share: "manual" | "auto" | "disabled" | undefined) {
+  return share ?? "disabled"
+}
+
 export type Api = {
   create: string
   sync: (shareID: string) => string
@@ -161,7 +168,8 @@ const layer = Layer.effect(
           ),
         )
 
-        if (disabled) return cache
+        // Sessions shared before sharing was turned off must not keep syncing.
+        if (disabled || mode((yield* cfg.get()).share) === "disabled") return cache
 
         const watch = <D extends EventV2.Definition>(
           def: D,
@@ -309,6 +317,7 @@ const layer = Layer.effect(
 
     const create = Effect.fn("ShareNext.create")(function* (sessionID: SessionID) {
       if (disabled) return { id: "", url: "", secret: "" }
+      if (mode((yield* cfg.get()).share) === "disabled") throw new Error("Sharing is disabled in configuration")
       yield* Effect.logInfo("creating share", { sessionID: sessionID })
       const req = yield* request()
       const result = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.create}`).pipe(
