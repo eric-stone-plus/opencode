@@ -1174,10 +1174,6 @@ export interface Interface {
   readonly getProvider: (providerID: ProviderV2.ID) => Effect.Effect<Info>
   readonly getModel: (providerID: ProviderV2.ID, modelID: ModelV2.ID) => Effect.Effect<Model, ModelNotFoundError>
   readonly getLanguage: (model: Model) => Effect.Effect<LanguageModelV3, ModelNotFoundError>
-  readonly closest: (
-    providerID: ProviderV2.ID,
-    query: string[],
-  ) => Effect.Effect<{ providerID: ProviderV2.ID; modelID: string } | undefined>
   readonly getSmallModel: (providerID: ProviderV2.ID) => Effect.Effect<Model | undefined>
   readonly defaultModel: () => Effect.Effect<{ providerID: ProviderV2.ID; modelID: ModelV2.ID }, DefaultModelError>
 }
@@ -1185,7 +1181,6 @@ export interface Interface {
 interface State {
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderV2.ID, Info>
-  catalog: Record<ProviderV2.ID, Info>
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
@@ -1421,8 +1416,13 @@ const layer = Layer.effect(
         const configProviders = Object.entries(cfg.provider ?? {})
         const disabled = new Set(cfg.disabled_providers ?? [])
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
+        // Fork policy: only providers declared in the config `provider` block are ever loaded.
+        // Env-var keys, auth.json entries, plugin providers and the models.dev registry can
+        // supply credentials/metadata for a declared provider, but never activate one on their own.
+        const declared = new Set(configProviders.map(([id]) => id))
 
         function isProviderAllowed(providerID: ProviderV2.ID): boolean {
+          if (!declared.has(providerID)) return false
           if (enabled && !enabled.has(providerID)) return false
           if (disabled.has(providerID)) return false
           return true
@@ -1434,7 +1434,7 @@ const layer = Layer.effect(
           if (!p || !models) continue
 
           const providerID = ProviderV2.ID.make(p.id)
-          if (disabled.has(providerID)) continue
+          if (!isProviderAllowed(providerID)) continue
 
           const provider = database[providerID]
           if (!provider) continue
@@ -1553,14 +1553,26 @@ const layer = Layer.effect(
             )
             parsed.models[modelID] = parsedModel
           }
+
+          // Registry models the user did not list inherit the declared provider-level adapter and
+          // endpoint, so models.dev metadata can never swap the transport of a declared provider.
+          for (const [modelID, model] of Object.entries(parsed.models)) {
+            if (provider.models?.[modelID]) continue
+            const npm = provider.npm ?? model.api.npm
+            const url = provider.api ?? model.api.url
+            if (npm === model.api.npm && url === model.api.url) continue
+            const next: Model = { ...model, api: { ...model.api, npm, url } }
+            if (npm !== model.api.npm) next.variants = mapValues(ProviderTransform.variants(next), (v) => v)
+            parsed.models[modelID] = next
+          }
           database[providerID] = parsed
         }
 
-        // load env
+        // load env (credentials only; activation requires a config declaration)
         const envs = yield* env.all()
         for (const [id, provider] of Object.entries(database)) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          if (!isProviderAllowed(providerID)) continue
           const apiKey = provider.env.map((item) => envs[item]).find(Boolean)
           if (!apiKey) continue
           mergeProvider(providerID, {
@@ -1573,7 +1585,7 @@ const layer = Layer.effect(
         const auths = yield* auth.all().pipe(Effect.orDie)
         for (const [id, provider] of Object.entries(auths)) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          if (!isProviderAllowed(providerID)) continue
           if (provider.type === "api") {
             mergeProvider(providerID, {
               source: "api",
@@ -1586,7 +1598,7 @@ const layer = Layer.effect(
         for (const plugin of plugins) {
           if (!plugin.auth) continue
           const providerID = ProviderV2.ID.make(plugin.auth.provider)
-          if (disabled.has(providerID)) continue
+          if (!isProviderAllowed(providerID)) continue
 
           const stored = yield* auth.get(providerID).pipe(Effect.orDie)
           if (!stored) continue
@@ -1605,7 +1617,8 @@ const layer = Layer.effect(
 
         for (const [id, fn] of Object.entries(custom(dep))) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          // `autoload: true` loaders (bedrock, vertex, ...) must not activate undeclared providers.
+          if (!isProviderAllowed(providerID)) continue
           const data = database[providerID]
           if (!data) {
             continue
@@ -1624,6 +1637,7 @@ const layer = Layer.effect(
         // load config - re-apply with updated data
         for (const [id, provider] of configProviders) {
           const providerID = ProviderV2.ID.make(id)
+          if (!isProviderAllowed(providerID)) continue
           const partial: Partial<Info> = { source: "config" }
           if (provider.env) partial.env = provider.env
           if (provider.name) partial.name = provider.name
@@ -1653,8 +1667,16 @@ const layer = Layer.effect(
           }
 
           const configProvider = cfg.provider?.[providerID]
+          // A non-empty `models` block is the exhaustive model list for that provider: registry
+          // models (models.dev) the user did not declare are neither selectable nor auto-picked.
+          const declaredModels = Object.keys(configProvider?.models ?? {})
+          const onlyDeclared = declaredModels.length > 0 ? new Set(declaredModels) : undefined
 
           for (const [modelID, model] of Object.entries(provider.models)) {
+            if (onlyDeclared && !onlyDeclared.has(modelID)) {
+              delete provider.models[modelID]
+              continue
+            }
             model.api.id = model.api.id ?? model.id ?? modelID
 
             if (
@@ -1698,7 +1720,6 @@ const layer = Layer.effect(
         return {
           models: languages,
           providers,
-          catalog,
           sdk,
           modelLoaders,
           varsLoaders,
@@ -1859,22 +1880,18 @@ const layer = Layer.effect(
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderV2.ID, modelID: ModelV2.ID) {
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
+      // Suggestions only ever name declared providers/models: the registry catalog is not a
+      // source of selectable models in this fork, and a miss is an error, never a substitute.
       if (!provider) {
-        const catalogProvider = s.catalog[providerID]
-        const suggestions = catalogProvider
-          ? modelSuggestions(catalogProvider, modelID, runtimeFlags.enableExperimentalModels)
-          : fuzzysort
-              .go(providerID, Object.keys({ ...s.catalog, ...s.providers }), { limit: 3, threshold: -10000 })
-              .map((m) => m.target)
+        const suggestions = fuzzysort
+          .go(providerID, Object.keys(s.providers), { limit: 3, threshold: -10000 })
+          .map((m) => m.target)
         return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
       }
 
       const info = provider.models[modelID]
       if (!info) {
-        const current = modelSuggestions(provider, modelID, runtimeFlags.enableExperimentalModels)
-        const suggestions = current.length
-          ? current
-          : modelSuggestions(s.catalog[providerID], modelID, runtimeFlags.enableExperimentalModels)
+        const suggestions = modelSuggestions(provider, modelID, runtimeFlags.enableExperimentalModels)
         return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
       }
       return info
@@ -1911,83 +1928,21 @@ const layer = Layer.effect(
       )
     })
 
-    const closest = Effect.fn("Provider.closest")(function* (providerID: ProviderV2.ID, query: string[]) {
-      const s = yield* InstanceState.get(state)
-      const provider = s.providers[providerID]
-      if (!provider) return undefined
-      for (const item of query) {
-        for (const modelID of Object.keys(provider.models)) {
-          if (modelID.includes(item)) return { providerID, modelID }
-        }
-      }
-      return undefined
-    })
-
-    const getSmallModel = Effect.fn("Provider.getSmallModel")(function* (providerID: ProviderV2.ID) {
+    // Fork policy: the small model is only ever the explicitly configured `small_model`, and only
+    // when it resolves to a declared provider/model. There is no family heuristic and no plugin
+    // override; callers fall back to the session's own model when this returns undefined.
+    const getSmallModel = Effect.fn("Provider.getSmallModel")(function* (_providerID: ProviderV2.ID) {
       const cfg = yield* config.get()
-
-      if (cfg.small_model) {
-        const parsed = parseModel(cfg.small_model)
-        return yield* getModel(parsed.providerID, parsed.modelID).pipe(
-          Effect.catchTag("ProviderModelNotFoundError", () => Effect.succeed(undefined)),
-        )
-      }
-
-      const s = yield* InstanceState.get(state)
-      const provider = s.providers[providerID]
-      if (!provider) return undefined
-
-      const experimental = yield* plugin.trigger<"experimental.provider.small_model">(
-        "experimental.provider.small_model",
-        { provider: toPublicInfo(provider) },
-        { model: undefined },
+      if (!cfg.small_model) return undefined
+      const parsed = parseModel(cfg.small_model)
+      return yield* getModel(parsed.providerID, parsed.modelID).pipe(
+        Effect.catchTag("ProviderModelNotFoundError", (error) =>
+          Effect.logWarning("configured small_model is not a declared provider/model, using the session model", {
+            small_model: cfg.small_model,
+            message: error.message,
+          }).pipe(Effect.as(undefined)),
+        ),
       )
-      if (experimental.model) {
-        return {
-          ...experimental.model,
-          id: ModelV2.ID.make(experimental.model.id),
-          providerID: ProviderV2.ID.make(experimental.model.providerID),
-        }
-      }
-
-      // TODO: Remove these provider-specific assumptions once model syncing reliably reports available deployments.
-      if (providerID === ProviderV2.ID.azure || providerID === ProviderV2.ID.make("azure-cognitive-services")) {
-        return undefined
-      }
-
-      const priority = providerID.startsWith("github-copilot")
-        ? ["gpt-mini", ...smallModelFamilyPriority]
-        : smallModelFamilyPriority
-      const models = sortBy(
-        Object.values(provider.models),
-        [(model) => model.release_date, "desc"],
-        [(model) => model.id, "desc"],
-      )
-      for (const family of priority) {
-        const candidates = models.filter((model) => model.family === family)
-        if (providerID === ProviderV2.ID.amazonBedrock) {
-          const crossRegionPrefixes = ["global.", "us.", "eu."]
-
-          const globalMatch = candidates.find((model) => model.id.startsWith("global."))
-          if (globalMatch) return globalMatch
-
-          const region = provider.options?.region
-          if (region) {
-            const regionPrefix = region.split("-")[0]
-            if (regionPrefix === "us" || regionPrefix === "eu") {
-              const regionalMatch = candidates.find((model) => model.id.startsWith(`${regionPrefix}.`))
-              if (regionalMatch) return regionalMatch
-            }
-          }
-
-          const unprefixed = candidates.find((model) => !crossRegionPrefixes.some((p) => model.id.startsWith(p)))
-          if (unprefixed) return unprefixed
-          continue
-        }
-        if (candidates[0]) return candidates[0]
-      }
-
-      return undefined
     })
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
@@ -2014,8 +1969,10 @@ const layer = Layer.effect(
         return { providerID: entry.providerID, modelID: entry.modelID }
       }
 
-      const configured = Object.keys(cfg.provider ?? {})
-      const provider = Object.values(s.providers).find((p) => configured.length === 0 || configured.includes(p.id))
+      // Loaded providers are exactly the declared ones; pick in config declaration order.
+      const provider = Object.keys(cfg.provider ?? {})
+        .map((id) => s.providers[ProviderV2.ID.make(id)])
+        .find((item) => item !== undefined)
       if (!provider) return yield* new NoProvidersError()
       const [model] = sort(Object.values(provider.models))
       if (!model) return yield* new NoModelsError({ providerID: provider.id })
@@ -2025,12 +1982,11 @@ const layer = Layer.effect(
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
+    return Service.of({ list, getProvider, getModel, getLanguage, getSmallModel, defaultModel })
   }),
 )
 
-const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
-const smallModelFamilyPriority = ["gemini-flash", "gpt-nano", "claude-haiku"]
+const priority = ["gpt-5", "claude-sonnet-4", "gemini-3-pro"]
 export function sort<T extends { id: string }>(models: T[]) {
   return sortBy(
     models,

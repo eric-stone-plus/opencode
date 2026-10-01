@@ -106,16 +106,81 @@ const alphaProviderConfig = {
   },
 }
 
-it.instance("provider loaded from env variable", () =>
+it.instance(
+  "declared provider takes its key from env variable",
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
     const providers = yield* list
     expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    // Provider should retain its connection source even if custom loaders
-    // merge additional options.
-    expect(providers[ProviderV2.ID.anthropic].source).toBe("env")
+    expect(providers[ProviderV2.ID.anthropic].key).toBe("test-api-key")
     expect(providers[ProviderV2.ID.anthropic].options.headers["anthropic-beta"]).toBeDefined()
   }),
+  { config: { provider: { anthropic: {} } } },
+)
+
+// Fork policy: env keys, auth.json entries and autoload loaders never activate a provider that the
+// config `provider` block does not declare.
+it.instance(
+  "env variable API keys never activate undeclared providers",
+  Effect.gen(function* () {
+    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("OPENROUTER_API_KEY", "test-openrouter-key")
+    yield* setProcessEnv("GEMINI_API_KEY", "test-gemini-key")
+    yield* setProcessEnv("GOOGLE_GENERATIVE_AI_API_KEY", "test-gemini-key")
+    const providers = yield* list
+    expect(Object.keys(providers)).toEqual(["custom-provider"])
+  }),
+  {
+    config: {
+      provider: {
+        "custom-provider": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://api.custom.com/v1",
+          models: { "custom-model": { name: "Custom Model" } },
+          options: { apiKey: "custom-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "env variable API keys activate nothing when no provider is declared",
+  Effect.gen(function* () {
+    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("OPENROUTER_API_KEY", "test-openrouter-key")
+    expect(yield* list).toEqual({})
+    const error = yield* Provider.use.defaultModel().pipe(Effect.flip)
+    expect(error).toBeInstanceOf(Provider.NoProvidersError)
+  }),
+)
+
+it.instance(
+  "auth.json credentials never activate undeclared providers",
+  Effect.gen(function* () {
+    yield* setProcessEnv(
+      "OPENCODE_AUTH_CONTENT",
+      JSON.stringify({
+        openrouter: { type: "api", key: "sk-or" },
+        anthropic: { type: "api", key: "sk-ant" },
+        "custom-provider": { type: "api", key: "sk-custom" },
+      }),
+    )
+    const providers = yield* list
+    expect(Object.keys(providers)).toEqual(["custom-provider"])
+    expect(providers[ProviderV2.ID.make("custom-provider")].key).toBe("sk-custom")
+  }),
+  {
+    config: {
+      provider: {
+        "custom-provider": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://api.custom.com/v1",
+          models: { "custom-model": { name: "Custom Model" } },
+        },
+      },
+    },
+  },
 )
 
 it.instance(
@@ -146,7 +211,19 @@ it.instance(
     expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
     expect(providers[ProviderV2.ID.openai]).toBeUndefined()
   }),
-  { config: { enabled_providers: ["anthropic"] } },
+  { config: { enabled_providers: ["anthropic"], provider: { anthropic: {}, openai: {} } } },
+)
+
+it.instance(
+  "enabled_providers cannot activate a provider the config does not declare",
+  Effect.gen(function* () {
+    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("OPENAI_API_KEY", "test-openai-key")
+    const providers = yield* list
+    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
+    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
+  }),
+  { config: { enabled_providers: ["anthropic", "openai"], provider: { anthropic: {} } } },
 )
 
 it.instance(
@@ -298,7 +375,8 @@ it.instance(
   { config: { provider: { anthropic: { options: { timeout: 60000, headerTimeout: 10000, chunkTimeout: 15000 } } } } },
 )
 
-it.instance("getModel returns model for valid provider/model", () =>
+it.instance(
+  "getModel returns model for valid provider/model",
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
     const provider = yield* Provider.Service
@@ -309,6 +387,7 @@ it.instance("getModel returns model for valid provider/model", () =>
     const language = yield* provider.getLanguage(model)
     expect(language).toBeDefined()
   }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance("getModel throws ModelNotFoundError for invalid model", () =>
@@ -344,13 +423,52 @@ test("parseModel handles model IDs with slashes", () => {
   expect(String(result.modelID)).toBe("anthropic/claude-3-opus")
 })
 
-it.instance("defaultModel returns first available model when no config set", () =>
+it.instance(
+  "defaultModel returns a declared model when no config model is set",
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
     const model = yield* Provider.use.defaultModel()
-    expect(model.providerID).toBeDefined()
-    expect(model.modelID).toBeDefined()
+    expect(String(model.providerID)).toBe("custom-provider")
+    expect(String(model.modelID)).toBe("custom-model")
   }),
+  {
+    config: {
+      provider: {
+        "custom-provider": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://api.custom.com/v1",
+          models: { "custom-model": { name: "Custom Model" } },
+          options: { apiKey: "custom-key" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "defaultModel picks the first declared provider in config order",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.defaultModel()
+    expect(String(model.providerID)).toBe("second-declared")
+  }),
+  {
+    config: {
+      provider: {
+        "second-declared": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://b.example.com/v1",
+          models: { b: { name: "B" } },
+          options: { apiKey: "k" },
+        },
+        "first-alpha": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://a.example.com/v1",
+          models: { a: { name: "A" } },
+          options: { apiKey: "k" },
+        },
+      },
+    },
+  },
 )
 
 it.instance(
@@ -365,12 +483,11 @@ it.instance(
 )
 
 it.instance(
-  "defaultModel treats empty provider config as no allowlist",
+  "defaultModel never falls back to env-keyed providers when none are declared",
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
-    const model = yield* Provider.use.defaultModel()
-    expect(model.providerID).toBeDefined()
-    expect(model.modelID).toBeDefined()
+    const error = yield* Provider.use.defaultModel().pipe(Effect.flip)
+    expect(error).toBeInstanceOf(Provider.NoProvidersError)
   }),
   { config: { provider: {} } },
 )
@@ -458,23 +575,6 @@ it.instance(
     expect(providers[ProviderV2.ID.anthropic]).toBeUndefined()
   }),
   { config: { provider: { anthropic: { options: { apiKey: "test-api-key" }, whitelist: ["nonexistent-model"] } } } },
-)
-
-it.instance("closest finds model by partial match", () =>
-  Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const result = yield* Provider.use.closest(ProviderV2.ID.anthropic, ["sonnet-4"])
-    expect(result).toBeDefined()
-    expect(String(result?.providerID)).toBe("anthropic")
-    expect(String(result?.modelID)).toContain("sonnet-4")
-  }),
-)
-
-it.instance("closest returns undefined for nonexistent provider", () =>
-  Effect.gen(function* () {
-    const result = yield* Provider.use.closest(ProviderV2.ID.make("nonexistent"), ["model"])
-    expect(result).toBeUndefined()
-  }),
 )
 
 it.instance(
@@ -701,131 +801,77 @@ it.instance(
   },
 )
 
-it.instance("getSmallModel returns appropriate small model", () =>
+const smallModelProvider = {
+  name: "Test Provider",
+  npm: "@ai-sdk/openai-compatible",
+  models: {
+    "big-model": { family: "big", release_date: "2026-01-01" },
+    "new-flash": { family: "gemini-flash", release_date: "2026-01-01" },
+    "claude-haiku": { family: "claude-haiku", release_date: "2026-06-01" },
+    "gpt-5-nano": { family: "gpt-nano", release_date: "2026-06-01" },
+  },
+  options: { apiKey: "test-key" },
+}
+
+// Fork policy: no family heuristic and no plugin override. Without an explicit small_model the
+// caller must use the session's own model, so a "flash"/"haiku"/"nano" sibling is never picked.
+it.instance(
+  "getSmallModel never infers a small model from model families",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
+    expect(model).toBeUndefined()
+  }),
+  { config: { provider: { "test-provider": smallModelProvider } } },
+)
+
+it.instance(
+  "getSmallModel never infers a small model for env-keyed registry providers",
   Effect.gen(function* () {
     yield* set("ANTHROPIC_API_KEY", "test-api-key")
     const model = yield* Provider.use.getSmallModel(ProviderV2.ID.anthropic)
-    expect(model).toBeDefined()
-    expect(model?.id).toContain("haiku")
-  }),
-)
-
-it.instance("getSmallModel prefers Gemini for Google Vertex", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_VERTEX_PROJECT", "test-project")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.googleVertex)
-    expect(model).toBeDefined()
-    expect(model?.id).toContain("gemini")
-  }),
-)
-
-it.instance(
-  "getSmallModel selects the latest model in the preferred family",
-  Effect.gen(function* () {
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
-    expect(model?.id).toBe(ModelV2.ID.make("new-flash"))
-  }),
-  {
-    config: {
-      provider: {
-        "test-provider": {
-          name: "Test Provider",
-          npm: "@ai-sdk/openai-compatible",
-          models: {
-            "old-flash": { family: "gemini-flash", release_date: "2025-01-01" },
-            "new-flash": { family: "gemini-flash", release_date: "2026-01-01" },
-            "newer-haiku": { family: "claude-haiku", release_date: "2026-06-01" },
-          },
-          options: { apiKey: "test-key" },
-        },
-      },
-    },
-  },
-)
-
-it.instance(
-  "getSmallModel matches exact model families",
-  Effect.gen(function* () {
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
-    expect(model?.id).toBe(ModelV2.ID.make("claude-haiku"))
-  }),
-  {
-    config: {
-      provider: {
-        "test-provider": {
-          name: "Test Provider",
-          npm: "@ai-sdk/openai-compatible",
-          models: {
-            "glm-flash": { family: "glm-flash", release_date: "2026-06-01" },
-            "claude-haiku": { family: "claude-haiku", release_date: "2026-01-01" },
-          },
-          options: { apiKey: "test-key" },
-        },
-      },
-    },
-  },
-)
-
-it.instance(
-  "getSmallModel ignores model IDs without family metadata",
-  Effect.gen(function* () {
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
     expect(model).toBeUndefined()
   }),
-  {
-    config: {
-      provider: {
-        "test-provider": {
-          name: "Test Provider",
-          npm: "@ai-sdk/openai-compatible",
-          models: {
-            "gpt-5-nano": { release_date: "2026-01-01" },
-          },
-          options: { apiKey: "test-key" },
-        },
-      },
-    },
-  },
-)
-
-it.instance("getSmallModel skips inferred models for Azure", () =>
-  Effect.gen(function* () {
-    yield* set("AZURE_RESOURCE_NAME", "test-resource")
-    yield* set("AZURE_API_KEY", "test-key")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.azure)
-    expect(model).toBeUndefined()
-  }),
-)
-
-it.instance("getSmallModel skips inferred models for Azure Cognitive Services", () =>
-  Effect.gen(function* () {
-    yield* set("AZURE_COGNITIVE_SERVICES_RESOURCE_NAME", "test-resource")
-    yield* set("AZURE_COGNITIVE_SERVICES_API_KEY", "test-key")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("azure-cognitive-services"))
-    expect(model).toBeUndefined()
-  }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance(
   "getSmallModel respects config small_model override",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.anthropic)
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
     expect(model).toBeDefined()
-    expect(String(model?.providerID)).toBe("anthropic")
-    expect(String(model?.id)).toBe("claude-sonnet-4-6")
+    expect(String(model?.providerID)).toBe("test-provider")
+    expect(String(model?.id)).toBe("new-flash")
   }),
-  { config: { small_model: "anthropic/claude-sonnet-4-6" } },
+  { config: { small_model: "test-provider/new-flash", provider: { "test-provider": smallModelProvider } } },
+)
+
+it.instance(
+  "getSmallModel returns the configured small_model even when asked about another provider",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("other"))
+    expect(String(model?.providerID)).toBe("test-provider")
+    expect(String(model?.id)).toBe("big-model")
+  }),
+  { config: { small_model: "test-provider/big-model", provider: { "test-provider": smallModelProvider } } },
 )
 
 it.instance(
   "getSmallModel ignores invalid config small_model",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.anthropic)
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
     expect(model).toBeUndefined()
   }),
-  { config: { small_model: "anthropic/not-a-real-model" } },
+  { config: { small_model: "test-provider/not-a-real-model", provider: { "test-provider": smallModelProvider } } },
+)
+
+it.instance(
+  "getSmallModel ignores a small_model on an undeclared provider even when its key is in env",
+  Effect.gen(function* () {
+    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
+    expect(model).toBeUndefined()
+  }),
+  { config: { small_model: "anthropic/claude-haiku-4-5", provider: { "test-provider": smallModelProvider } } },
 )
 
 test("provider.sort prioritizes preferred models", () => {
@@ -1029,7 +1075,11 @@ it.instance(
   {
     // enabled_providers takes precedence — only these are considered
     // Then disabled_providers filters from the enabled set
-    config: { enabled_providers: ["anthropic", "openai"], disabled_providers: ["openai"] },
+    config: {
+      enabled_providers: ["anthropic", "openai"],
+      disabled_providers: ["openai"],
+      provider: { anthropic: {}, openai: {}, google: {} },
+    },
   },
 )
 
@@ -1140,6 +1190,7 @@ it.instance("getModel returns consistent results", () =>
     expect(model1.id).toEqual(model2.id)
     expect(model1).toEqual(model2)
   }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance(
@@ -1173,6 +1224,7 @@ it.instance("ModelNotFoundError includes suggestions for typos", () =>
     expect(error.message).toContain("Model not found: anthropic/claude-sonet-4")
     expect(error.message).toContain("Did you mean:")
   }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance("ModelNotFoundError for provider includes suggestions", () =>
@@ -1184,17 +1236,33 @@ it.instance("ModelNotFoundError for provider includes suggestions", () =>
     expect(error.suggestions).toBeDefined()
     expect(error.suggestions).toContain("anthropic")
   }),
+  { config: { provider: { anthropic: {} } } },
 )
 
-it.instance("ModelNotFoundError suggests catalog models for unloaded providers", () =>
+// Fork policy: suggestions only ever name declared providers/models, never registry entries.
+it.instance(
+  "ModelNotFoundError never suggests registry models of undeclared providers",
   Effect.gen(function* () {
-    yield* remove("ANTHROPIC_API_KEY")
+    yield* set("ANTHROPIC_API_KEY", "test-api-key")
     const error = yield* Provider.use
       .getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-haiku-fake-model"))
       .pipe(Effect.flip)
     if (!Provider.ModelNotFoundError.isInstance(error)) throw error
-    expect(error.suggestions ?? []).toEqual(expect.arrayContaining([expect.stringContaining("claude")]))
+    expect(error.suggestions ?? []).toEqual([])
   }),
+  { config: { provider: { "custom-provider": alphaProviderConfig.provider["custom-provider"] } } },
+)
+
+it.instance(
+  "ModelNotFoundError is raised for undeclared registry models instead of substituting one",
+  Effect.gen(function* () {
+    const error = yield* Provider.use
+      .getModel(ProviderV2.ID.make("custom-provider"), ModelV2.ID.make("alpha-model"))
+      .pipe(Effect.flip)
+    if (!Provider.ModelNotFoundError.isInstance(error)) throw error
+    expect(error.suggestions ?? []).not.toContain("alpha-model")
+  }),
+  { config: alphaProviderConfig },
 )
 
 it.instance("getProvider returns undefined for nonexistent provider", () =>
@@ -1211,24 +1279,7 @@ it.instance("getProvider returns provider info", () =>
     expect(provider).toBeDefined()
     expect(String(provider?.id)).toBe("anthropic")
   }),
-)
-
-it.instance("closest returns undefined when no partial match found", () =>
-  Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const result = yield* Provider.use.closest(ProviderV2.ID.anthropic, ["nonexistent-xyz-model"])
-    expect(result).toBeUndefined()
-  }),
-)
-
-it.instance("closest checks multiple query terms in order", () =>
-  Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    // First term won't match, second will
-    const result = yield* Provider.use.closest(ProviderV2.ID.anthropic, ["nonexistent", "haiku"])
-    expect(result).toBeDefined()
-    expect(result?.modelID).toContain("haiku")
-  }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance(
@@ -1608,6 +1659,7 @@ it.instance("model variants are generated for reasoning models", () =>
     expect(model.variants).toBeDefined()
     expect(Object.keys(model.variants!).length).toBeGreaterThan(0)
   }),
+  { config: { provider: { anthropic: {} } } },
 )
 
 it.instance(
@@ -1872,6 +1924,7 @@ it.instance("Google Vertex: uses REP endpoint for Claude continental multi-regio
       "https://aiplatform.eu.rep.googleapis.com/v1/projects/test-project/locations/eu/publishers/anthropic/models",
     )
   }),
+  { config: { provider: { "google-vertex": {} } } },
 )
 
 it.instance("Google Vertex Anthropic: uses REP endpoint for continental multi-regions", () =>
@@ -1888,6 +1941,7 @@ it.instance("Google Vertex Anthropic: uses REP endpoint for continental multi-re
       "https://aiplatform.us.rep.googleapis.com/v1/projects/test-project/locations/us/publishers/anthropic/models",
     )
   }),
+  { config: { provider: { "google-vertex-anthropic": {} } } },
 )
 
 it.instance("Google Vertex: keeps regional Claude endpoints unchanged", () =>
@@ -1904,6 +1958,7 @@ it.instance("Google Vertex: keeps regional Claude endpoints unchanged", () =>
       "https://europe-west1-aiplatform.googleapis.com/v1/projects/test-project/locations/europe-west1/publishers/anthropic/models",
     )
   }),
+  { config: { provider: { "google-vertex": {} } } },
 )
 
 it.instance("Google Vertex: uses REP endpoint for Gemini continental multi-regions", () =>
@@ -1917,6 +1972,7 @@ it.instance("Google Vertex: uses REP endpoint for Gemini continental multi-regio
       "https://aiplatform.eu.rep.googleapis.com/v1beta1/projects/test-project/locations/eu/publishers/google",
     )
   }),
+  { config: { provider: { "google-vertex": {} } } },
 )
 
 it.instance("Google Vertex: keeps regional Gemini endpoints unchanged", () =>
@@ -1930,6 +1986,7 @@ it.instance("Google Vertex: keeps regional Gemini endpoints unchanged", () =>
       "https://europe-west1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/europe-west1/publishers/google",
     )
   }),
+  { config: { provider: { "google-vertex": {} } } },
 )
 
 it.instance("cloudflare-ai-gateway loads with env variables", () =>
@@ -1940,6 +1997,7 @@ it.instance("cloudflare-ai-gateway loads with env variables", () =>
     const providers = yield* list
     expect(providers[ProviderV2.ID.make("cloudflare-ai-gateway")]).toBeDefined()
   }),
+  { config: { provider: { "cloudflare-ai-gateway": {} } } },
 )
 
 it.instance(
@@ -2059,6 +2117,7 @@ it.instance(
     expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
     expect(providers[ProviderV2.ID.openai]).toBeUndefined()
   }),
+  { config: { provider: { anthropic: {}, openai: {} } } },
 )
 
 const authFallbackConfig = (options: Record<string, unknown>) => ({
@@ -2114,4 +2173,101 @@ it.instance(
     expect(languageAuthorization(language)).toBe("Bearer auth-store-key")
   }),
   { config: authFallbackConfig({}) },
+)
+
+// Fork policy: a declared provider's `models` block is the exhaustive model list; models.dev
+// entries the user did not declare are neither selectable nor auto-picked.
+it.instance(
+  "declared models block hides undeclared registry models",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const provider = providers[ProviderV2.ID.make("zhipuai-coding-plan")]
+    expect(Object.keys(provider.models)).toEqual(["glm-5.3"])
+    const missing = yield* Provider.use
+      .getModel(ProviderV2.ID.make("zhipuai-coding-plan"), ModelV2.ID.make("glm-4.5-air"))
+      .pipe(Effect.flip)
+    expect(missing).toBeInstanceOf(Provider.ModelNotFoundError)
+    const model = yield* Provider.use.defaultModel()
+    expect(String(model.modelID)).toBe("glm-5.3")
+  }),
+  {
+    config: {
+      provider: {
+        "zhipuai-coding-plan": {
+          npm: "@ai-sdk/openai-compatible",
+          options: { apiKey: "k", baseURL: "https://open.bigmodel.cn/api/coding/paas/v4" },
+          models: { "glm-5.3": { name: "GLM-5.3" } },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "config npm and baseURL win over registry metadata for declared providers",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const provider = providers[ProviderV2.ID.make("zhipuai-coding-plan")]
+    // Without a models block the registry list stays, but every model rides the declared transport.
+    expect(Object.keys(provider.models).length).toBeGreaterThan(1)
+    for (const model of Object.values(provider.models)) {
+      expect(model.api.npm).toBe("@ai-sdk/anthropic")
+      expect(model.api.url).toBe("https://user.example.com/v1")
+    }
+    const language = yield* Provider.use.getLanguage(provider.models["glm-4.7"])
+    expect(languageBaseURL(language)).toBe("https://user.example.com/v1")
+  }),
+  {
+    config: {
+      provider: {
+        "zhipuai-coding-plan": {
+          npm: "@ai-sdk/anthropic",
+          api: "https://user.example.com/v1",
+          options: { apiKey: "k" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "config options.baseURL wins over the registry api url",
+  Effect.gen(function* () {
+    const model = yield* Provider.use.getModel(ProviderV2.ID.make("zhipuai-coding-plan"), ModelV2.ID.make("glm-5.3"))
+    const language = yield* Provider.use.getLanguage(model)
+    const url = (language as unknown as { config: { url: (input: { path: string; modelId: string }) => string } }).config.url(
+      { path: "/chat/completions", modelId: "glm-5.3" },
+    )
+    expect(url).toBe("https://user.example.com/v4/chat/completions")
+  }),
+  {
+    config: {
+      provider: {
+        "zhipuai-coding-plan": {
+          options: { apiKey: "k", baseURL: "https://user.example.com/v4" },
+          models: { "glm-5.3": { name: "GLM-5.3" } },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "autoload loaders and plugin auth never activate undeclared providers",
+  Effect.gen(function* () {
+    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
+    yield* set("CLOUDFLARE_ACCOUNT_ID", "test-account")
+    yield* set("CLOUDFLARE_GATEWAY_ID", "test-gateway")
+    yield* set("CLOUDFLARE_API_TOKEN", "test-token")
+    yield* setProcessEnv(
+      "OPENCODE_AUTH_CONTENT",
+      JSON.stringify({
+        "github-copilot": { type: "oauth", refresh: "r", access: "a", expires: 0 },
+        openai: { type: "oauth", refresh: "r", access: "a", expires: 0 },
+      }),
+    )
+    const providers = yield* list
+    expect(Object.keys(providers)).toEqual(["custom-provider"])
+  }),
+  { config: { provider: { "custom-provider": alphaProviderConfig.provider["custom-provider"] } } },
 )

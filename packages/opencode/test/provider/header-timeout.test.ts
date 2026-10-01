@@ -237,6 +237,7 @@ it.live("OpenAI API auth gets default headerTimeout", () =>
             const openai = yield* provider.getProvider(ProviderV2.ID.openai)
             expect(openai.options.headerTimeout).toBe(300_000)
           }),
+          { config: { provider: { openai: {} } } },
         )
       }),
       { openai: { type: "api", key: "sk-test" } },

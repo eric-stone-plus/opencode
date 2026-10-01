@@ -375,7 +375,8 @@ describe("provider HttpApi", () => {
       expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
       expect(hasNonZeroModelCost(configBody, "providers", "google")).toBe(true)
     }),
-    { ...projectOptions, init: writeFunctionOptionsPlugin },
+    // Providers only load when declared in config (fork policy); auth.json alone never activates google.
+    { config: { ...projectOptions.config, provider: { google: {} } }, init: writeFunctionOptionsPlugin },
   )
 
   it.instance(
@@ -396,6 +397,6 @@ describe("provider HttpApi", () => {
       expect(hasProviderMutationMarker(configBody, "providers", "google")).toBe(false)
       expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
     }),
-    { ...projectOptions, init: writeProviderModelsMutationPlugin },
+    { config: { ...projectOptions.config, provider: { google: {} } }, init: writeProviderModelsMutationPlugin },
   )
 })

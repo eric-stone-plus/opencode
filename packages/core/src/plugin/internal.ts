@@ -31,6 +31,7 @@ import { AgentPlugin } from "./agent"
 import { CommandPlugin } from "./command"
 import { ModelsDevPlugin } from "./models-dev"
 import { ProviderPlugins } from "./provider"
+import { DeclaredProvidersPlugin } from "./provider/declared"
 import { SkillPlugin } from "./skill"
 import { VariantPlugin } from "./variant"
 
@@ -119,6 +120,8 @@ const layer = Layer.effectDiscard(
         yield* add(ConfigExternalPlugin.Plugin)
         yield* add(ConfigProviderPlugin.Plugin)
         yield* add(VariantPlugin.Plugin)
+        // Must stay last: drops every provider/model the config did not declare.
+        yield* add(DeclaredProvidersPlugin)
       }),
     ).pipe(Effect.withSpan("PluginInternal.boot"), Effect.forkScoped({ startImmediately: true }))
   }),

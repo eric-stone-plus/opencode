@@ -65,9 +65,6 @@ export namespace ProviderTest {
           getLanguage: Effect.fn("TestProvider.getLanguage")(() =>
             Effect.die(new Error("ProviderTest.getLanguage not configured")),
           ),
-          closest: Effect.fn("TestProvider.closest")((providerID) =>
-            Effect.succeed(providerID === row.id ? { providerID: row.id, modelID: mdl.id } : undefined),
-          ),
           getSmallModel: Effect.fn("TestProvider.getSmallModel")((providerID) =>
             Effect.succeed(providerID === row.id ? mdl : undefined),
           ),

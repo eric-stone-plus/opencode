@@ -41,7 +41,7 @@ const withAuth = <A, E, R>(metadata: Record<string, string> | undefined, effect:
   )
 
 it.instance(
-  "digitalocean provider autoloads from DIGITALOCEAN_ACCESS_TOKEN",
+  "declared digitalocean provider loads its key from DIGITALOCEAN_ACCESS_TOKEN",
   () =>
     withEnv(
       { DIGITALOCEAN_ACCESS_TOKEN: "test-token" },
@@ -49,7 +49,8 @@ it.instance(
         const provider = yield* Provider.Service
         const providers = yield* provider.list()
         expect(providers[DIGITALOCEAN]).toBeDefined()
-        expect(providers[DIGITALOCEAN].source).toBe("env")
+        // Declared providers always report the config source; env only supplies the key.
+        expect(providers[DIGITALOCEAN].source).toBe("config")
         const baseModel = Object.values(providers[DIGITALOCEAN].models)[0]
         expect(baseModel.api.url).toBe("https://inference.do-ai.run/v1")
         expect(baseModel.api.npm).toBe("@ai-sdk/openai-compatible")
@@ -57,7 +58,7 @@ it.instance(
         expect(routerEntries.length).toBe(0)
       }),
     ),
-  { config: {} },
+  { config: { provider: { digitalocean: {} } } },
 )
 
 it.instance(
@@ -84,7 +85,7 @@ it.instance(
         expect(models["router:other-router"]).toBeDefined()
       }),
     ),
-  { config: {} },
+  { config: { provider: { digitalocean: {} } } },
 )
 
 it.instance(
@@ -104,7 +105,7 @@ it.instance(
         expect(models["router:stale-router"]).toBeDefined()
       }),
     ),
-  { config: {} },
+  { config: { provider: { digitalocean: {} } } },
 )
 
 it.instance(
@@ -118,6 +119,19 @@ it.instance(
         const models = providers[DIGITALOCEAN].models
         expect(Object.keys(models).length).toBeGreaterThan(0)
         expect(Object.keys(models).filter((id) => id.startsWith("router:")).length).toBe(0)
+      }),
+    ),
+  { config: { provider: { digitalocean: {} } } },
+)
+
+it.instance(
+  "digitalocean is never activated by DIGITALOCEAN_ACCESS_TOKEN alone when undeclared",
+  () =>
+    withEnv(
+      { DIGITALOCEAN_ACCESS_TOKEN: "test-token" },
+      Effect.gen(function* () {
+        const providers = yield* (yield* Provider.Service).list()
+        expect(providers[DIGITALOCEAN]).toBeUndefined()
       }),
     ),
   { config: {} },

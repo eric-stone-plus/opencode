@@ -854,8 +854,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     (id.includes("glm") && !glm52Or53) ||
     id.includes("kimi") ||
     id.includes("k2p") ||
-    id.includes("qwen") ||
-    id.includes("big-pickle")
+    id.includes("qwen")
   )
     return {}
 
