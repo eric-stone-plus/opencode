@@ -6,6 +6,7 @@ let lastChange = null
 let initializeParams = null
 let diagnosticRequestCount = 0
 let registeredCapability = false
+const closed = []
 const pendingClientRequests = new Map()
 let pullConfig = {
   delayMs: 0,
@@ -148,6 +149,23 @@ function handle(raw) {
     maybeRegister("didChange")
     return
   }
+
+  if (data.method === "textDocument/didClose") {
+    closed.push(data.params?.textDocument?.uri)
+    return
+  }
+
+  if (data.method === "test/get-closed") {
+    sendResponse(data.id, closed)
+    return
+  }
+
+  // Never answers: simulates a hung server.
+  if (data.method === "test/hang") return
+
+  if (data.method === "test/exit") process.exit(1)
+
+  if (data.method === "textDocument/hover" && data.params?.position?.line === 4242) process.exit(1)
 
   if (data.method === "test/trigger") {
     const method = data.params && data.params.method

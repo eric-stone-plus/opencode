@@ -1,6 +1,11 @@
 import path from "path"
 import { pathToFileURL, fileURLToPath } from "url"
-import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from "vscode-jsonrpc/node"
+import {
+  CancellationTokenSource,
+  createMessageConnection,
+  StreamMessageReader,
+  StreamMessageWriter,
+} from "vscode-jsonrpc/node"
 import type { Diagnostic as VSCodeDiagnostic } from "vscode-languageserver-types"
 import { Process } from "@/util/process"
 import { LANGUAGE_EXTENSIONS } from "./language"
@@ -16,6 +21,12 @@ const DIAGNOSTICS_FULL_WAIT_TIMEOUT_MS = 10_000
 const DIAGNOSTICS_REQUEST_TIMEOUT_MS = 3_000
 
 const INITIALIZE_TIMEOUT_MS = 45_000
+// Upper bound for any request opencode sends (hover, definition, symbols, ...).
+// A hung server must not block a tool call forever.
+export const REQUEST_TIMEOUT_MS = 30_000
+// Servers keep every opened document in memory; close the least recently
+// touched ones once a long-running session has opened more than this.
+export const MAX_OPEN_DOCUMENTS = 200
 
 // LSP spec constants
 const FILE_CHANGE_CREATED = 1
@@ -134,6 +145,29 @@ export async function create(input: {
     new StreamMessageWriter(input.server.process.stdin as any),
   )
   input.server.process.stderr?.resume()
+
+  // --- Liveness ---
+
+  // Set once the server process exits or the connection closes. A dead client is
+  // dropped by the LSP service and respawned on next use.
+  let dead = false
+  let closing = false
+  const deathListeners = new Set<() => void>()
+  const markDead = () => {
+    if (dead) return
+    dead = true
+    try {
+      connection.dispose()
+    } catch {}
+    void Process.stop(input.server.process).catch(() => {})
+    if (closing) return
+    for (const listener of [...deathListeners]) listener()
+  }
+  input.server.process.once("exit", markDead)
+  input.server.process.once("error", markDead)
+  connection.onClose(markDead)
+  if (input.server.process.exitCode !== null || input.server.process.signalCode !== null) markDead()
+
   // --- Connection state ---
 
   const pushDiagnostics = new Map<string, Diagnostic[]>()
@@ -265,7 +299,37 @@ export async function create(input: {
     })
   }
 
-  const files: Record<string, { version: number; text: string }> = {}
+  // Insertion order doubles as LRU order: touching a document re-inserts it.
+  const files = new Map<string, { version: number; text: string }>()
+
+  async function request<T>(method: string, params: unknown, timeout = REQUEST_TIMEOUT_MS): Promise<T> {
+    if (dead) throw new Error(`LSP server ${input.serverID} is not running`)
+    const cancel = new CancellationTokenSource()
+    return withTimeout(
+      connection.sendRequest<T>(method, params, cancel.token),
+      timeout,
+      `LSP request ${method} to ${input.serverID} timed out after ${timeout}ms`,
+    )
+      .catch((err) => {
+        cancel.cancel()
+        throw err
+      })
+      .finally(() => cancel.dispose())
+  }
+
+  async function evictDocuments() {
+    while (files.size > MAX_OPEN_DOCUMENTS) {
+      const oldest = files.keys().next().value
+      if (oldest === undefined) return
+      files.delete(oldest)
+      pushDiagnostics.delete(oldest)
+      pullDiagnostics.delete(oldest)
+      published.delete(oldest)
+      await connection
+        .sendNotification("textDocument/didClose", { textDocument: { uri: pathToFileURL(oldest).href } })
+        .catch(() => {})
+    }
+  }
 
   // --- Diagnostic helpers ---
 
@@ -291,13 +355,14 @@ export async function create(input: {
   }
 
   async function requestDiagnosticReport(filePath: string, identifier?: string): Promise<DiagnosticRequestResult> {
-    const report = await withTimeout(
-      connection.sendRequest<DocumentDiagnosticReport | null>("textDocument/diagnostic", {
+    const report = await request<DocumentDiagnosticReport | null>(
+      "textDocument/diagnostic",
+      {
         ...(identifier ? { identifier } : {}),
         textDocument: {
           uri: pathToFileURL(filePath).href,
         },
-      }),
+      },
       DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     ).catch(() => null)
     if (!report) return { handled: false, matched: false, byFile: new Map<string, Diagnostic[]>() }
@@ -330,11 +395,12 @@ export async function create(input: {
     filePath: string,
     identifier?: string,
   ): Promise<DiagnosticRequestResult> {
-    const report = await withTimeout(
-      connection.sendRequest<WorkspaceDiagnosticReport | null>("workspace/diagnostic", {
+    const report = await request<WorkspaceDiagnosticReport | null>(
+      "workspace/diagnostic",
+      {
         ...(identifier ? { identifier } : {}),
         previousResultIds: [],
-      }),
+      },
       DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     ).catch(() => null)
     if (!report) return { handled: false, matched: false, byFile: new Map<string, Diagnostic[]>() }
@@ -550,6 +616,22 @@ export async function create(input: {
     get connection() {
       return connection
     },
+    get alive() {
+      return !dead
+    },
+    /** Called once when the server exits or the connection closes unexpectedly (not on shutdown()). */
+    onDead(listener: () => void) {
+      if (dead && !closing) {
+        listener()
+        return () => {}
+      }
+      deathListeners.add(listener)
+      return () => deathListeners.delete(listener)
+    },
+    request,
+    get openDocuments() {
+      return [...files.keys()]
+    },
     notify: {
       async open(request: { path: string }) {
         request.path = Filesystem.normalizePath(
@@ -559,7 +641,7 @@ export async function create(input: {
         const extension = path.extname(request.path)
         const languageId = LANGUAGE_EXTENSIONS[extension] ?? "plaintext"
 
-        const document = files[request.path]
+        const document = files.get(request.path)
         if (document !== undefined) {
           // Do not wipe diagnostics on didChange. Some servers (e.g. clangd) only
           // re-emit diagnostics when the content actually changes, so clearing
@@ -575,7 +657,8 @@ export async function create(input: {
           })
 
           const next = document.version + 1
-          files[request.path] = { version: next, text }
+          files.delete(request.path)
+          files.set(request.path, { version: next, text })
           await connection.sendNotification("textDocument/didChange", {
             textDocument: {
               uri: pathToFileURL(request.path).href,
@@ -616,7 +699,8 @@ export async function create(input: {
             text,
           },
         })
-        files[request.path] = { version: 0, text }
+        files.set(request.path, { version: 0, text })
+        await evictDocuments()
         return 0
       },
     },
@@ -638,8 +722,14 @@ export async function create(input: {
       await waitForFullDiagnostics({ path: normalizedPath, version: request.version, after: request.after })
     },
     async shutdown() {
-      connection.end()
-      connection.dispose()
+      closing = true
+      deathListeners.clear()
+      if (!dead) {
+        try {
+          connection.end()
+          connection.dispose()
+        } catch {}
+      }
       await Process.stop(input.server.process)
     },
   }

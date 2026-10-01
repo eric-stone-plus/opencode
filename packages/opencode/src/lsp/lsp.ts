@@ -14,6 +14,7 @@ import { containsPath } from "@/project/instance-context"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LspEvent } from "@opencode-ai/schema/lsp-event"
+import { EffectBridge } from "@/effect/bridge"
 
 export const Event = LspEvent
 
@@ -109,10 +110,29 @@ const filterExperimentalServers = (servers: Record<string, LSPServer.Info>, flag
 
 type LocInput = { file: string; line: number; character: number }
 
+// Restart policy for servers that crash or fail to initialize: back off
+// exponentially (capped) and give up after repeated quick failures so a broken
+// server cannot respawn in a hot loop. A server that stayed up for a while
+// resets its failure count.
+const RESTART_BASE_DELAY_MS = 2_000
+const RESTART_MAX_DELAY_MS = 5 * 60_000
+const RESTART_MAX_FAILURES = 8
+const RESTART_HEALTHY_UPTIME_MS = 10 * 60_000
+
+// The first failure restarts on next use; later ones wait 2s, 4s, ... up to 5 min.
+export function restartDelay(failures: number) {
+  if (failures <= 1) return 0
+  return Math.min(RESTART_MAX_DELAY_MS, RESTART_BASE_DELAY_MS * Math.pow(2, failures - 2))
+}
+
 interface State {
   clients: LSPClient.Info[]
   servers: Record<string, LSPServer.Info>
+  /** Servers that are permanently unavailable (not installed, or crashed too often). */
   broken: Set<string>
+  /** Servers waiting out a restart backoff: key -> earliest retry time. */
+  cooldown: Map<string, number>
+  failures: Map<string, number>
   spawning: Map<string, Promise<LSPClient.Info | undefined>>
 }
 
@@ -192,6 +212,8 @@ const layer = Layer.effect(
           clients: [],
           servers,
           broken: new Set(),
+          cooldown: new Map(),
+          failures: new Map(),
           spawning: new Map(),
         }
 
@@ -209,12 +231,26 @@ const layer = Layer.effect(
       const ctx = yield* InstanceState.context
       if (!containsPath(file, ctx)) return [] as LSPClient.Info[]
       const s = yield* InstanceState.get(state)
+      const bridge = yield* EffectBridge.make()
       const clients = yield* Effect.promise(async () => {
         const extension = path.parse(file).ext || file
         const result: LSPClient.Info[] = []
         let updated = 0
 
+        const fail = (key: string, startedAt: number) => {
+          const now = Date.now()
+          const failures = now - startedAt > RESTART_HEALTHY_UPTIME_MS ? 1 : (s.failures.get(key) ?? 0) + 1
+          s.failures.set(key, failures)
+          if (failures >= RESTART_MAX_FAILURES) {
+            s.broken.add(key)
+            s.cooldown.delete(key)
+            return
+          }
+          s.cooldown.set(key, now + restartDelay(failures))
+        }
+
         async function schedule(server: LSPServer.Info, root: string, key: string) {
+          const startedAt = Date.now()
           const handle = await server
             .spawn(root, ctx, flags)
             .then((value) => {
@@ -234,20 +270,33 @@ const layer = Layer.effect(
             directory: ctx.directory,
             instance: ctx,
           }).catch(async () => {
-            s.broken.add(key)
+            fail(key, startedAt)
             await Process.stop(handle.process)
             return undefined
           })
 
           if (!client) return undefined
 
-          const existing = s.clients.find((x) => x.root === root && x.serverID === server.id)
+          const existing = s.clients.find((x) => x.root === root && x.serverID === server.id && x.alive)
           if (existing) {
             await Process.stop(handle.process)
             return existing
           }
 
           s.clients.push(client)
+          s.cooldown.delete(key)
+          // Drop the client when its process dies so the next use respawns it.
+          client.onDead(() => {
+            const index = s.clients.indexOf(client)
+            if (index === -1) return
+            s.clients.splice(index, 1)
+            fail(key, startedAt)
+            bridge.fork(
+              Effect.logWarning("LSP server exited", { serverID: server.id, root }).pipe(
+                Effect.andThen(events.publish(Event.Updated, {})),
+              ),
+            )
+          })
           return client
         }
 
@@ -258,11 +307,14 @@ const layer = Layer.effect(
           if (!root) continue
           if (s.broken.has(root + server.id)) continue
 
-          const match = s.clients.find((x) => x.root === root && x.serverID === server.id)
+          const match = s.clients.find((x) => x.root === root && x.serverID === server.id && x.alive)
           if (match) {
             result.push(match)
             continue
           }
+
+          const retryAt = s.cooldown.get(root + server.id)
+          if (retryAt !== undefined && Date.now() < retryAt) continue
 
           const inflight = s.spawning.get(root + server.id)
           if (inflight) {
@@ -303,7 +355,7 @@ const layer = Layer.effect(
 
     const runAll = Effect.fnUntraced(function* <T>(fn: (client: LSPClient.Info) => Promise<T>) {
       const s = yield* InstanceState.get(state)
-      return yield* Effect.promise(() => Promise.all(s.clients.map((x) => fn(x))))
+      return yield* Effect.promise(() => Promise.all(s.clients.filter((x) => x.alive).map((x) => fn(x))))
     })
 
     const init = Effect.fn("LSP.init")(function* () {
@@ -376,8 +428,8 @@ const layer = Layer.effect(
 
     const hover = Effect.fn("LSP.hover")(function* (input: LocInput) {
       return yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/hover", {
+        client
+          .request("textDocument/hover", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
@@ -387,8 +439,8 @@ const layer = Layer.effect(
 
     const definition = Effect.fn("LSP.definition")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/definition", {
+        client
+          .request("textDocument/definition", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
@@ -399,8 +451,8 @@ const layer = Layer.effect(
 
     const references = Effect.fn("LSP.references")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/references", {
+        client
+          .request("textDocument/references", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
             context: { includeDeclaration: true },
@@ -412,8 +464,8 @@ const layer = Layer.effect(
 
     const implementation = Effect.fn("LSP.implementation")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/implementation", {
+        client
+          .request("textDocument/implementation", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
@@ -425,15 +477,15 @@ const layer = Layer.effect(
     const documentSymbol = Effect.fn("LSP.documentSymbol")(function* (uri: string) {
       const file = fileURLToPath(uri)
       const results = yield* run(file, (client) =>
-        client.connection.sendRequest("textDocument/documentSymbol", { textDocument: { uri } }).catch(() => []),
+        client.request("textDocument/documentSymbol", { textDocument: { uri } }).catch(() => []),
       )
       return (results.flat() as (DocumentSymbol | Symbol)[]).filter(Boolean)
     })
 
     const workspaceSymbol = Effect.fn("LSP.workspaceSymbol")(function* (query: string) {
       const results = yield* runAll((client) =>
-        client.connection
-          .sendRequest<Symbol[]>("workspace/symbol", { query })
+        client
+          .request<Symbol[]>("workspace/symbol", { query })
           .then((result) => result.filter((x) => kinds.includes(x.kind)).slice(0, 10))
           .catch(() => [] as Symbol[]),
       )
@@ -442,8 +494,8 @@ const layer = Layer.effect(
 
     const prepareCallHierarchy = Effect.fn("LSP.prepareCallHierarchy")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/prepareCallHierarchy", {
+        client
+          .request("textDocument/prepareCallHierarchy", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
@@ -457,14 +509,14 @@ const layer = Layer.effect(
       direction: "callHierarchy/incomingCalls" | "callHierarchy/outgoingCalls",
     ) {
       const results = yield* run(input.file, async (client) => {
-        const items = await client.connection
-          .sendRequest<unknown[] | null>("textDocument/prepareCallHierarchy", {
+        const items = await client
+          .request<unknown[] | null>("textDocument/prepareCallHierarchy", {
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
           .catch(() => [] as unknown[])
         if (!items?.length) return []
-        return client.connection.sendRequest(direction, { item: items[0] }).catch(() => [])
+        return client.request(direction, { item: items[0] }).catch(() => [])
       })
       return results.flat().filter(Boolean)
     })
