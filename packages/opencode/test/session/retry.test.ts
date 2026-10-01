@@ -82,6 +82,16 @@ describe("session.retry.delay", () => {
     expect(SessionRetry.delay(1, error, 0)).toBe(2000)
   })
 
+  test("ignores negative retry hints", () => {
+    expect(SessionRetry.delay(1, apiError({ "retry-after-ms": "-1" }), 0)).toBe(2000)
+    expect(SessionRetry.delay(1, apiError({ "retry-after": "-1" }), 0)).toBe(2000)
+  })
+
+  test("ignores non-finite retry hints", () => {
+    expect(SessionRetry.delay(1, apiError({ "retry-after-ms": "Infinity" }), 0)).toBe(2000)
+    expect(SessionRetry.delay(1, apiError({ "retry-after": "Infinity" }), 0)).toBe(2000)
+  })
+
   test("uses retry-after values even when exceeding 10 minutes with headers", () => {
     const error = apiError({ "retry-after": "50" })
     expect(SessionRetry.delay(1, error)).toBe(50000)

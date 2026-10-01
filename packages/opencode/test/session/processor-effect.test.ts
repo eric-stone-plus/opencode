@@ -1601,6 +1601,34 @@ itWarned.live("session.processor returns a tool error to an unattended agent rep
   ),
 )
 
+const onePerTurn = repeatingLLM(1)
+const itOnePerTurn = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, onePerTurn.layer]]))
+
+itOnePerTurn.live("session.processor resets doom-loop streaks for a new user turn", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+
+        for (let i = 0; i < 3; i++) {
+          const parent = yield* user(chat.id, `turn ${i}`)
+          const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+          const result = yield* handle.process(
+            streamInput(chat, parent, mdl, { agent: unattended(), tools: { repeat: repeatTool } }),
+          )
+          expect(result).toBe("continue")
+          expect(handle.message.error).toBeUndefined()
+        }
+
+        expect(onePerTurn.results.map((item) => item.ok)).toEqual([true, true, true])
+      }),
+    { config: cfg },
+  ),
+)
+
 const stopped = repeatingLLM(6)
 const itStopped = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, stopped.layer]]))
 

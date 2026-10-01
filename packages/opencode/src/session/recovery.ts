@@ -12,6 +12,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { and, eq, inArray, lt, sql } from "drizzle-orm"
 import { Context, Effect, Layer } from "effect"
+import { randomUUID } from "node:crypto"
 import { InstanceState } from "@/effect/instance-state"
 import fs from "fs/promises"
 import os from "os"
@@ -41,7 +42,11 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRecovery") {}
 
-type Owner = { pid: number; hostname: string; boot: number }
+type Owner = { pid: number; hostname: string; boot: number; token: string }
+
+// The token distinguishes this process from a restarted process that inherits
+// the same PID before the old owner file has been removed.
+const OWNER_TOKEN = randomUUID()
 
 function bootTime() {
   return Date.now() - Math.round(os.uptime() * 1000)
@@ -70,7 +75,7 @@ export function ownerFile(directory: string) {
 async function claim(directory: string) {
   const file = ownerFile(directory)
   await fs.mkdir(path.dirname(file), { recursive: true })
-  const self: Owner = { pid: process.pid, hostname: os.hostname(), boot: bootTime() }
+  const self: Owner = { pid: process.pid, hostname: os.hostname(), boot: bootTime(), token: OWNER_TOKEN }
   for (let attempt = 0; attempt < 3; attempt++) {
     const written = await fs
       .writeFile(file, JSON.stringify({ ...self, directory }), { flag: "wx" })
@@ -84,7 +89,7 @@ async function claim(directory: string) {
       .readFile(file, "utf8")
       .then((raw) => JSON.parse(raw) as Owner)
       .catch(() => undefined)
-    if (current?.pid === process.pid && current.hostname === self.hostname) return true
+    if (current?.pid === process.pid && current.hostname === self.hostname && current.token === self.token) return true
     if (current && alive(current)) return false
     await fs.rm(file, { force: true })
   }
@@ -97,7 +102,8 @@ async function unclaim(directory: string) {
     .readFile(file, "utf8")
     .then((raw) => JSON.parse(raw) as Owner)
     .catch(() => undefined)
-  if (current?.pid === process.pid && current.hostname === os.hostname()) await fs.rm(file, { force: true })
+  if (current?.pid === process.pid && current.hostname === os.hostname() && current.token === OWNER_TOKEN)
+    await fs.rm(file, { force: true })
 }
 
 const layer = Layer.effect(

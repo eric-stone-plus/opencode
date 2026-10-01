@@ -86,14 +86,14 @@ export function hint(error: SessionV1.APIError) {
   const retryAfterMs = headers["retry-after-ms"]
   if (retryAfterMs) {
     const parsedMs = Number.parseFloat(retryAfterMs)
-    if (!Number.isNaN(parsedMs)) return cap(parsedMs)
+    if (Number.isFinite(parsedMs) && parsedMs >= 0) return cap(parsedMs)
   }
 
   const retryAfter = headers["retry-after"]
   if (!retryAfter) return undefined
   const parsedSeconds = Number.parseFloat(retryAfter)
   // convert seconds to milliseconds
-  if (!Number.isNaN(parsedSeconds)) return cap(Math.ceil(parsedSeconds * 1000))
+  if (Number.isFinite(parsedSeconds) && parsedSeconds >= 0) return cap(Math.ceil(parsedSeconds * 1000))
   // Try parsing as HTTP date format
   const parsed = Date.parse(retryAfter) - Date.now()
   if (!Number.isNaN(parsed) && parsed > 0) return cap(Math.ceil(parsed))

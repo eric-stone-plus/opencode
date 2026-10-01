@@ -3,6 +3,8 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Effect, Layer } from "effect"
 import fs from "fs/promises"
+import os from "os"
+import path from "path"
 import { Session as SessionNs } from "@/session/session"
 import { SessionRecovery } from "@/session/recovery"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -195,6 +197,33 @@ describe("session.recovery", () => {
       expect((yield* recovery.init()).owner).toBe(true)
       const owner = JSON.parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))
       expect(owner.pid).toBe(process.pid)
+      expect(owner.token).toBeString()
+    }),
+  )
+
+  it.instance("reclaims a stale owner record with the same pid", () =>
+    Effect.gen(function* () {
+      const recovery = yield* SessionRecovery.Service
+      const ctx = yield* InstanceState.context
+      const file = SessionRecovery.ownerFile(ctx.directory)
+      yield* Effect.promise(() =>
+        fs.mkdir(path.dirname(file), { recursive: true }).then(() =>
+          fs.writeFile(
+            file,
+            JSON.stringify({
+              pid: process.pid,
+              hostname: os.hostname(),
+              boot: Date.now(),
+              token: "stale-owner-token",
+              directory: ctx.directory,
+            }),
+          ),
+        ),
+      )
+
+      expect((yield* recovery.init()).owner).toBe(true)
+      const owner = JSON.parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))
+      expect(owner.token).not.toBe("stale-owner-token")
     }),
   )
 })

@@ -143,6 +143,21 @@ describe("McpCatalog.callWithDeadline", () => {
     expect(options?.maxTotalTimeout).toBe(50)
   })
 
+  test("returns at the deadline even when the client ignores abort", async () => {
+    const client = {
+      callTool: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        return { content: [] }
+      },
+    } as unknown as Client
+
+    const started = Date.now()
+    await expect(McpCatalog.callWithDeadline(client, { name: "uncooperative" }, undefined, undefined, 20)).rejects.toThrow(
+      'MCP tool call "uncooperative" exceeded the total timeout of 20ms',
+    )
+    expect(Date.now() - started).toBeLessThan(200)
+  })
+
   test("defaults to 10 minutes but never below the per-request timeout or above the timer limit", () => {
     expect(McpCatalog.maxTotalTimeout()).toBe(10 * 60_000)
     expect(McpCatalog.maxTotalTimeout(60_000)).toBe(10 * 60_000)

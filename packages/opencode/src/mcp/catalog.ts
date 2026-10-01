@@ -106,18 +106,23 @@ export async function callWithDeadline(
 ) {
   const total = Math.min(options?.maxTotalTimeout ?? deadline, MAX_TIMER_DELAY)
   const controller = new AbortController()
-  const timer = setTimeout(
-    () => controller.abort(new Error(`MCP tool call "${params.name}" exceeded the total timeout of ${total}ms`)),
-    total,
-  )
+  const timeoutError = new Error(`MCP tool call "${params.name}" exceeded the total timeout of ${total}ms`)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort(timeoutError)
+      reject(timeoutError)
+    }, total)
+  })
   try {
-    return await client.callTool(params, schema, {
+    const call = client.callTool(params, schema, {
       ...options,
       maxTotalTimeout: total,
       signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     })
+    return await Promise.race([call, timeout])
   } finally {
-    clearTimeout(timer)
+    if (timer) clearTimeout(timer)
   }
 }
 

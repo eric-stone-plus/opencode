@@ -124,7 +124,7 @@ const layer = Layer.effect(
     const provider = yield* Provider.Service
     // Consecutive identical tool calls per session, across steps. In-memory only:
     // a restart starts the count over.
-    const streaks = new Map<SessionID, { key: string; count: number }>()
+    const streaks = new Map<SessionID, { userID: string; key: string; count: number }>()
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -691,11 +691,11 @@ const layer = Layer.effect(
       })
 
       // Length of the current run of identical calls ending with this one.
-      const repeat = (tool: string, args: unknown) => {
+      const repeat = (userID: string, tool: string, args: unknown) => {
         const key = `${tool}\u0000${JSON.stringify(args ?? null)}`
         const prev = streaks.get(ctx.sessionID)
-        const count = prev?.key === key ? prev.count + 1 : 1
-        streaks.set(ctx.sessionID, { key, count })
+        const count = prev?.userID === userID && prev.key === key ? prev.count + 1 : 1
+        streaks.set(ctx.sessionID, { userID, key, count })
         return count
       }
 
@@ -733,7 +733,7 @@ const layer = Layer.effect(
                   // Retrying this request would replay history without those effects.
                   toolsStarted = true
                   if (!interactive) {
-                    const count = repeat(name, args[0])
+                    const count = repeat(streamInput.user.id, name, args[0])
                     if (count >= DOOM_LOOP_STOP) {
                       ctx.doomStopped = true
                       return Promise.reject(new Error(doomLoopMessage(name, count)))
