@@ -23,6 +23,12 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Same normalization as install.sh: `--home /h/` must audit the paths an
+# install with `--home /h` wrote (no `//` forms, no false stale-wiring flags).
+while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
+  TARGET_HOME="${TARGET_HOME%/}"
+done
+
 BOOTSTRAP_DIR=$(cd "$(dirname "$0")" && pwd -P)
 CFG="$TARGET_HOME/.config/opencode"
 DATA="$TARGET_HOME/.local/share/opencode"
@@ -69,22 +75,21 @@ bunv=$(bun --version 2>/dev/null || true)
 
 # --- 2. opencode binary / shim ----------------------------------------------
 echo "-- binary"
-# Resolution order: the target home's REAL binary first, then the target's pin
-# shim — a pin shim execs "$HOME/.opencode/bin/opencode" and must never be
-# picked before the real thing when auditing a foreign --home. The auditor's
-# PATH is consulted last and only as a warned fallback
-# (`command -v` finds whatever the auditor's PATH points at).
+# Only the target home's REAL binary counts. The pin shim at ~/.local/bin is
+# not a binary: it only execs "$HOME/.opencode/bin/opencode", so a seat whose
+# real binary is missing must FAIL even though the shim (which install.sh
+# always writes) is executable. The auditor's PATH never satisfies the check
+# either: the shim the seat launches through cannot reach it.
 OC_BIN=""
-for cand in "$TARGET_HOME/.opencode/bin/opencode" "$TARGET_HOME/.local/bin/opencode"; do
-  if [ -x "$cand" ]; then OC_BIN="$cand"; break; fi
-done
-if [ -n "$OC_BIN" ]; then
+REAL_BIN="$TARGET_HOME/.opencode/bin/opencode"
+if [ -x "$REAL_BIN" ] && [ -f "$REAL_BIN" ]; then
+  OC_BIN="$REAL_BIN"
   pass "opencode binary (resolved against target home): $OC_BIN"
-elif command -v opencode >/dev/null 2>&1; then
-  OC_BIN=$(command -v opencode)
-  warn "opencode only found on the auditor's PATH: $OC_BIN (target home has none)"
 else
-  fail "opencode not found for $TARGET_HOME and not on PATH (build+install it; README step 3)"
+  fail "opencode binary missing or not executable: $REAL_BIN (the ~/.local/bin pin shim is not the binary; build+install it, README step 2)"
+  if command -v opencode >/dev/null 2>&1; then
+    info "auditor PATH has $(command -v opencode) — not counted (the seat's shim execs only $REAL_BIN)"
+  fi
 fi
 # Every invocation pins HOME to the audited home: a pin shim can then only ever
 # resolve inside that home, never silently into the auditor's own seat.
@@ -282,8 +287,8 @@ else
   fail "guard script missing or not executable: $GUARD"
 fi
 surface() {
-  # $1 label, $2 file
-  local label="$1" f="$2" ref refs bad=0 stale=0
+  # $1 label, $2 file, $3 json|toml
+  local label="$1" f="$2" kind="$3" ref refs scan wired bad=0 stale=0
   if [ ! -f "$f" ]; then
     warn "$label: $f absent (install.sh wires it only when the config exists)"
     return 0
@@ -292,69 +297,170 @@ surface() {
     warn "$label: $f exists but is not wired to block-unsafe-kill.sh"
     return 0
   fi
-  # Every referenced guard path must equal this home's guard: a path that
-  # exists but belongs to another home/user is stale wiring, not a pass
-  # (a hardcoded /home/eric ref must not satisfy a scratch --home audit).
-  # Per-occurrence path walk (not a scan-wide prefix cut): two refs in one
-  # string must not merge into one bogus path, space-containing homes must
-  # survive, and a bare name mention is data, not a path reference.
+  # Two questions, answered separately:
+  #  * WIRED — is there a PreToolUse hook whose command references this home's
+  #    guard? Structural: JSON hooks.PreToolUse[].hooks[].command, TOML
+  #    [[hooks]] event = "PreToolUse" + command. A file that merely mentions
+  #    the name (`"allow": ["Bash(cat block-unsafe-kill.sh)"]`) is not wired.
+  #  * REFS — every guard path referenced anywhere in the file must equal this
+  #    home's guard: a path that exists but belongs to another home/user is
+  #    stale wiring, not a pass (a hardcoded /home/eric ref must not satisfy
+  #    a scratch --home audit). Per-occurrence path walk (not a scan-wide
+  #    prefix cut): two refs in one string must not merge into one bogus path,
+  #    space-containing homes must survive, and a bare name mention is data.
   if command -v python3 >/dev/null 2>&1; then
-    refs=$(python3 - "$f" <<'PYEOF'
-import re, sys
-text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+    scan=$(python3 - "$f" "$kind" "$GUARD" <<'PYEOF'
+import json, re, sys
+path, kind, guard = sys.argv[1:4]
+text = open(path, encoding="utf-8", errors="replace").read()
 NAME = "block-unsafe-kill.sh"
 BOUNDARY = " \t\n\"'`" + ";|&<>()"
 ROOTED = ("/", "~", "./", "../")
-refs = set()
-for m in re.finditer(re.escape(NAME), text):
-    end = m.end()
-    if end < len(text) and text[end] not in BOUNDARY + "=":
-        continue  # block-unsafe-kill.sh.bak and friends are not guard refs
-    start = m.start()
-    if start > 0 and text[start - 1] not in BOUNDARY + "/~=":
-        continue  # myblock-unsafe-kill.sh is a different file
-    while start > 0 and text[start - 1] not in BOUNDARY:
-        start -= 1
-    run = text[start:end]
-    eq = run.rfind("=")
-    if (
-        eq > 0
-        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", run[:eq])
-        and run[eq + 1 : eq + 2] in ("/", "~", ".")
-    ):
-        run = run[eq + 1 :]
-    if "/" not in run:
-        continue  # bare name mention, not a path reference
-    if not run.startswith(ROOTED):
-        k = start + (len(text[start:end]) - len(run))
-        ext = k
-        rooted = False
-        while True:
-            p = k - 1
-            if p < 0 or text[p] not in " \t":
-                break
-            q = p
-            # `=` is a word boundary here too, or `KEY=/home/my user/x.sh`
-            # sees one unrooted `KEY=/home/my` word and under-extends.
-            while q > 0 and text[q - 1] not in BOUNDARY + "=":
-                q -= 1
-            word = text[q:p]
-            if not word or word.startswith("-") or word.isdigit():
-                break
-            ext = q
-            if word.startswith(ROOTED):
-                rooted = True
-                break
-            k = q
-        if rooted:
-            run = text[ext:end]
-    refs.add(run)
+
+
+def refs_in(text):
+    refs = set()
+    for m in re.finditer(re.escape(NAME), text):
+        end = m.end()
+        if end < len(text) and text[end] not in BOUNDARY + "=":
+            continue  # block-unsafe-kill.sh.bak and friends are not guard refs
+        g0 = end - len(guard)
+        if g0 >= 0 and text[g0:end] == guard and (g0 == 0 or text[g0 - 1] in BOUNDARY + "="):
+            refs.add(guard)  # exact match first: a `"` in the home is a boundary
+            continue
+        start = m.start()
+        if start > 0 and text[start - 1] not in BOUNDARY + "/~=":
+            continue  # myblock-unsafe-kill.sh is a different file
+        while start > 0 and text[start - 1] not in BOUNDARY:
+            start -= 1
+        run = text[start:end]
+        eq = run.rfind("=")
+        if (
+            eq > 0
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", run[:eq])
+            and run[eq + 1 : eq + 2] in ("/", "~", ".")
+        ):
+            run = run[eq + 1 :]
+        if "/" not in run:
+            continue  # bare name mention, not a path reference
+        if not run.startswith(ROOTED):
+            k = start + (len(text[start:end]) - len(run))
+            ext = k
+            rooted = False
+            while True:
+                p = k - 1
+                if p < 0 or text[p] not in " \t":
+                    break
+                q = p
+                # `=` is a word boundary here too, or `KEY=/home/my user/x.sh`
+                # sees one unrooted `KEY=/home/my` word and under-extends.
+                while q > 0 and text[q - 1] not in BOUNDARY + "=":
+                    q -= 1
+                word = text[q:p]
+                if not word or word.startswith("-") or word.isdigit():
+                    break
+                ext = q
+                if word.startswith(ROOTED):
+                    rooted = True
+                    break
+                k = q
+            if rooted:
+                run = text[ext:end]
+        refs.add(run)
+    return refs
+
+
+def strip_jsonc(s):
+    out, i, n, in_str = [], 0, len(s), False
+    while i < n:
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(s[i + 1])
+                i += 2
+                continue
+            in_str = c != '"'
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+        elif s.startswith("//", i):
+            while i < n and s[i] != "\n":
+                i += 1
+            continue
+        elif s.startswith("/*", i):
+            e = s.find("*/", i + 2)
+            i = n if e < 0 else e + 2
+            continue
+        elif c == ",":
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j < n and s[j] in "}]":
+                i += 1
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def load():
+    if kind == "toml":
+        import tomllib
+        return tomllib.loads(text)
+    return json.loads(strip_jsonc(text))
+
+
+def strings(node):
+    # Every decoded string value: refs are judged on what the harness will
+    # run, not on the escaped source text (`\\` / `\"` in JSON and TOML).
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for v in node.values():
+            yield from strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from strings(v)
+
+
+def commands(data):
+    if kind == "toml":
+        hooks = data.get("hooks")
+        for h in hooks if isinstance(hooks, list) else []:
+            if isinstance(h, dict) and h.get("event") == "PreToolUse" and isinstance(h.get("command"), str):
+                yield h["command"]
+        return
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    for entry in pre if isinstance(pre, list) else []:
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        for h in inner if isinstance(inner, list) else []:
+            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                yield h["command"]
+
+
+try:
+    data = load()
+except Exception as e:
+    # Unparseable (or no tomllib): fall back to a raw-text ref scan.
+    wired, refs = f"unknown ({type(e).__name__})", refs_in(text)
+else:
+    wired = "yes" if any(guard in refs_in(c) for c in commands(data)) else "no"
+    refs = set().union(*(refs_in(s) for s in strings(data)))
+    # Comments are invisible to the parse but may still hold a stale path.
+    refs |= {r for r in refs_in(text) if r.startswith(ROOTED) and "\\" not in r and '"' not in r}
+print("WIRED " + wired)
 for r in sorted(refs):
-    print(r)
+    print("REF " + r)
 PYEOF
 )
+    wired=$(printf '%s\n' "$scan" | sed -n 's/^WIRED //p')
+    refs=$(printf '%s\n' "$scan" | sed -n 's/^REF //p')
   else
     refs=$(grep -o '[][A-Za-z0-9_./-]*block-unsafe-kill\.sh' "$f" | sort -u)
+    wired="unknown (python3 missing)"
     warn "$label: python3 missing — ref scan degraded (paths with spaces may mis-report)"
   fi
   while IFS= read -r ref; do
@@ -371,22 +477,40 @@ PYEOF
   done <<EOF
 $refs
 EOF
+  case "$wired" in
+    yes) : ;;
+    no)
+      warn "$label: $f mentions block-unsafe-kill.sh but no PreToolUse hook command runs $GUARD (not wired; re-run install.sh step 5b)"
+      return 0 ;;
+    *)
+      warn "$label: hook structure of $f not checked: $wired (path refs only)"
+      if [ -z "$refs" ]; then
+        warn "$label: no guard path reference in $f (bare name mentions only)"
+        return 0
+      fi ;;
+  esac
   if [ "$bad" -eq 0 ] && [ "$stale" -eq 0 ]; then
     pass "$label wired to $GUARD"
   fi
 }
-surface "claude" "$TARGET_HOME/.claude/settings.json"
-surface "zcode" "$TARGET_HOME/.zcode/settings.json"
-surface "grok" "$TARGET_HOME/.grok/hooks/block-unsafe-kill.json"
-surface "kimi" "$TARGET_HOME/.kimi-code/config.toml"
+surface "claude" "$TARGET_HOME/.claude/settings.json" json
+surface "zcode" "$TARGET_HOME/.zcode/settings.json" json
+surface "grok" "$TARGET_HOME/.grok/hooks/block-unsafe-kill.json" json
+surface "kimi" "$TARGET_HOME/.kimi-code/config.toml" toml
 info "5th surface = opencode plugin port (verified under plugin/ below)"
 
 # --- 7b. bashrc egress wrapper source path (stable seat copy, not the bundle) --
 BLK="$CFG/shell/bashrc-opencode-block.sh"
+# Active wrapper source lines only (install.sh step 9 uses the same rule):
+# `source` or `.` on a path ending in bashrc-opencode-block.sh; comments are not
+# wiring and must not raise a stale-wiring warning.
+bashrc_src_lines() {
+  grep -v '^[[:space:]]*#' "$1" | grep -E '(^|[[:space:];&|(])(source|\.)[[:space:]]+[^#]*bashrc-opencode-block\.sh'
+}
 if [ -f "$TARGET_HOME/.bashrc" ]; then
-  if grep 'source' "$TARGET_HOME/.bashrc" | grep 'bashrc-opencode-block\.sh' | grep -vF "$BLK" | grep -q .; then
+  if bashrc_src_lines "$TARGET_HOME/.bashrc" | grep -vF "\"$BLK\"" | grep -q .; then
     warn "bashrc sources bashrc-opencode-block.sh from outside $BLK (bundle-path wiring — re-run install.sh step 9 to converge)"
-  elif grep -qF "$BLK" "$TARGET_HOME/.bashrc"; then
+  elif bashrc_src_lines "$TARGET_HOME/.bashrc" | grep -qF "\"$BLK\""; then
     if [ -f "$BLK" ]; then
       pass "bashrc sources the stable seat copy: $BLK"
     else
@@ -438,7 +562,7 @@ else
   n1=$(grep -c 'plugin config hook failed' "$LOG" 2>/dev/null || true)
   n2=$(grep -c 'background dependency install failed' "$LOG" 2>/dev/null || true)
   if [ "${n1:-0}" -gt 0 ]; then
-    warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (mpskills-update hardcodes /home/eric; expected on machine B, or a dangling motoko.ts)"
+    warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (a dangling motoko.ts is the usual cause; mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
   else
     pass "no 'plugin config hook failed' in log"
   fi
@@ -450,7 +574,7 @@ else
 fi
 
 # --- 11. goal command/agent files -------------------------------------------
-echo "-- goal command/agent"
+echo "-- goal command/agent + instructions files"
 for pair in "command/goal.md" "agent/goal.md"; do
   if [ -f "$BOOTSTRAP_DIR/$pair" ]; then
     if [ -f "$CFG/$pair" ]; then
@@ -464,6 +588,21 @@ for pair in "command/goal.md" "agent/goal.md"; do
     else
       warn "$pair absent at target and not shipped in bundle"
     fi
+  fi
+done
+# The `instructions` files opencode.jsonc loads (autonomy.md, AGENTS.goal.md):
+# a listed-but-missing file silently drops that policy from every session.
+for f in autonomy.md AGENTS.goal.md; do
+  if [ -f "$CFG/$f" ]; then
+    if [ -f "$BOOTSTRAP_DIR/$f" ] && ! cmp -s "$BOOTSTRAP_DIR/$f" "$CFG/$f"; then
+      warn "$f differs from the bundle copy (managed file; re-run install.sh step 8)"
+    else
+      pass "$f installed (opencode.jsonc instructions)"
+    fi
+  elif [ -f "$CFG/opencode.jsonc" ] && ! grep -qF "$f" "$CFG/opencode.jsonc"; then
+    info "$f absent and not listed in opencode.jsonc instructions"
+  else
+    fail "$f missing at $CFG/$f but listed in opencode.jsonc instructions (install.sh step 8)"
   fi
 done
 if [ -f "$CFG/command/goal.md" ]; then

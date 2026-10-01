@@ -22,7 +22,7 @@
 # What it installs (see README for the full runbook):
 #   1  dirs ~/.config/opencode/{plugin,command,agent} ~/.config/environment.d
 #      ~/.config/agent-hooks ~/.local/bin
-#   2  config: opencode.jsonc (copy+username-sed, or --link), auth.json (template,
+#   2  config: opencode.jsonc (copy + plans-path sed from --home, or --link), auth.json (template,
 #      only if absent), env (template, only if absent)
 #   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
 #      OPENCODE_EXPERIMENTAL_PLAN_MODE=1 -> exec binary)
@@ -33,7 +33,8 @@
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
 #   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts copies, motoko.ts
 #      file-symlink (dangling target = non-fatal, warned)
-#   8  command/ + agent/ goal files (only those shipped in the bundle)
+#   8  command/ + agent/ goal files (only those shipped in the bundle),
+#      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
 #      sourced from that stable seat path (interactive-only; --no-bashrc skips
 #      the ~/.bashrc edit; older bundle-path source lines are rewritten in
@@ -83,6 +84,12 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$TARGET_HOME" ] || { echo "install.sh: empty target home" >&2; exit 1; }
+# Normalize trailing slashes: `--home /h/` must produce the same paths (and the
+# same exact-match .bashrc source line) as `--home /h`, or every later run
+# re-converges and verify.sh sees the `//` form as foreign wiring.
+while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
+  TARGET_HOME="${TARGET_HOME%/}"
+done
 [ -d "$TARGET_HOME" ] || { echo "install.sh: target home is not a directory: $TARGET_HOME" >&2; exit 1; }
 
 SEAT_HOME="${TARGET_HOME#/}"
@@ -100,6 +107,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-install.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 ACTIONS=0
+LAST_BACKUP=""
 CHANGES=0
 WOULD=0
 
@@ -137,23 +145,31 @@ ensure_dir() {
 
 backup_file() {
   # timestamped backup of anything we are about to overwrite
+  # (a symlink, dangling or not, is backed up as the link itself: -P never
+  # follows it, so the backup records where it pointed).
   local f="$1" b
-  if [ ! -e "$f" ]; then return 0; fi
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
   b="$f.bak.$TS"
-  [ -e "$b" ] && b="$b.$$"
+  if [ -e "$b" ] || [ -L "$b" ]; then b="$b.$$"; fi
   act "backup $f -> $(basename "$b")"
+  LAST_BACKUP="$b"
   if [ "$DRY_RUN" -eq 0 ]; then
-    cp -p "$f" "$b"
+    cp -pP "$f" "$b"
     prune_backups "$f"
   fi
 }
 
 prune_backups() {
   # Keep at most 20 timestamped backups per target; drop the oldest by mtime.
-  local f="$1" keep=20 b i excess
+  # Only names backup_file itself produces count (<f>.bak.<14 digits>, with an
+  # optional .<pid> collision suffix): a user's own `.bashrc.bak.precious` is
+  # not ours to delete.
+  local f="$1" keep=20 b i excess suffix
   local -a baks=() old_first=()
-  for b in "$f".bak.*; do
-    [ -e "$b" ] || continue
+  for b in "$f".bak.[0-9]*; do
+    [ -e "$b" ] || [ -L "$b" ] || continue
+    suffix="${b#"$f".bak.}"
+    [[ "$suffix" =~ ^[0-9]{14}(\.[0-9]+)?$ ]] || continue
     baks+=("$b")
   done
   if [ "${#baks[@]}" -le "$keep" ]; then return 0; fi
@@ -169,9 +185,11 @@ prune_backups() {
 require_private() {
   # Secret seed files must never be group/world-readable. Content is untouched
   # (pre-existing seeds may hold live values); only the mode converges to 0600.
+  # A symlinked seed is judged (and tightened) at its target; -e is false for a
+  # dangling one, which is skipped instead of aborting the run under set -e.
   local f="$1" mode
   if [ ! -e "$f" ]; then return 0; fi
-  mode=$(stat -c '%a' "$f" 2>/dev/null) || return 0
+  mode=$(stat -L -c '%a' "$f" 2>/dev/null) || return 0
   if [ -z "$mode" ]; then return 0; fi
   if [ "$(( 8#$mode & 077 ))" -ne 0 ]; then
     act "chmod 600 $f (secret seed was mode $mode)"
@@ -193,7 +211,24 @@ install_file() {
   if [ -n "${STAGE_SED:-}" ]; then
     sed -i "$STAGE_SED" "$stage"
   fi
-  if [ ! -e "$dst" ]; then
+  if [ -L "$dst" ]; then
+    # Never write THROUGH a symlink: after an `install.sh --link` run (or a
+    # user's own link into some checkout) a plain cp would rewrite the link
+    # target — e.g. the tracked bundle opencode.jsonc gets this home's path
+    # sed'd in and loses the `home/eric` anchor every later install relies on.
+    # A dangling link is the same case (cp refuses to write through it and
+    # set -e would abort mid-install). Replace the link itself; the backup
+    # keeps the link, its target is left untouched.
+    act "replace symlink $dst (-> $(readlink "$dst")) with a copy of ${src#"$BOOTSTRAP_DIR"/}"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      backup_file "$dst"
+      rm -f "$dst"
+      cp -p "$stage" "$dst"
+    else
+      note "(would back up the link itself first; its target is never written)"
+    fi
+    changed
+  elif [ ! -e "$dst" ]; then
     act "create $dst (from ${src#"$BOOTSTRAP_DIR"/})"
     # New file: cp -p stamps the bundle template's mode (intended — templates
     # carry the perms they want; secret seeds are tightened by require_private).
@@ -264,7 +299,9 @@ fi
 
 # auth.json: template, only when absent. Never touch an existing one (holds keys).
 # Lives in the DATA dir (~/.local/share/opencode), not the config dir.
-if [ -e "$DATA/auth.json" ]; then
+if [ -L "$DATA/auth.json" ] && [ ! -e "$DATA/auth.json" ]; then
+  say "WARN  $DATA/auth.json is a dangling symlink -> $(readlink "$DATA/auth.json") (left as-is; secrets are never overwritten)"
+elif [ -e "$DATA/auth.json" ]; then
   note "unchanged $DATA/auth.json (exists; secrets are never overwritten)"
 else
   act "create $DATA/auth.json from config/auth.json.template (placeholder keys)"
@@ -279,7 +316,9 @@ fi
 require_private "$DATA/auth.json"
 
 # env seed file: only when absent (machine A may hold live seeds there).
-if [ -e "$CFG/env" ]; then
+if [ -L "$CFG/env" ] && [ ! -e "$CFG/env" ]; then
+  say "WARN  $CFG/env is a dangling symlink -> $(readlink "$CFG/env") (left as-is; seed file is never overwritten)"
+elif [ -e "$CFG/env" ]; then
   note "unchanged $CFG/env (exists; seed file is never overwritten)"
 else
   act "create $CFG/env from config/env.template (empty seed values)"
@@ -325,7 +364,9 @@ install_file "$BOOTSTRAP_DIR/config/environment.d/10-opencode-db.conf" \
 # Seed-only: never overwrite existing ones (may carry live plumbing on machine A).
 for f in 90-fcitx5.conf 95-quinte-provider.conf motoko-home.conf motoko-keys.conf; do
   dst="$TARGET_HOME/.config/environment.d/$f"
-  if [ -e "$dst" ]; then
+  if [ -L "$dst" ] && [ ! -e "$dst" ]; then
+    say "WARN  $dst is a dangling symlink -> $(readlink "$dst") (left as-is; templates never overwrite)"
+  elif [ -e "$dst" ]; then
     note "unchanged $dst (exists; templates never overwrite)"
   else
     act "create $dst from template (names only; fill values, see README)"
@@ -385,6 +426,19 @@ def rewrite_guard_paths(s: str, guard: str) -> str:
             out.append(s[i:])
             return "".join(out)
         end = j + len(NAME)
+        # Already the target path: keep it verbatim. Without this a home that
+        # contains a boundary char (`"`) is re-split on every run and the
+        # correct path gets a second copy spliced into it.
+        g0 = end - len(guard)
+        if (
+            g0 >= 0
+            and s[g0:end] == guard
+            and (g0 == 0 or s[g0 - 1] in BOUNDARY + "=")
+            and (end == len(s) or s[end] in BOUNDARY + "=")
+        ):
+            out.append(s[i:end])
+            i = end
+            continue
         # Only rewrite whole file names: `block-unsafe-kill.sh.bak` is data.
         if end < len(s) and s[end] not in BOUNDARY + "=":
             out.append(s[i:end])
@@ -460,24 +514,95 @@ if __name__ == "__main__":
     main()
 PYEOF
 
+# Structural "is it wired" test shared by the JSON and TOML wirings: a hook
+# command counts only when it carries a path reference to the guard (the
+# shared rewriter's notion of a reference, probed with a sentinel). A bare
+# mention elsewhere — `"allow": ["Bash(cat block-unsafe-kill.sh)"]`, a TOML
+# comment — is data, not wiring.
+cat >"$WORK/guard_wired.py" <<'PYEOF'
+from guard_rewrite import rewrite_guard_paths
+
+SENTINEL = "\x00guard\x00"
+
+
+def refs_guard(cmd) -> bool:
+    return isinstance(cmd, str) and SENTINEL in rewrite_guard_paths(cmd, SENTINEL)
+
+
+def json_wired(data) -> bool:
+    # hooks.PreToolUse[].hooks[].command (Claude / ZCode / Grok shape)
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    for entry in pre if isinstance(pre, list) else []:
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        for h in inner if isinstance(inner, list) else []:
+            if isinstance(h, dict) and refs_guard(h.get("command")):
+                return True
+    return False
+
+
+def toml_wired(data) -> bool:
+    # [[hooks]] event = "PreToolUse", command = "...guard..." (Kimi shape)
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    for h in hooks if isinstance(hooks, list) else []:
+        if isinstance(h, dict) and h.get("event") == "PreToolUse" and refs_guard(h.get("command")):
+            return True
+    return False
+PYEOF
+
+# Converge DST onto OUT (status file ST: line 1 = unchanged|edit|reformat|lossy,
+# line 2 = what changed). Backup first; a lossy rewrite names its backup loudly.
+apply_wiring() {
+  local dst="$1" out="$2" st="$3" mode what
+  mode=$(sed -n 1p "$st" 2>/dev/null); what=$(sed -n 2p "$st" 2>/dev/null)
+  if [ ! -s "$out" ]; then say "WARN  empty wiring output for $dst (left as-is)"; return 0; fi
+  if [ "$mode" = "unchanged" ] || cmp -s "$out" "$dst"; then
+    note "unchanged $dst (already wired to $GUARD)"
+    return 0
+  fi
+  act "wire $dst -> $GUARD (${what:-rewritten})"
+  if [ "$DRY_RUN" -eq 0 ]; then
+    backup_file "$dst"
+    # Plain cp (no -p): $out is a umask-0644 temp file; stamping its mode
+    # would clobber the user's 0600 settings.json. Existing dst keeps its mode.
+    cp "$out" "$dst"
+    if [ "$mode" = "lossy" ]; then
+      say "WARN  $dst: comments / trailing commas could NOT be preserved by this rewrite;"
+      say "WARN  the original text is kept verbatim at $LAST_BACKUP — merge them back by hand"
+    fi
+  else
+    note "(would timestamp-backup the existing file first)"
+    [ "$mode" = "lossy" ] && say "WARN  $dst: this rewrite would drop its comments / trailing commas (a backup would keep them)"
+  fi
+  changed
+}
+
 wire_json_hook() {
-  # $1 = json config path. Rewrites an existing block-unsafe-kill.sh command to
-  # the target home path, or inserts the standard PreToolUse stanza when absent.
-  local dst="$1" out="$WORK/wire.$RANDOM.$$"
+  # $1 = json config path. Rewrites an existing block-unsafe-kill.sh path token
+  # to the target home path, or inserts the standard PreToolUse stanza when the
+  # guard is not structurally wired. Edits are textual splices into the
+  # original JSONC (comments, trailing commas and layout survive); a file that
+  # needs no change is never rewritten.
+  local dst="$1" out="$WORK/wire.$RANDOM.$$" st="$WORK/wire-st.$RANDOM.$$"
   if [ ! -f "$dst" ]; then
     say "SKIP  $dst does not exist (not created wholesale)"
     return 0
   fi
-  if ! python3 - "$dst" "$GUARD" "$WORK" >"$out" <<'PYEOF'
-import json, re, sys
-path, guard, work = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as fh:
+  if ! python3 - "$dst" "$GUARD" "$WORK" "$st" >"$out" <<'PYEOF'
+import json, sys
+path, guard, work, status = sys.argv[1:5]
+sys.path.insert(0, work)
+from guard_rewrite import rewrite_guard_paths
+from guard_wired import json_wired
+
+NAME = "block-unsafe-kill.sh"
+with open(path, encoding="utf-8") as fh:
     raw = fh.read()
 
+
 def strip_jsonc(s):
-    # Tolerate JSONC targets (// and /* */ comments, trailing commas): strip
-    # them outside string literals so json.load cannot choke on real-world
-    # .claude/settings.json files.
+    # Independent JSONC -> JSON reduction (// and /* */ comments, trailing
+    # commas), used to cross-check every splice below.
     out = []
     i, n = 0, len(s)
     in_str = False
@@ -509,7 +634,6 @@ def strip_jsonc(s):
             i += 2
             continue
         if c == ",":
-            # drop a trailing comma when the next significant char closes
             j = i + 1
             while j < n:
                 if s[j] in " \t\r\n":
@@ -531,98 +655,289 @@ def strip_jsonc(s):
         i += 1
     return "".join(out)
 
-data = json.loads(strip_jsonc(raw))
-changed = False
-# Rewrite only the path token(s) that reference the guard script; keep any
-# wrapper command and arguments around them intact (e.g. "sh /x/guard.sh -v").
-# The shared rewriter handles KEY= prefixes, space-containing homes and
-# backslashes; the string check above only detects *which* strings need work.
-sys.path.insert(0, work)
-from guard_rewrite import rewrite_guard_paths
 
+class Parser:
+    # Minimal JSONC parser that records source spans, so edits can be spliced
+    # into the original text instead of re-serializing the whole document.
+    def __init__(self, t):
+        self.t, self.i = t, 0
+
+    def ws(self):
+        t, n = self.t, len(self.t)
+        while self.i < n:
+            c = t[self.i]
+            if c in " \t\r\n":
+                self.i += 1
+            elif t.startswith("//", self.i):
+                while self.i < n and t[self.i] != "\n":
+                    self.i += 1
+            elif t.startswith("/*", self.i):
+                e = t.find("*/", self.i + 2)
+                if e < 0:
+                    raise ValueError("unterminated comment")
+                self.i = e + 2
+            else:
+                return
+
+    def value(self):
+        self.ws()
+        t, a = self.t, self.i
+        if a >= len(t):
+            raise ValueError("unexpected end")
+        c = t[a]
+        if c in "{[":
+            close = "}" if c == "{" else "]"
+            node = {"k": "obj" if c == "{" else "arr", "open": a, "items": [], "last": None}
+            self.i += 1
+            while True:
+                self.ws()
+                if t[self.i] == close:
+                    break
+                key = None
+                if node["k"] == "obj":
+                    key = self.value()
+                    if key["k"] != "str":
+                        raise ValueError("non-string key")
+                    self.ws()
+                    if t[self.i] != ":":
+                        raise ValueError("expected ':'")
+                    self.i += 1
+                v = self.value()
+                node["items"].append((key["v"] if key else None, v))
+                node["last"] = (key["start"] if key else v["start"], v["end"])
+                self.ws()
+                if t[self.i] == ",":
+                    self.i += 1
+                elif t[self.i] != close:
+                    raise ValueError("expected ',' or close")
+            node["start"], node["end"] = a, self.i + 1
+            self.i += 1
+            return node
+        if c == '"':
+            j = a + 1
+            while t[j] != '"':
+                j += 2 if t[j] == "\\" else 1
+            self.i = j + 1
+            return {"k": "str", "start": a, "end": self.i, "v": json.loads(t[a : self.i])}
+        j = a
+        while j < len(t) and t[j] not in ",]} \t\r\n/":
+            j += 1
+        self.i = j
+        return {"k": "lit", "start": a, "end": j, "v": json.loads(t[a:j])}
+
+
+def parse(t):
+    p = Parser(t)
+    root = p.value()
+    p.ws()
+    if p.i != len(t):
+        raise ValueError("trailing data")
+    return root
+
+
+def member(obj, key):
+    found = None
+    for k, v in obj["items"]:
+        if k == key:
+            found = v  # last duplicate wins, like json.loads
+    return found
+
+
+def line_indent(t, pos):
+    b = t.rfind("\n", 0, pos) + 1
+    e = b
+    while e < len(t) and t[e] in " \t":
+        e += 1
+    return t[b:e]
+
+
+def insert(t, cont, render):
+    # Append one element/member to container `cont`, spliced after its last
+    # element (a trailing comma, if any, stays behind the new element).
+    if cont["last"] is None:
+        base = line_indent(t, cont["open"])
+        ind = base + "  "
+        at = cont["open"] + 1
+        return t[:at] + "\n" + ind + render(ind) + "\n" + base + t[at:]
+    ind = line_indent(t, cont["last"][0])
+    at = cont["last"][1]
+    return t[:at] + ",\n" + ind + render(ind) + t[at:]
+
+
+def dumps_at(v, ind):
+    return json.dumps(v, indent=2, ensure_ascii=False).replace("\n", "\n" + ind)
+
+
+expected = json.loads(strip_jsonc(raw))
+plain = strip_jsonc(raw) == raw
+what = []
+
+# 1. Path rewrite: only dict string values (wrapper commands and args around
+#    the token survive; the shared rewriter handles KEY= prefixes, spaces and
+#    backslashes in the target home).
 def walk(node):
-    global changed
     if isinstance(node, dict):
         for k, v in node.items():
-            if isinstance(v, str) and "block-unsafe-kill.sh" in v:
+            if isinstance(v, str) and NAME in v:
                 nv = rewrite_guard_paths(v, guard)
                 if nv != v:
                     node[k] = nv
-                    changed = True
             else:
                 walk(v)
     elif isinstance(node, list):
         for v in node:
             walk(v)
 
-walk(data)
-if "block-unsafe-kill.sh" not in json.dumps(data):
-    hook = {"hooks": [{"type": "command", "command": guard, "timeout": 10}]}
-    data.setdefault("hooks", {}).setdefault("PreToolUse", []).append(hook)
-    changed = True
-print(json.dumps(data, indent=2, ensure_ascii=False))
+walk(expected)
+new_text = None
+try:
+    t = raw
+    edits = []
+
+    def spans(node):
+        if node["k"] == "obj":
+            for k, v in node["items"]:
+                if v["k"] == "str" and NAME in v["v"]:
+                    nv = rewrite_guard_paths(v["v"], guard)
+                    if nv != v["v"]:
+                        edits.append((v["start"], v["end"], json.dumps(nv, ensure_ascii=False)))
+                else:
+                    spans(v)
+        elif node["k"] == "arr":
+            for _, v in node["items"]:
+                spans(v)
+
+    spans(parse(t))
+    for a, b, rep in sorted(edits, reverse=True):
+        t = t[:a] + rep + t[b:]
+    if edits:
+        what.append(f"rewrote {len(edits)} guard path(s)")
+
+    # 2. Structural wiring check; insert the standard stanza when absent.
+    if not json_wired(expected):
+        hook = {"hooks": [{"type": "command", "command": guard, "timeout": 10}]}
+        expected.setdefault("hooks", {}).setdefault("PreToolUse", []).append(hook)
+        root = parse(t)
+        if root["k"] != "obj":
+            raise ValueError("top level is not an object")
+        hooks = member(root, "hooks")
+        if hooks is None:
+            t = insert(t, root, lambda ind: '"hooks": ' + dumps_at({"PreToolUse": [hook]}, ind))
+        elif hooks["k"] != "obj":
+            raise ValueError("hooks is not an object")
+        else:
+            pre = member(hooks, "PreToolUse")
+            if pre is None:
+                t = insert(t, hooks, lambda ind: '"PreToolUse": ' + dumps_at([hook], ind))
+            elif pre["k"] != "arr":
+                raise ValueError("hooks.PreToolUse is not an array")
+            else:
+                t = insert(t, pre, lambda ind: dumps_at(hook, ind))
+        what.append("inserted PreToolUse stanza")
+    if json.loads(strip_jsonc(t)) != expected:
+        raise ValueError("splice cross-check mismatch")
+    new_text = t
+except (ValueError, IndexError, KeyError, json.JSONDecodeError):
+    new_text = None
+
+with open(status, "w") as fh:
+    if not what:
+        fh.write("unchanged\n\n")
+        sys.stdout.write(raw)
+    elif new_text is not None:
+        fh.write("edit\n" + "; ".join(what) + "\n")
+        sys.stdout.write(new_text)
+    else:
+        # Splice impossible (odd shape): full re-serialization. Lossless for a
+        # plain-JSON file; for JSONC the caller warns and names the backup.
+        fh.write(("reformat" if plain else "lossy") + "\n" + "; ".join(what) + " (re-serialized)\n")
+        print(json.dumps(expected, indent=2, ensure_ascii=False))
 PYEOF
   then
     say "WARN  python3 JSON wiring failed for $dst (left as-is)"
-    rm -f "$out"
+    rm -f "$out" "$st"
     return 0
   fi
-  if [ ! -s "$out" ]; then rm -f "$out"; say "WARN  empty wiring output for $dst (left as-is)"; return 0; fi
-  if cmp -s "$out" "$dst"; then
-    note "unchanged $dst (already wired to $GUARD)"
-    rm -f "$out"
-  else
-    act "wire $dst -> $GUARD"
-    if [ "$DRY_RUN" -eq 0 ]; then
-      backup_file "$dst"
-      # Plain cp (no -p): $out is a umask-0644 temp file; stamping its mode
-      # would clobber the user's 0600 settings.json. Existing dst keeps its mode.
-      cp "$out" "$dst"
-    else
-      note "(would timestamp-backup the existing file first)"
-    fi
-    changed
-    rm -f "$out"
-  fi
+  apply_wiring "$dst" "$out" "$st"
+  rm -f "$out" "$st"
 }
 
 wire_json_hook "$TARGET_HOME/.claude/settings.json"
 wire_json_hook "$TARGET_HOME/.zcode/settings.json"
 wire_json_hook "$TARGET_HOME/.grok/hooks/block-unsafe-kill.json"
 
-KIMI="$TARGET_HOME/.kimi-code/config.toml"
-if [ ! -f "$KIMI" ]; then
-  say "SKIP  $KIMI does not exist (not created wholesale)"
-elif grep -q 'block-unsafe-kill\.sh' "$KIMI"; then
-  stage="$WORK/kimi.$$"
-  # Rewrite only the path token, never the whole quoted string: wrapper command
-  # and args survive, e.g. command = "bash /x/block-unsafe-kill.sh -v --flag".
-  # The shared rewriter handles KEY= prefixes and space-containing homes.
-  python3 "$WORK/guard_rewrite.py" "$GUARD" "$KIMI" >"$stage"
-  if cmp -s "$stage" "$KIMI"; then
-    note "unchanged $KIMI (already wired to $GUARD)"
-  else
-    act "wire $KIMI -> $GUARD"
-    if [ "$DRY_RUN" -eq 0 ]; then backup_file "$KIMI"; cp "$stage" "$KIMI"; else note "(would timestamp-backup the existing file first)"; fi
-    changed
+wire_toml_hook() {
+  # $1 = kimi config.toml. Rewrites guard path tokens in place (wrapper command
+  # and args survive, e.g. command = "bash /x/block-unsafe-kill.sh -v"), then
+  # appends a [[hooks]] block unless one is structurally wired (event =
+  # PreToolUse, command referencing the guard). The guard path is written as a
+  # TOML basic string, so `"` and `\` in the target home are escaped.
+  local dst="$1" out="$WORK/kimi.$RANDOM.$$" st="$WORK/kimi-st.$RANDOM.$$"
+  if [ ! -f "$dst" ]; then
+    say "SKIP  $dst does not exist (not created wholesale)"
+    return 0
   fi
-  rm -f "$stage"
-else
-  act "append kill-guard [[hooks]] block to $KIMI"
-  if [ "$DRY_RUN" -eq 0 ]; then
-    backup_file "$KIMI"
-    {
-      echo ''
-      echo '# --- opencode bootstrap kill-guard wiring (added by bootstrap/install.sh) ---'
-      echo '[[hooks]]'
-      echo 'event = "PreToolUse"'
-      echo 'matcher = "Bash"'
-      echo "command = \"$GUARD\""
-      echo 'timeout = 10'
-    } >>"$KIMI"
+  if ! python3 - "$dst" "$GUARD" "$WORK" "$st" >"$out" <<'PYEOF'
+import sys
+path, guard, work, status = sys.argv[1:5]
+sys.path.insert(0, work)
+from guard_rewrite import rewrite_guard_paths
+from guard_wired import toml_wired
+
+with open(path, encoding="utf-8") as fh:
+    raw = fh.read()
+
+
+def toml_basic(s):
+    out = []
+    for ch in s:
+        if ch in '"\\':
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append("\\u%04X" % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+what = []
+t = rewrite_guard_paths(raw, toml_basic(guard)) if "block-unsafe-kill.sh" in raw else raw
+if t != raw:
+    what.append("rewrote guard path(s)")
+try:
+    import tomllib
+    wired = toml_wired(tomllib.loads(t))
+except Exception:
+    # No tomllib (python < 3.11) or an unparseable file: degrade to the old
+    # textual test rather than appending a second block blindly.
+    wired = "block-unsafe-kill.sh" in t
+    what.append("structural check unavailable, textual fallback")
+if not wired:
+    if t and not t.endswith("\n"):
+        t += "\n"
+    t += (
+        "\n# --- opencode bootstrap kill-guard wiring (added by bootstrap/install.sh) ---\n"
+        "[[hooks]]\n"
+        'event = "PreToolUse"\n'
+        'matcher = "Bash"\n'
+        f'command = "{toml_basic(guard)}"\n'
+        "timeout = 10\n"
+    )
+    what.append("appended [[hooks]] block")
+with open(status, "w") as fh:
+    fh.write(("edit" if t != raw else "unchanged") + "\n" + "; ".join(what) + "\n")
+sys.stdout.write(t)
+PYEOF
+  then
+    say "WARN  python3 TOML wiring failed for $dst (left as-is)"
+    rm -f "$out" "$st"
+    return 0
   fi
-  changed
-fi
+  apply_wiring "$dst" "$out" "$st"
+  rm -f "$out" "$st"
+}
+
+wire_toml_hook "$TARGET_HOME/.kimi-code/config.toml"
 say "     (5th surface = the opencode plugin port; wired by step 7)"
 
 # --- 6. skills-extra ---------------------------------------------------------
@@ -633,7 +948,7 @@ for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
   [ -d "$s" ] || continue
   name=$(basename "$s")
   dst="$SK/$name"
-  if [ ! -e "$dst" ]; then
+  if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
     act "copy skill $name -> $dst"
     [ "$DRY_RUN" -eq 1 ] || cp -a "$s" "$dst"
     changed
@@ -643,7 +958,7 @@ for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
     say "WARN  COLLISION: $dst exists and differs from the bundle copy (never overwritten)"
     # Backup the local copy once per content (idempotent: no backup pile-up),
     # then leave it in place — merging is a human decision.
-    if ls "$dst".bak.* >/dev/null 2>&1; then
+    if compgen -G "$dst.bak.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]" >/dev/null; then
       note "(a timestamped backup already exists; not creating another — merge by hand)"
     elif [ "$DRY_RUN" -eq 0 ]; then
       cp -a "$dst" "$dst.bak.$TS"
@@ -660,7 +975,7 @@ say ""
 say "-- step 7: plugin/"
 PL="$TARGET_HOME/.config/opencode/plugin"
 for f in block-unsafe-kill.ts mpskills-update.ts; do
-  STAGE_SED=""   # shipped as-is on purpose (mpskills-update.ts hardcodes /home/eric)
+  STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
 motoko_dst="$PL/motoko.ts"
@@ -687,7 +1002,7 @@ fi
 
 # --- 8. goal command/agent files --------------------------------------------
 say ""
-say "-- step 8: command/ + agent/ goal files + autonomy.md shipped in the bundle"
+say "-- step 8: command/ + agent/ goal files + autonomy.md + AGENTS.goal.md shipped in the bundle"
 # agent/goal.md is a SEED (same contract as script/sync-upstream.ts): installed
 # only when absent, so a per-machine model/variant pin in the file survives
 # re-installs. The seed note inside the file promises exactly this. Everything
@@ -700,7 +1015,7 @@ for d in command agent; do
     STAGE_SED=""
     if [ "$d" = "agent" ]; then
       dst="$CFG/$d/$(basename "$f")"
-      if [ -e "$dst" ]; then
+      if [ -e "$dst" ] || [ -L "$dst" ]; then
         note "seed kept $dst (agent definition installed only when absent)"
         continue
       fi
@@ -709,8 +1024,13 @@ for d in command agent; do
   done
   [ "$found" -eq 1 ] || say "SKIP  bundle $d/ is empty (nothing to install)"
 done
-STAGE_SED=""
-install_file "$BOOTSTRAP_DIR/autonomy.md" "$CFG/autonomy.md"
+# The two instruction files opencode.jsonc's `instructions` array loads.
+# Managed (converge on every run), the same contract sync-upstream applies to
+# its dotfiles/opencode copies of both.
+for f in autonomy.md AGENTS.goal.md; do
+  STAGE_SED=""
+  install_file "$BOOTSTRAP_DIR/$f" "$CFG/$f"
+done
 
 # --- 9. bashrc egress/TTY wrapper -------------------------------------------
 say ""
@@ -734,37 +1054,73 @@ write_bashrc_block() {
   echo "$MARK_END"
 }
 
-bashrc_converge_sources() {
-  # Rewrite (never duplicate) any source line for the wrapper to the stable
-  # seat path: first source line becomes the canonical one, extra ones are
-  # dropped, and the stale "keep it at $BOOTSTRAP_DIR" comment is reworded.
-  python3 - "$BASHRC" "$STABLE_SRC" "$MARK_END" <<'PYEOF'
-import sys
-path, stable, endmark = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, encoding="utf-8", errors="surrogateescape") as fh:
-    lines = fh.read().splitlines(keepends=True)
-out = []
-seen_src = False
-for ln in lines:
-    s = ln.rstrip("\n")
-    if "source" in s and "bashrc-opencode-block.sh" in s and not s.lstrip().startswith("#"):
-        if seen_src:
+# One classifier for both the "does it need work" test and the rewrite, so the
+# two can never disagree (they used to: the grep counted commented-out lines
+# the rewrite skipped, so every run re-"converged" and left a backup; and a
+# `. path/bashrc-opencode-block.sh` dot-source was invisible to both, so a
+# second source line got appended). A wrapper source line is a non-comment
+# line that runs `source` or `.` on a path ending in bashrc-opencode-block.sh.
+cat >"$WORK/bashrc_sources.py" <<'PYEOF'
+import re, sys
+
+SRC_RE = re.compile(r"(?:^|[\s;&|(])(?:source|\.)\s+[^#\n]*bashrc-opencode-block\.sh")
+
+
+def is_source(line: str) -> bool:
+    return not line.lstrip().startswith("#") and bool(SRC_RE.search(line))
+
+
+def main() -> None:
+    mode, path, stable, mark, endmark = sys.argv[1:6]
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        lines = fh.read().splitlines(keepends=True)
+    srcs = [ln.rstrip("\r\n") for ln in lines if is_source(ln)]
+    has_mark = any(ln.rstrip("\r\n") == mark for ln in lines)
+    if mode == "check":
+        # ok       exactly one source line, and it is the stable one
+        # converge source line(s) or our marker block exist: rewrite in place
+        # append   nothing of ours yet: append the marked block
+        if srcs == [stable]:
+            print("ok")
+        elif srcs or has_mark:
+            print("converge")
+        else:
+            print("append")
+        return
+    # Rewrite (never duplicate): the first source line becomes the canonical
+    # one, extra ones are dropped, and the stale "keep it at $BOOTSTRAP_DIR"
+    # comment is reworded. Comments are left exactly as they are.
+    out = []
+    seen_src = False
+    for ln in lines:
+        s = ln.rstrip("\r\n")
+        if is_source(ln):
+            if seen_src:
+                continue
+            out.append(stable + "\n")
+            seen_src = True
             continue
+        if s.startswith("# Sourced from the bootstrap checkout"):
+            out.append("# Sourced from the seat config tree (stable path; the bundle checkout may move).\n")
+            continue
+        if not seen_src and s.strip() == endmark:
+            out.append(stable + "\n")
+            seen_src = True
+        out.append(ln)
+    if not seen_src:
+        if out and not out[-1].endswith("\n"):
+            out.append("\n")
         out.append(stable + "\n")
-        seen_src = True
-        continue
-    if s.startswith("# Sourced from the bootstrap checkout"):
-        out.append("# Sourced from the seat config tree (stable path; the bundle checkout may move).\n")
-        continue
-    if not seen_src and s.strip() == endmark:
-        out.append(stable + "\n")
-        seen_src = True
-    out.append(ln)
-if not seen_src:
-    out.append(stable + "\n")
-with open(path, "w", encoding="utf-8", errors="surrogateescape") as fh:
-    fh.write("".join(out))
+    with open(path, "w", encoding="utf-8", errors="surrogateescape") as fh:
+        fh.write("".join(out))
+
+
+if __name__ == "__main__":
+    main()
 PYEOF
+
+bashrc_sources() {
+  python3 "$WORK/bashrc_sources.py" "$1" "$BASHRC" "$STABLE_SRC" "$MARK" "$MARK_END"
 }
 
 BASHRC="$TARGET_HOME/.bashrc"
@@ -773,19 +1129,14 @@ if [ "$NO_BASHRC" -eq 1 ]; then
 elif [ ! -f "$BASHRC" ]; then
   say "SKIP  $BASHRC does not exist (not created wholesale)"
 else
-  needs=0
-  n_stable=$(grep -cxF "$STABLE_SRC" "$BASHRC" 2>/dev/null) || n_stable=0
-  if [ "$n_stable" -ne 1 ]; then needs=1; fi
-  if grep 'source' "$BASHRC" | grep 'bashrc-opencode-block\.sh' | grep -vxF "$STABLE_SRC" | grep -q .; then
-    needs=1
-  fi
-  if [ "$needs" -eq 0 ]; then
+  state=$(bashrc_sources check)
+  if [ "$state" = "ok" ]; then
     note "unchanged $BASHRC (sources the stable seat copy $BLOCK_SRC)"
-  elif grep -qF 'bashrc-opencode-block.sh' "$BASHRC" || grep -qF "$MARK" "$BASHRC"; then
+  elif [ "$state" = "converge" ]; then
     act "converge egress wrapper source line(s) in $BASHRC to the stable seat path $BLOCK_SRC"
     if [ "$DRY_RUN" -eq 0 ]; then
       backup_file "$BASHRC"
-      bashrc_converge_sources
+      bashrc_sources write
     fi
     changed
   else
