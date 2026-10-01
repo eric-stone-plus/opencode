@@ -29,6 +29,11 @@ const patterns = [
   /model_context_window_exceeded/i,
   /too many tokens/i,
   /token limit exceeded/i,
+  // Zhipu (GLM): {"error":{"code":"1261","message":"Prompt exceeds max length"}}
+  /prompt exceeds max length/i,
+  /"code"\s*:\s*"?1261\b/,
+  // DashScope (Bailian): "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]"
+  /range of input length should be \[\d+,\s*\d+\]/i,
 ]
 
 const exclusions = [/^(throttling error|service unavailable):/i, /rate limit/i, /too many requests/i]

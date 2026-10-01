@@ -97,3 +97,35 @@ describe("provider moderation rejections", () => {
     expect(parsed?.message).toBe(ProviderError.MODERATION_MESSAGE)
   })
 })
+
+describe("provider context overflow", () => {
+  test("detects Zhipu code 1261 from the body even when the message is generic", () => {
+    const parsed = ProviderError.parseAPICallError({
+      providerID: ProviderV2.ID.make("zhipuai-coding-plan"),
+      error: new APICallError({
+        message: "Bad Request",
+        url: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: JSON.stringify({ error: { code: "1261", message: "Bad request" } }),
+        isRetryable: false,
+      }),
+    })
+    expect(parsed.type).toBe("context_overflow")
+  })
+
+  test("detects in-stream Zhipu and DashScope overflow errors", () => {
+    expect(
+      ProviderError.parseStreamError({ type: "error", error: { code: 1261, message: "Prompt exceeds max length" } }),
+    ).toMatchObject({ type: "context_overflow", message: "Prompt exceeds max length" })
+    expect(
+      ProviderError.parseStreamError({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]",
+        },
+      }),
+    ).toMatchObject({ type: "context_overflow" })
+  })
+})

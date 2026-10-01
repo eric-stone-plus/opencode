@@ -90,6 +90,16 @@ describe("session.retry.delay", () => {
     expect(SessionRetry.delay(1, longError)).toBe(700000)
   })
 
+  test("caps backoff at 30 seconds when headers carry no retry hint", () => {
+    const error = apiError({ "content-type": "application/json", "x-request-id": "abc" })
+    expect(SessionRetry.delay(1, error, 0)).toBe(2000)
+    expect(SessionRetry.delay(10, error, 1)).toBe(SessionRetry.RETRY_MAX_DELAY_NO_HEADERS)
+    expect(SessionRetry.delay(40, error, 1)).toBe(SessionRetry.RETRY_MAX_DELAY_NO_HEADERS)
+    expect(SessionRetry.delay(40, error, 1, 60_000)).toBe(60_000)
+    // an explicit hint still wins over the cap
+    expect(SessionRetry.delay(40, apiError({ "retry-after": "120" }), 1)).toBe(120_000)
+  })
+
   test("caps oversized header delays to the runtime timer limit", () => {
     const error = apiError({ "retry-after-ms": "999999999999" })
     expect(SessionRetry.delay(1, error)).toBe(SessionRetry.RETRY_MAX_DELAY)
@@ -336,6 +346,74 @@ describe("session.retry.retryable", () => {
     }).toObject()
 
     expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+  })
+
+  test.each([
+    "Bad Request: request id 7f3a4290-5003-4cbb-8a12-ab5240c19524",
+    "Invalid parameter: max_tokens must be <= 4096, got 5000",
+    "Model not found (trace 429b81c0)",
+  ])("does not retry status-code digits embedded in other tokens: %s", (message) => {
+    expect(SessionRetry.retryable(wrap(message), retryProvider)).toBeUndefined()
+  })
+
+  test.each(["HTTP 503", "status code: 502", "503 Service Temporarily Down", "<500> upstream", "Bad Gateway", "error: 429"])(
+    "retries standalone status codes: %s",
+    (message) => {
+      expect(SessionRetry.retryable(wrap(message), retryProvider)).toEqual({ message })
+    },
+  )
+
+  test("does not retry a 400 whose response body contains status-like digits in ids", () => {
+    const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({
+        message: "Bad Request",
+        isRetryable: false,
+        statusCode: 400,
+        responseBody: JSON.stringify({ request_id: "e5024a0b-5291-9500-b429-3e8c5240a503", error: { code: "invalid" } }),
+      }).toObject(),
+    )
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+  })
+
+  test("never retries an overflow that arrives as a plain API error", () => {
+    const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({
+        message: "Internal server error: prompt is too long",
+        isRetryable: true,
+        statusCode: 500,
+        responseBody: '{"error":{"message":"prompt is too long","request_id":"503"}}',
+      }).toObject(),
+    )
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+  })
+
+  test("Zhipu 1261 and DashScope input-length errors become non-retryable overflow", () => {
+    const cases = [
+      new APICallError({
+        message: "Bad Request",
+        url: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: JSON.stringify({ error: { code: "1261", message: "Prompt exceeds max length" } }),
+        isRetryable: false,
+      }),
+      new APICallError({
+        message: "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]",
+        url: "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: JSON.stringify({
+          request_id: "9c0b5003-4290-9524-a502-4f0e1c2b8500",
+          error: { message: "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]" },
+        }),
+        isRetryable: false,
+      }),
+    ]
+    for (const e of cases) {
+      const error = MessageV2.fromError(e, { providerID })
+      expect(SessionV1.ContextOverflowError.isInstance(error)).toBe(true)
+      expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+    }
   })
 
   test("retries 500 errors even when isRetryable is false", () => {

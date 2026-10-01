@@ -32,6 +32,11 @@ export function isModerationRejection(value: unknown) {
   return typeof value === "string" && value.includes("data_inspection_failed")
 }
 
+// Zhipu (GLM) rejects oversized prompts with business code 1261 ("Prompt exceeds max length").
+function isZhipuOverflowCode(code: unknown) {
+  return code === "1261" || code === 1261
+}
+
 function isOpenAiErrorRetryable(e: APICallError) {
   const status = e.statusCode
   if (!status) return e.isRetryable
@@ -161,9 +166,18 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
       }
   }
 
+  const text = typeof body?.error?.message === "string" ? body.error.message : undefined
+  if (isZhipuOverflowCode(body?.error?.code) || (text !== undefined && isContextOverflow(text))) {
+    return {
+      type: "context_overflow",
+      message: text ?? "Input exceeds context window of this model",
+      responseBody,
+    }
+  }
+
   return {
     type: "api_error",
-    message: typeof body?.error?.message === "string" ? body.error.message : "Server error.",
+    message: text ?? "Server error.",
     isRetryable: true,
     responseBody,
   }
@@ -188,7 +202,12 @@ export type ParsedAPICallError =
 export function parseAPICallError(input: { providerID: ProviderV2.ID; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
-  if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
+  if (
+    isContextOverflow(m) ||
+    input.error.statusCode === 413 ||
+    body?.error?.code === "context_length_exceeded" ||
+    isZhipuOverflowCode(body?.error?.code)
+  ) {
     return {
       type: "context_overflow",
       message: m,

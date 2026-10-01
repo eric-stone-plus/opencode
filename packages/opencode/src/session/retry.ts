@@ -5,6 +5,7 @@ import { Cause, Clock, Duration, Effect, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider/error"
 import { isRecord } from "@/util/record"
+import { isContextOverflow } from "@opencode-ai/llm"
 
 export type Err = ReturnType<NamedError["toObject"]>
 
@@ -30,9 +31,12 @@ export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for se
 export const RETRY_MAX_RETRIES = 5
 
 const RETRYABLE_MESSAGE_PATTERNS = [
-  /429|500|502|503|504|524/i,
+  // Status codes only count as a standalone token in a status-like position
+  // ("HTTP 503", "status 524", "<500>", leading "429 ..."), never as digits inside
+  // request IDs or token counts.
+  /(?:^|\b(?:status(?: code)?|code|http(?:\/[\d.]+)?|error)\b[\s:=#"']*|[<([])(?:429|500|502|503|504|524)(?!\w|\.\d)/i,
   /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests/i,
-  /overloaded|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
+  /overloaded|bad gateway|gateway time-?out|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
   /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout/i,
   /^timeout$|\b(?:request|response|connection|network|stream|read) (?:timeout|timed out|time out)\b/i,
   /try your request again|retry your request|resource exhausted|resource_exhausted/i,
@@ -73,8 +77,6 @@ export function delay(
           return cap(Math.ceil(parsed))
         }
       }
-
-      return cap(Math.min(exponential(attempt, random), maxDelay ?? RETRY_MAX_DELAY))
     }
   }
 
@@ -94,6 +96,10 @@ export function retryable(error: Err, provider: string): Retryable | undefined {
     // match the status-code patterns below.
     if (ProviderError.isModerationRejection(error.data.responseBody)) return undefined
     const status = error.data.statusCode
+    // Overflow that slipped past ContextOverflowError classification: resending the
+    // same history fails the same way. A 429 "too many tokens" is a rate limit.
+    if (status !== 429 && (isOverflowText(error.data.message) || isOverflowText(error.data.responseBody)))
+      return undefined
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
     if (
@@ -111,8 +117,13 @@ export function retryable(error: Err, provider: string): Retryable | undefined {
   const lower = message.toLowerCase()
   if (lower.includes("too_many_requests")) return { message: "Too Many Requests" }
   if (lower.includes("exhausted") || lower.includes("unavailable")) return { message: "Provider is overloaded" }
+  if (isOverflowText(message)) return undefined
   if (matchesRetryableMessage(message)) return { message }
   return undefined
+}
+
+function isOverflowText(value: unknown) {
+  return typeof value === "string" && isContextOverflow(value)
 }
 
 function matchesRetryableMessage(value: unknown) {

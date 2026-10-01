@@ -13,6 +13,9 @@ describe("provider error classification", () => {
       "Prompt has 5,958,968 tokens, but the configured context size is 256,000 tokens",
       "Too many tokens",
       "Token limit exceeded",
+      '{"error":{"code":"1261","message":"Prompt exceeds max length"}}',
+      "Prompt exceeds max length",
+      "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]",
     ]
 
     expect(messages.every(isContextOverflow)).toBe(true)
