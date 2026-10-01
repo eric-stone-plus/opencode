@@ -39,7 +39,7 @@
 #   Verify with: type opencode   (must show the wrapper function)
 #
 # DEPENDENCIES: bash (interactive), curl (egress probes), python3 (_oc_tty_flush_input).
-# DEGRADATION ON A BOX WITHOUT causeway: if neither probe succeeds and the
+# DEGRADATION ON A BOX WITHOUT causeway: if none of the three probes succeeds and the
 # 18880/17878 ports are dead, the wrapper runs `command opencode "$@"` directly
 # — correct behavior on a machine with healthy direct egress.
 #

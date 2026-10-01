@@ -25,6 +25,8 @@ Engineering assessment: the 256k working window, default pruning of old tool out
 
 ### Final runtime configuration
 
+Snapshot as of this audit (2026-09-19), not the current seat: the default model has since moved to `xiaomi-token-plan-cn/mimo-v2.6-pro` (see `bootstrap/config/opencode.jsonc` for the live provider set and limits). The Bailian figures below are what this audit validated.
+
 - Provider: `bailian-token-plan-personal`; model: `qwen3.8-max`.
 - Endpoint: `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1`.
 - Keep `effort: max`, sent as `output_config.effort: max`.

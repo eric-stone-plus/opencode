@@ -25,7 +25,7 @@ An applier re-computes every numeral it is told to write, including numerals sup
 - Wrote `869 s` for a value no primary contained: the two on-disk records give **949.3 s** (24194.3 − 23245). `grep -c -F '869'` on both primaries returned **0**.
 - Wrote "the stale figure was computed as 70.5 − 58 = 12.5" to explain a published `12`. Three defects in one sentence: the arithmetic yields 12.5, not 12; `70.5` appears **0** times in the cited primary; and the provenance was asserted, never sourced.
 
-**Check**: paste the `python3 -c` / `awk` that produced the number, in the same report, before the number appears in prose.
+**Check**: paste the `awk` (or, when the round's live-command budget allows it, `python3 -c`) that produced the number, in the same report, before the number appears in prose. At a zero budget `python3 -c` is not on the read-only list (`subagent-prompts.md`), so derive with `awk`.
 
 ## 3. Quarantine prompt-supplied text
 
