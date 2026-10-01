@@ -7,7 +7,9 @@ import os from "os"
 import path from "path"
 import { Config } from "@/config/config"
 import { Shell } from "@opencode-ai/core/shell"
-import { ShellTool } from "../../src/tool/shell"
+import { ShellTool, timeoutLimits, DEFAULT_MAX_TIMEOUT_MS } from "../../src/tool/shell"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import type { EventV2 } from "@opencode-ai/core/event"
 import { Filesystem } from "@/util/filesystem"
 import { provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
 import type { Permission } from "../../src/permission"
@@ -22,7 +24,23 @@ import { Tool } from "@/tool/tool"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceStore } from "@/project/instance-store"
 
+// Captures event listeners so tests can deliver session.deleted without a database.
+const listeners = new Set<EventV2.Subscriber>()
+const emit = (type: string, data: unknown) =>
+  Effect.forEach([...listeners], (listener) => listener({ id: "evt_test", type, data } as never), { discard: true })
+const eventsLayer = Layer.succeed(
+  EventV2Bridge.Service,
+  EventV2Bridge.Service.of({
+    listen: (listener: EventV2.Subscriber) =>
+      Effect.sync(() => {
+        listeners.add(listener)
+        return Effect.sync(() => listeners.delete(listener))
+      }),
+  } as unknown as EventV2.Interface),
+)
+
 const shellLayer = Layer.mergeAll(
+  eventsLayer,
   LayerNode.compile(
     LayerNode.group([
       CrossSpawnSpawner.node,
@@ -179,6 +197,20 @@ const mustTruncate = (result: {
     [`shell: ${process.env.SHELL || ""}`, `exit: ${String(result.metadata.exit)}`, "output:", result.output].join("\n"),
   )
 }
+
+describe("tool.shell timeout limits", () => {
+  it.effect("defaults to a 30 minute cap and never exceeds the timer range", () =>
+    Effect.sync(() => {
+      expect(timeoutLimits({})).toEqual({ max: DEFAULT_MAX_TIMEOUT_MS, default: 120_000 })
+      expect(timeoutLimits({ bashDefaultTimeoutMs: 3_600_000 })).toEqual({ max: 3_600_000, default: 3_600_000 })
+      expect(timeoutLimits({ bashMaxTimeoutMs: 60_000, bashDefaultTimeoutMs: 3_600_000 })).toEqual({
+        max: 60_000,
+        default: 60_000,
+      })
+      expect(timeoutLimits({ bashMaxTimeoutMs: 2 ** 40 }).max).toBeLessThan(2 ** 31 - 1)
+    }),
+  )
+})
 
 describe("tool.shell", () => {
   each("basic", () =>
@@ -1077,6 +1109,23 @@ describe("tool.shell abort", () => {
     15_000,
   )
 
+  it.live(
+    "caps a model-supplied timeout at the configured maximum",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const tool = yield* initShell()
+          expect(tool.description).toContain("up to 500ms")
+          const start = Date.now()
+          const result = yield* tool.execute({ command: `sleep 60`, timeout: 10_000_000_000 }, ctx)
+          expect(Date.now() - start).toBeLessThan(8000)
+          expect(result.output).toContain("maximum timeout of 500 ms")
+        }),
+      ).pipe(Effect.provide(RuntimeFlags.layer({ bashMaxTimeoutMs: 500 }))),
+    15_000,
+  )
+
   // A background process that leaves the process group keeps stdout open after
   // the shell exits. The tool used to wait for that pipe to close forever.
   const setsid = `python3 -c "import os,time; os.setsid(); time.sleep(30)" & echo started`
@@ -1145,6 +1194,68 @@ describe("tool.shell abort", () => {
   )
 
   if (process.platform !== "win32") {
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const waitDead = (pid: number) =>
+      Effect.gen(function* () {
+        const deadline = Date.now() + 6000
+        while (Date.now() < deadline && alive(pid)) yield* Effect.sleep("50 millis")
+        return !alive(pid)
+      })
+    const spawnBackground = (next: Tool.Context = ctx) =>
+      Effect.gen(function* () {
+        const result = yield* run({ command: `sleep 30 > /dev/null 2>&1 & echo pid=$!` }, next)
+        expect(result.metadata.exit).toBe(0)
+        const pid = Number(/pid=(\d+)/.exec(result.output)?.[1])
+        expect(pid).toBeGreaterThan(0)
+        return pid
+      })
+
+    it.live(
+      "keeps background processes across commands and reaps them on session deletion",
+      () =>
+        runIn(
+          projectRoot,
+          Effect.gen(function* () {
+            const mine = yield* spawnBackground()
+            const other = yield* spawnBackground({ ...ctx, sessionID: SessionID.make("ses_other") })
+            try {
+              yield* run({ command: "echo next" })
+              expect(alive(mine)).toBe(true)
+              yield* emit("session.deleted", { sessionID: ctx.sessionID })
+              expect(yield* waitDead(mine)).toBe(true)
+              expect(alive(other)).toBe(true)
+            } finally {
+              for (const pid of [mine, other]) if (alive(pid)) process.kill(pid, "SIGKILL")
+            }
+          }),
+        ),
+      20_000,
+    )
+
+    it.live(
+      "reaps background processes when the instance is disposed",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* tmpdirScoped()
+          const pid = yield* runIn(tmp, spawnBackground())
+          try {
+            expect(alive(pid)).toBe(true)
+            yield* InstanceStore.Service.use((store) => store.disposeAll())
+            expect(yield* waitDead(pid)).toBe(true)
+          } finally {
+            if (alive(pid)) process.kill(pid, "SIGKILL")
+          }
+        }),
+      20_000,
+    )
+
     it.live("captures stderr in output", () =>
       runIn(
         projectRoot,

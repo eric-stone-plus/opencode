@@ -282,6 +282,17 @@ describe("RuntimeFlags", () => {
     )
   }
 
+  it.effect("parses bashMaxTimeoutMs from config", () =>
+    Effect.gen(function* () {
+      const set = yield* readFlags.pipe(
+        Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL_BASH_MAX_TIMEOUT_MS: "3600000" })),
+      )
+      expect(set.bashMaxTimeoutMs).toBe(3_600_000)
+      const unset = yield* readFlags.pipe(Effect.provide(fromConfig({})))
+      expect(unset.bashMaxTimeoutMs).toBeUndefined()
+    }),
+  )
+
   for (const input of [
     { name: "absent", config: {}, expected: undefined },
     {

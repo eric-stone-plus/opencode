@@ -1,4 +1,4 @@
-import { Effect, Fiber, Schedule, Semaphore, Stream } from "effect"
+import { Effect, Fiber, Schedule, Scope, Semaphore, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -21,10 +21,17 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 
 export { Parameters } from "./shell/prompt"
 
 const MAX_METADATA_LENGTH = 30_000
+// Upper bound for a model-supplied timeout unless OPENCODE_EXPERIMENTAL_BASH_MAX_TIMEOUT_MS overrides it.
+export const DEFAULT_MAX_TIMEOUT_MS = 30 * 60 * 1000
+// Node timers overflow above a signed 32-bit int and fire immediately. Leave room for the +100ms grace.
+const TIMER_MAX_MS = 2_147_483_647 - 1_000
+const GROUP_KILL_GRACE_MS = 3_000
 const CWD = new Set(["cd", "chdir", "popd", "pushd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD,
@@ -254,6 +261,41 @@ function tail(text: string, maxLines: number, maxBytes: number) {
   }
 }
 
+export function timeoutLimits(flags: { bashDefaultTimeoutMs?: number; bashMaxTimeoutMs?: number }) {
+  const max = Math.min(
+    flags.bashMaxTimeoutMs ?? Math.max(DEFAULT_MAX_TIMEOUT_MS, flags.bashDefaultTimeoutMs ?? 0),
+    TIMER_MAX_MS,
+  )
+  return { max, default: Math.min(flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000, max) }
+}
+
+// A POSIX process group outlives its leader while members remain, so `-pgid` keeps
+// addressing exactly the background jobs a finished command left behind.
+function groupAlive(pgid: number) {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(-pgid, signal)
+  } catch {}
+}
+
+const killGroups = (pgids: number[]) =>
+  Effect.gen(function* () {
+    const live = pgids.filter(groupAlive)
+    if (live.length === 0) return
+    for (const pgid of live) signalGroup(pgid, "SIGTERM")
+    const deadline = Date.now() + GROUP_KILL_GRACE_MS
+    while (Date.now() < deadline && live.some(groupAlive)) yield* Effect.sleep("100 millis")
+    for (const pgid of live) if (groupAlive(pgid)) signalGroup(pgid, "SIGKILL")
+  })
+
 const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boolean) {
   const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
   if (!tree) throw new Error("Failed to parse command")
@@ -344,7 +386,39 @@ export const ShellTool = Tool.define(
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
-    const defaultTimeoutMs = flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000
+    const events = yield* EventV2Bridge.Service
+    const limitsMs = timeoutLimits(flags)
+    const defaultTimeoutMs = limitsMs.default
+    const maxTimeoutMs = limitsMs.max
+
+    // Background jobs (`cmd &`, nohup) survive a successful command on purpose: dev
+    // servers and watchers are legitimate for the rest of the session. Their process
+    // groups are reaped when the session is deleted, its instance is disposed, or the
+    // tool layer shuts down. `setsid`/daemonizers leave the group and are not tracked.
+    const groups = new Map<number, { sessionID: string; directory: string }>()
+    const reap = (match: (owner: { sessionID: string; directory: string }) => boolean) =>
+      Effect.suspend(() => {
+        const pgids = [...groups].filter(([, owner]) => match(owner)).map(([pgid]) => pgid)
+        for (const pgid of pgids) groups.delete(pgid)
+        return killGroups(pgids)
+      })
+    const track = (pgid: number, owner: { sessionID: string; directory: string }) =>
+      Effect.sync(() => {
+        for (const known of [...groups.keys()]) if (!groupAlive(known)) groups.delete(known)
+        if (groupAlive(pgid)) groups.set(pgid, owner)
+      })
+    yield* Effect.addFinalizer(() => reap(() => true))
+    const scope = yield* Scope.Scope
+    // Listeners run inline with the publisher (Session.remove); don't hold it through the kill grace.
+    const unsubscribe = yield* events.listen((event) => {
+      if (event.type !== SessionV1.Event.Deleted.type) return Effect.void
+      const sessionID = (event.data as { sessionID: string }).sessionID
+      return reap((owner) => owner.sessionID === sessionID).pipe(Effect.forkIn(scope), Effect.asVoid)
+    })
+    yield* Effect.addFinalizer(() => unsubscribe)
+    const instances = yield* InstanceState.make<void>((instance) =>
+      Effect.addFinalizer(() => reap((owner) => owner.directory === instance.directory)),
+    )
 
     const cygpath = Effect.fn("ShellTool.cygpath")(function* (shell: string, text: string) {
       const lines = yield* spawner
@@ -432,6 +506,7 @@ export const ShellTool = Tool.define(
         cwd: string
         env: NodeJS.ProcessEnv
         timeout: number
+        directory: string
       },
       ctx: Tool.Context,
     ) {
@@ -488,10 +563,13 @@ export const ShellTool = Tool.define(
         },
       })
 
+      let pgid: number | undefined
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+          // Non-Windows shells run detached, so the shell pid is the process group id.
+          if (process.platform !== "win32") pgid = handle.pid
 
           // Publish the first chunk immediately, then sample at 100ms. A trailing
           // flush is essential when a burst is followed by a long-running job
@@ -568,10 +646,14 @@ export const ShellTool = Tool.define(
         }),
       ).pipe(Effect.ensuring(pushMeta), Effect.orDie)
 
+      if (pgid !== undefined) yield* track(pgid, { sessionID: ctx.sessionID, directory: input.directory })
+
       const meta: string[] = []
       if (expired) {
         meta.push(
-          `shell tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.`,
+          input.timeout >= maxTimeoutMs
+            ? `shell tool terminated command after reaching the maximum timeout of ${input.timeout} ms. Run long jobs in the background (e.g. \`nohup cmd > log 2>&1 &\`) and poll their output instead.`
+            : `shell tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds (max ${maxTimeoutMs}).`,
         )
       }
       if (aborted) meta.push("User aborted the command")
@@ -610,7 +692,7 @@ export const ShellTool = Tool.define(
         const shell = Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
-        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
+        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs, maxTimeoutMs)
         yield* Effect.logInfo("shell tool using shell", { shell })
 
         return {
@@ -619,13 +701,15 @@ export const ShellTool = Tool.define(
           execute: (params: Parameters, ctx: Tool.Context) =>
             Effect.gen(function* () {
               const instanceCtx = yield* InstanceState.context
+              // Materialize per-instance state so disposing the instance reaps its groups.
+              yield* InstanceState.get(instances)
               const cwd = params.workdir
                 ? yield* resolvePath(params.workdir, instanceCtx.directory, shell)
                 : instanceCtx.directory
               if (params.timeout !== undefined && params.timeout < 0) {
                 throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
               }
-              const timeout = params.timeout ?? defaultTimeoutMs
+              const timeout = Math.min(params.timeout ?? defaultTimeoutMs, maxTimeoutMs)
               const ps = Shell.ps(shell)
               yield* Effect.scoped(
                 Effect.gen(function* () {
@@ -645,6 +729,7 @@ export const ShellTool = Tool.define(
                   cwd,
                   env: yield* shellEnv(ctx, cwd),
                   timeout,
+                  directory: instanceCtx.directory,
                 },
                 ctx,
               )
