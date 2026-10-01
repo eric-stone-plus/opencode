@@ -267,27 +267,36 @@ m_flush() {
   [ -n "$M_SEGFIRST" ] || M_SEGFIRST="$tok"
 }
 
-# Is a quoted span exactly one option token (`-f`, `--full`, `-9f`)? The shell
+# Is a quoted span exactly one option NAME (`-f`, `--full`, `-9f`)? The shell
 # strips the quotes before getopt sees the word, so a quoted flag is still a
-# flag — the mask must keep it visible or has_flag goes blind. A span with
-# whitespace is prose, not a flag.
+# flag — the mask must keep it visible or has_flag goes blind. Only a plain
+# option name qualifies: anything else (`=`, `|`, `;`, `&`, `$`, backticks,
+# whitespace, non-ASCII) is unmasked operator text and would leak into the
+# statement scanner as a phantom `pkill -f`.
 m_opt_token() {
   case "$1" in
-    -?*)
-      case "$1" in
-        *[[:space:]]*) return 1 ;;
-      esac
-      return 0
-      ;;
+    -*) ;;
+    *) return 1 ;;
   esac
-  return 1
+  case "$1" in
+    -|"--") return 1 ;;
+  esac
+  case "$1" in
+    *[!A-Za-z0-9._+-]*) return 1 ;;
+  esac
+  return 0
 }
 
 m_is_payload() {
   case "$PAYLOAD_CMDS" in *" $M_SEGFIRST "*) return 0 ;; esac
   # Short flags bundle (`bash -ec '…'`, `perl -ne '…'`): getopt still takes
   # the next word as the payload, so a cluster carrying the payload letter
-  # behaves exactly like the bare flag. Long options never bundle.
+  # behaves like the bare flag. The letter may sit anywhere in the cluster:
+  # when it is not last, getopt gives it the rest of the cluster as its own
+  # argument and the next word is $0 — but deciding that per-interpreter is
+  # getopt simulation, so the guard blocks instead (`bash -ce`, `python -cm`).
+  # `n` is no-exec syntax checking in every CODE_SHELLS member, so
+  # `bash -nc '…'` runs nothing. Long options never bundle.
   local flag=""
   case "$M_LASTTOK" in
     -c) flag=c ;;
@@ -295,7 +304,7 @@ m_is_payload() {
     -e) flag=e ;;
     -[!-]?*)
       case "$M_LASTTOK" in
-        *c*) flag=c ;;
+        *c*) case "$M_LASTTOK" in *n*) : ;; *) flag=c ;; esac ;;
         *m*) flag=m ;;
         *e*) flag=e ;;
       esac
@@ -534,8 +543,11 @@ has_kill_sink() {
 has_flag() {
   local w
   for w in $1; do
-    # A quoted flag (`pkill "-f" x`) still hands -f to getopt once the shell
-    # strips the quotes; classify the de-quoted token or the guard goes blind.
+    # A flag survives quoting and escaping on its way to getopt (`pkill "-f"`,
+    # `pkill \-f`, `pkill $'-f'`, `pkill \"-f\"`). Normalize the token before
+    # classifying it or the guard goes blind on every one of those shapes.
+    w="${w//\\/}"
+    w="${w#\$}"
     case "$w" in
       \"*\") w="${w#\"}"; w="${w%\"}" ;;
       \'*\') w="${w#\'}"; w="${w%\'}" ;;

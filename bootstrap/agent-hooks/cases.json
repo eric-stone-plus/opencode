@@ -597,5 +597,57 @@
     "cmd": "pkill -- -f x",
     "expect": "block",
     "note": "conservative: -- terminates options but the guard keeps blocking rather than reasoning about getopt"
+  },
+  {
+    "label": "backslash-escaped flag",
+    "cmd": "pkill \\-f vite",
+    "expect": "block"
+  },
+  {
+    "label": "ANSI-C quoted flag",
+    "cmd": "pkill $'-f' vite",
+    "expect": "block"
+  },
+  {
+    "label": "escaped-quote flag inside payload",
+    "cmd": "bash -c \"pkill \\\"-f\\\" x\"",
+    "expect": "block"
+  },
+  {
+    "label": "option token must be a plain name: echo metachar is data",
+    "cmd": "echo \"-;pkill\" \"-f\"",
+    "expect": "allow"
+  },
+  {
+    "label": "option token must be a plain name: pipe metachar is data",
+    "cmd": "echo \"-|cgroup_cleanup\"",
+    "expect": "allow"
+  },
+  {
+    "label": "option token must be a plain name: git --grep value is data",
+    "cmd": "git log \"--grep=-|pkill\" \"-f\"",
+    "expect": "allow"
+  },
+  {
+    "label": "bash -nc is a syntax check, not a payload",
+    "cmd": "bash -nc \"pkill -f x\"",
+    "expect": "allow"
+  },
+  {
+    "label": "cluster -ce is blocked conservatively (bash runs `e`)",
+    "cmd": "bash -ce \"pkill -f x\"",
+    "expect": "block",
+    "note": "known false positive: getopt gives -c the rest of the cluster, so the quote is $0. Blocking beats reasoning per-interpreter"
+  },
+  {
+    "label": "cluster -cm is blocked conservatively (python runs `m`)",
+    "cmd": "python -cm \"pkill -f x\"",
+    "expect": "block",
+    "note": "known false positive, same reason as -ce"
+  },
+  {
+    "label": "cluster -cn runs `n`, not the payload",
+    "cmd": "bash -cn \"pkill -f x\"",
+    "expect": "allow"
   }
 ]

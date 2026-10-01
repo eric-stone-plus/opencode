@@ -231,14 +231,19 @@ function scanText(text: string, keepQuotes = false): string {
 
   // Short flags bundle (`bash -ec '…'`, `perl -ne '…'`): getopt still takes
   // the next word as the payload, so a cluster carrying the payload letter
-  // behaves exactly like the bare flag. Long options never bundle. Read at
-  // call time: the tokenizer keeps advancing while quotes are masked.
+  // behaves like the bare flag. The letter may sit anywhere in the cluster:
+  // when it is not last, getopt gives it the rest of the cluster as its own
+  // argument and the next word is $0 — but deciding that per-interpreter is
+  // getopt simulation, so the guard blocks instead (`bash -ce`, `python -cm`).
+  // `n` is no-exec syntax checking in every CODE_SHELLS member, so
+  // `bash -nc '…'` runs nothing. Long options never bundle. Read at call
+  // time: the tokenizer keeps advancing while quotes are masked.
   const payloadLetter = (): string => {
     if (lastTok === "-c") return "c"
     if (lastTok === "-m") return "m"
     if (lastTok === "-e") return "e"
     if (/^-[^-].+/.test(lastTok)) {
-      if (lastTok.includes("c")) return "c"
+      if (lastTok.includes("c")) return lastTok.includes("n") ? "" : "c"
       if (lastTok.includes("m")) return "m"
       if (lastTok.includes("e")) return "e"
     }
@@ -387,9 +392,7 @@ function hasKillSink(stmt: string): boolean {
 function hasFlag(seg: string, letter: string, longName: string): boolean {
   const prefix = longName.endsWith("*") ? longName.slice(0, -1) : null
   for (const raw of seg.trim().split(/\s+/)) {
-    // A quoted flag (`pkill "-f" x`) still hands -f to getopt once the shell
-    // strips the quotes; classify the de-quoted token or the guard goes blind.
-    const w = dequote(raw)
+    const w = normalizeFlagWord(raw)
     if (w.startsWith("--")) {
       if (w.includes("=")) continue
       if (prefix !== null ? w.startsWith(`--${prefix}`) : w === `--${longName}`) return true
@@ -400,21 +403,27 @@ function hasFlag(seg: string, letter: string, longName: string): boolean {
   return false
 }
 
-// Strip one layer of matching shell quotes from a word.
-function dequote(word: string): string {
-  if (word.length >= 2) {
-    const q = word[0]
-    if ((q === '"' || q === "'") && word[word.length - 1] === q) return word.slice(1, -1)
+// A flag survives quoting and escaping on its way to getopt (`pkill "-f"`,
+// `pkill \-f`, `pkill $'-f'`, `pkill \"-f\"`). Normalize the token before
+// classifying it or the guard goes blind on every one of those shapes.
+function normalizeFlagWord(word: string): string {
+  let w = word.replace(/\\/g, "")
+  if (w.startsWith("$")) w = w.slice(1)
+  if (w.length >= 2) {
+    const q = w[0]
+    if ((q === '"' || q === "'") && w[w.length - 1] === q) w = w.slice(1, -1)
   }
-  return word
+  return w
 }
 
-// Is a quoted span exactly one option token (`-f`, `--full`, `-9f`)? The shell
+// Is a quoted span exactly one option NAME (`-f`, `--full`, `-9f`)? The shell
 // strips the quotes before getopt sees the word, so a quoted flag is still a
-// flag — the mask must keep it visible or hasFlag goes blind. A span with
-// whitespace is prose, not a flag.
+// flag — the mask must keep it visible or hasFlag goes blind. Only a plain
+// option name qualifies: anything else (`=`, `|`, `;`, `&`, `$`, backticks,
+// whitespace, non-ASCII) is unmasked operator text and would leak into the
+// statement scanner as a phantom `pkill -f`.
 function isOptionToken(inner: string): boolean {
-  return /^-\S+$/.test(inner)
+  return /^--?[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(inner) && inner !== "-" && inner !== "--"
 }
 
 function segsWith(stmt: string, prog: string): string[] {
