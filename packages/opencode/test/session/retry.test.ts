@@ -356,12 +356,16 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(wrap(message), retryProvider)).toBeUndefined()
   })
 
-  test.each(["HTTP 503", "status code: 502", "503 Service Temporarily Down", "<500> upstream", "Bad Gateway", "error: 429"])(
-    "retries standalone status codes: %s",
-    (message) => {
-      expect(SessionRetry.retryable(wrap(message), retryProvider)).toEqual({ message })
-    },
-  )
+  test.each([
+    "HTTP 503",
+    "status code: 502",
+    "503 Service Temporarily Down",
+    "<500> upstream",
+    "Bad Gateway",
+    "error: 429",
+  ])("retries standalone status codes: %s", (message) => {
+    expect(SessionRetry.retryable(wrap(message), retryProvider)).toEqual({ message })
+  })
 
   test("does not retry a 400 whose response body contains status-like digits in ids", () => {
     const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
@@ -369,7 +373,10 @@ describe("session.retry.retryable", () => {
         message: "Bad Request",
         isRetryable: false,
         statusCode: 400,
-        responseBody: JSON.stringify({ request_id: "e5024a0b-5291-9500-b429-3e8c5240a503", error: { code: "invalid" } }),
+        responseBody: JSON.stringify({
+          request_id: "e5024a0b-5291-9500-b429-3e8c5240a503",
+          error: { code: "invalid" },
+        }),
       }).toObject(),
     )
     expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()

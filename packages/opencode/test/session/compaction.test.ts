@@ -5,6 +5,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { APICallError } from "ai"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
+import { TestClock } from "effect/testing"
 import * as Stream from "effect/Stream"
 import { Config } from "@/config/config"
 import { LLM } from "../../src/session/llm"
@@ -1989,4 +1990,319 @@ describe("SessionNs.getUsage", () => {
     expect(result.tokens.cache.read).toBe(200)
     expect(result.tokens.cache.write).toBe(300)
   })
+})
+
+function scriptedProcessor(steps: Array<"continue" | "compact" | NonNullable<SessionV1.Assistant["error"]>>) {
+  const calls = { count: 0 }
+  const layer = Layer.succeed(
+    SessionProcessorModule.SessionProcessor.Service,
+    SessionProcessorModule.SessionProcessor.Service.of({
+      create: Effect.fn("TestSessionProcessor.create")((input) =>
+        Effect.succeed({
+          ...fake(input, "continue"),
+          process: Effect.fn("TestSessionProcessor.process")(() =>
+            Effect.sync((): SessionProcessorModule.SessionProcessor.Result => {
+              const step = steps[Math.min(calls.count++, steps.length - 1)]!
+              if (typeof step === "string") {
+                if (step === "continue") input.assistantMessage.finish = "stop"
+                return step
+              }
+              input.assistantMessage.error = step
+              return "stop"
+            }),
+          ),
+        }),
+      ),
+    }),
+  )
+  return { calls, layer }
+}
+
+function withScripted(processor: ReturnType<typeof scriptedProcessor>) {
+  return Effect.provide(
+    AppNodeBuilder.build(compactionTestNode, [
+      [Provider.node, wide().layer],
+      [RuntimeFlags.node, RuntimeFlags.layer({ experimentalEventSystem: true })],
+      [SessionSummary.node, summary],
+      [SessionProcessorModule.SessionProcessor.node, processor.layer],
+    ]),
+  )
+}
+
+const transient = () =>
+  new SessionV1.APIError({ message: "Service Unavailable", statusCode: 503, isRetryable: true }).toObject()
+
+// Drives compaction's retry sleeps under a TestClock.
+function processUnderTestClock(input: Parameters<SessionCompaction.Interface["process"]>[0]) {
+  return Effect.gen(function* () {
+    const fiber = yield* SessionCompaction.use.process(input).pipe(Effect.forkChild)
+    for (let i = 0; i < 10; i++) {
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 10)))
+      yield* TestClock.adjust("1 minute")
+    }
+    return yield* Fiber.join(fiber)
+  }).pipe(Effect.provide(TestClock.layer()))
+}
+
+function summaries(sessionID: SessionID) {
+  return SessionNs.use
+    .messages({ sessionID })
+    .pipe(Effect.map((all) => all.filter((msg) => msg.info.role === "assistant" && msg.info.summary)))
+}
+
+describe("session.compaction.process retries", () => {
+  itCompaction.instance("re-attempts a transient summary failure and keeps one summary", () => {
+    const processor = scriptedProcessor([transient(), "continue"])
+    return Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const session = yield* ssn.create({})
+      const msg = yield* createUserMessage(session.id, "hello")
+      const msgs = yield* ssn.messages({ sessionID: session.id })
+
+      const result = yield* processUnderTestClock({
+        parentID: msg.id,
+        messages: msgs,
+        sessionID: session.id,
+        auto: false,
+      })
+
+      expect(result).toBe("continue")
+      expect(processor.calls.count).toBe(2)
+      const all = yield* summaries(session.id)
+      expect(all).toHaveLength(1)
+      expect(all[0]?.info.role === "assistant" && all[0].info.error).toBeFalsy()
+    }).pipe(withScripted(processor))
+  })
+
+  itCompaction.instance("gives up after two extra attempts", () => {
+    const processor = scriptedProcessor([transient()])
+    return Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const session = yield* ssn.create({})
+      const msg = yield* createUserMessage(session.id, "hello")
+      const msgs = yield* ssn.messages({ sessionID: session.id })
+
+      const result = yield* processUnderTestClock({
+        parentID: msg.id,
+        messages: msgs,
+        sessionID: session.id,
+        auto: true,
+      })
+
+      expect(result).toBe("stop")
+      expect(processor.calls.count).toBe(1 + SessionCompaction.COMPACTION_RETRY_DELAYS.length)
+      // earlier failed attempts are dropped; the last one stays to surface the error
+      expect(yield* summaries(session.id)).toHaveLength(1)
+      // auto compaction that gave up must not queue a synthetic continue
+      expect((yield* ssn.messages({ sessionID: session.id })).at(-1)?.info.role).toBe("assistant")
+    }).pipe(withScripted(processor))
+  })
+
+  itCompaction.instance("does not re-attempt overflow or non-transient failures", () => {
+    const overflow = scriptedProcessor(["compact"])
+    const rejected = scriptedProcessor([
+      new SessionV1.APIError({ message: "Bad Request", statusCode: 400, isRetryable: false }).toObject(),
+    ])
+    const run = (processor: ReturnType<typeof scriptedProcessor>) =>
+      Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const msg = yield* createUserMessage(session.id, "hello")
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        return yield* SessionCompaction.use.process({
+          parentID: msg.id,
+          messages: msgs,
+          sessionID: session.id,
+          auto: false,
+        })
+      }).pipe(withScripted(processor))
+    return Effect.gen(function* () {
+      expect(yield* run(overflow)).toBe("stop")
+      expect(overflow.calls.count).toBe(1)
+      expect(yield* run(rejected)).toBe("stop")
+      expect(rejected.calls.count).toBe(1)
+    })
+  })
+})
+
+describe("session.compaction.process autonomy", () => {
+  const continueText = (sessionID: SessionID) =>
+    SessionNs.use.messages({ sessionID }).pipe(
+      Effect.map((all) => {
+        const part = all.at(-1)?.parts[0]
+        return part?.type === "text" ? part.text : undefined
+      }),
+    )
+
+  it.instance(
+    "never tells a question-denied session to stop and ask",
+    Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      // same ruleset shape as `opencode run` and the auto/goal agents
+      const session = yield* ssn.create({ permission: [{ permission: "question", pattern: "*", action: "deny" }] })
+      const msg = yield* createUserMessage(session.id, "hello")
+      const msgs = yield* ssn.messages({ sessionID: session.id })
+
+      yield* SessionCompaction.use.process({ parentID: msg.id, messages: msgs, sessionID: session.id, auto: true })
+
+      const text = yield* continueText(session.id)
+      expect(text).toBe(SessionCompaction.CONTINUE_AUTONOMOUS)
+      expect(text).not.toContain("ask for clarification")
+    }),
+  )
+
+  it.instance(
+    "uses the agent's own question rule",
+    Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const session = yield* ssn.create({})
+      const msg = yield* ssn.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: session.id,
+        agent: "general",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* ssn.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: session.id,
+        type: "text",
+        text: "go",
+      })
+      const msgs = yield* ssn.messages({ sessionID: session.id })
+
+      yield* SessionCompaction.use.process({ parentID: msg.id, messages: msgs, sessionID: session.id, auto: true })
+
+      expect(yield* continueText(session.id)).toBe(SessionCompaction.CONTINUE_AUTONOMOUS)
+    }),
+  )
+
+  it.instance(
+    "keeps the upstream text for interactive agents",
+    Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const session = yield* ssn.create({})
+      const msg = yield* createUserMessage(session.id, "hello")
+      const msgs = yield* ssn.messages({ sessionID: session.id })
+
+      yield* SessionCompaction.use.process({ parentID: msg.id, messages: msgs, sessionID: session.id, auto: true })
+
+      expect(yield* continueText(session.id)).toBe(SessionCompaction.CONTINUE_INTERACTIVE)
+    }),
+  )
+})
+
+describe("session.compaction.process after a failed compaction", () => {
+  itCompaction.instance(
+    "anchors the summary on the pending marker when the user has sent a newer message",
+    () => {
+      const stub = llm()
+      let captured = ""
+      stub.push(reply("fresh summary", (input) => (captured = JSON.stringify(input.messages))))
+      return Effect.gen(function* () {
+        const test = yield* TestInstance
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        yield* createUserMessage(session.id, "old work")
+        yield* SessionCompaction.use.create({ sessionID: session.id, agent: "build", model: ref, auto: true })
+        const marker = (yield* ssn.messages({ sessionID: session.id })).at(-1)!.info.id
+        // the earlier attempt died on a 5xx: errored summary, no finish
+        const failed = yield* ssn.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: session.id,
+          mode: "compaction",
+          agent: "compaction",
+          path: { cwd: test.directory, root: test.directory },
+          cost: 0,
+          tokens: { output: 0, input: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          parentID: marker,
+          summary: true,
+          error: transient(),
+          time: { created: Date.now() },
+        })
+        const next = yield* createUserMessage(session.id, "new question")
+
+        const msgs = yield* MessageV2.filterCompactedEffect(session.id)
+        const { tasks, user } = MessageV2.latest(msgs)
+        expect(user?.id).toBe(next.id)
+        expect(tasks.at(-1)?.type).toBe("compaction")
+
+        const result = yield* SessionCompaction.use.process({
+          parentID: next.id,
+          messages: msgs,
+          sessionID: session.id,
+          auto: true,
+        })
+        expect(result).toBe("continue")
+        expect(captured).toContain("old work")
+        expect(captured).not.toContain("new question")
+
+        const all = yield* ssn.messages({ sessionID: session.id })
+        expect(all.some((msg) => msg.info.id === failed.id)).toBe(false)
+        const done = all.filter((msg) => msg.info.role === "assistant" && msg.info.summary)
+        expect(done).toHaveLength(1)
+        expect(done[0]?.info.role === "assistant" && done[0].info.parentID).toBe(marker)
+        // the user's message drives the next turn: no synthetic continue after it
+        expect(all.at(-1)?.info.role).toBe("assistant")
+
+        const view = yield* MessageV2.filterCompactedEffect(session.id)
+        expect(view.map((msg) => msg.info.id)).toEqual([marker, done[0]!.info.id, next.id])
+        const state = MessageV2.latest(view)
+        expect(state.user?.id).toBe(next.id)
+        expect(state.tasks).toEqual([])
+      }).pipe(withCompaction({ llm: stub.llmLayer }))
+    },
+    { git: true },
+  )
+})
+
+describe("session.compaction.select split turn", () => {
+  itCompaction.instance(
+    "keeps the longest suffix of one huge turn that fits the budget",
+    () => {
+      const stub = llm()
+      let captured = ""
+      stub.push(reply("summary", (input) => (captured = JSON.stringify(input.messages))))
+      return Effect.gen(function* () {
+        const test = yield* TestInstance
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const user = yield* createUserMessage(session.id, "goal")
+        const steps: MessageID[] = []
+        for (let i = 0; i < 40; i++) {
+          const step = yield* createAssistantMessage(session.id, user.id, test.directory)
+          yield* ssn.updatePart({
+            id: PartID.ascending(),
+            messageID: step.id,
+            sessionID: session.id,
+            type: "text",
+            text: `step-${i} ` + "w".repeat(400),
+          })
+          steps.push(step.id)
+        }
+        yield* createSummaryCompaction(session.id)
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        yield* SessionCompaction.use.process({
+          parentID: msgs.at(-1)!.info.id,
+          messages: msgs,
+          sessionID: session.id,
+          auto: false,
+        })
+
+        const part = yield* readCompactionPart(session.id)
+        const kept = steps.indexOf(part!.tail_start_id as MessageID)
+        // ~110 tokens per step, 1000 budget: the last 8-9 steps survive
+        expect(kept).toBeGreaterThan(30)
+        expect(kept).toBeLessThan(35)
+        expect(captured).toContain("step-0 ")
+        expect(captured).not.toContain("step-39 ")
+      }).pipe(withCompaction({ llm: stub.llmLayer, config: cfg({ tail_turns: 1, preserve_recent_tokens: 1_000 }) }))
+    },
+    { git: true },
+  )
 })

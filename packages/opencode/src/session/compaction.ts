@@ -11,6 +11,9 @@ import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/storage"
+import { Permission } from "@/permission"
+import { SessionRetry } from "./retry"
+import { SessionStatus } from "./status"
 
 import { Effect, Layer, Context } from "effect"
 import { InstanceState } from "@/effect/instance-state"
@@ -31,6 +34,12 @@ const TOOL_OUTPUT_MAX_CHARS = 2_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 15_000
+// Extra summary attempts after the processor's own retries gave up on a transient error.
+export const COMPACTION_RETRY_DELAYS = [30_000, 120_000]
+export const CONTINUE_INTERACTIVE =
+  "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+export const CONTINUE_AUTONOMOUS =
+  "Continue with the next steps of the task. Do not stop to ask the user; the session goal and task in context still apply."
 type Turn = {
   start: number
   end: number
@@ -112,6 +121,14 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
   })
 }
 
+// Latest compaction marker no summary has completed yet.
+function pendingCompaction(messages: SessionV1.WithParts[]) {
+  const done = new Set(completedCompactions(messages).map((item) => messages[item.userIndex]!.info.id))
+  return messages.findLast(
+    (msg) => msg.info.role === "user" && msg.parts.some((part) => part.type === "compaction") && !done.has(msg.info.id),
+  )
+}
+
 function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model }) {
   return (
     input.cfg.compaction?.preserve_recent_tokens ??
@@ -147,18 +164,16 @@ function splitTurn(input: {
   return Effect.gen(function* () {
     if (input.budget <= 0) return undefined
     if (input.turn.end - input.turn.start <= 1) return undefined
-    for (let start = input.turn.start + 1; start < input.turn.end; start++) {
-      const size = yield* input.estimate({
-        messages: input.messages.slice(start, input.turn.end),
-        model: input.model,
-      })
-      if (size > input.budget) continue
-      return {
-        start,
-        id: input.messages[start]!.info.id,
-      } satisfies Tail
+    // Size each message once and grow the suffix from the end: a goal run is one
+    // user turn with hundreds of steps, so re-estimating every suffix is quadratic.
+    let total = 0
+    let keep: Tail | undefined
+    for (let start = input.turn.end - 1; start > input.turn.start; start--) {
+      total += yield* input.estimate({ messages: [input.messages[start]!], model: input.model })
+      if (total > input.budget) break
+      keep = { start, id: input.messages[start]!.info.id }
     }
-    return undefined
+    return keep
   })
 }
 
@@ -199,6 +214,7 @@ const layer = Layer.effect(
     const provider = yield* Provider.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const status = yield* SessionStatus.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: SessionV1.Assistant["tokens"]
@@ -316,6 +332,18 @@ const layer = Layer.effect(
       }
     })
 
+    // Same gate that hides the question tool (session/llm/request.ts resolveTools):
+    // agent rules merged with the session's. auto/goal deny question, and so does
+    // `opencode run`; those runs must not be told they may stop and ask.
+    const autonomous = Effect.fn("SessionCompaction.autonomous")(function* (name: string, sessionID: SessionID) {
+      const agent = yield* agents.get(name).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      if (!agent) return false
+      const info = yield* session.get(sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      return Permission.disabled(["question"], Permission.merge(agent.permission, info?.permission ?? [])).has(
+        "question",
+      )
+    })
+
     const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {
       parentID: MessageID
       messages: SessionV1.WithParts[]
@@ -323,12 +351,30 @@ const layer = Layer.effect(
       auto: boolean
       overflow?: boolean
     }) {
-      const parent = input.messages.findLast((m) => m.info.id === input.parentID)
-      if (!parent || parent.info.role !== "user") {
+      const latest = input.messages.findLast((m) => m.info.id === input.parentID)
+      if (!latest || latest.info.role !== "user") {
         throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
       }
-      const userMessage = parent.info
+      // The loop passes the newest user message. When a compaction failed and the user
+      // has since sent another message, the pending marker is earlier: anchor the summary
+      // there, or filterCompacted never finds the boundary and the full history keeps
+      // being sent (and a non-auto compaction would end the turn unanswered).
+      const pending = latest.parts.some((part) => part.type === "compaction")
+        ? undefined
+        : pendingCompaction(input.messages)
+      const parent = pending ?? latest
+      const parentID = parent.info.id
+      const userMessage = parent.info as SessionV1.User
       const compactionPart = parent.parts.find((part): part is SessionV1.CompactionPart => part.type === "compaction")
+      // The newer real message drives the next turn, so neither replay an older
+      // prompt nor add a synthetic continue after it.
+      const followup = pending !== undefined
+      if (followup) {
+        for (const msg of input.messages) {
+          if (msg.info.role === "assistant" && msg.info.summary && msg.info.parentID === parentID && msg.info.error)
+            yield* session.removeMessage({ sessionID: input.sessionID, messageID: msg.info.id })
+        }
+      }
 
       let messages = input.messages
       let replay:
@@ -337,8 +383,8 @@ const layer = Layer.effect(
             parts: SessionV1.Part[]
           }
         | undefined
-      if (input.overflow) {
-        const idx = input.messages.findIndex((m) => m.info.id === input.parentID)
+      if (input.overflow && !followup) {
+        const idx = input.messages.findIndex((m) => m.info.id === parentID)
         for (let i = idx - 1; i >= 0; i--) {
           const msg = input.messages[i]
           if (msg.info.role === "user" && !msg.parts.some((p) => p.type === "compaction")) {
@@ -360,7 +406,8 @@ const layer = Layer.effect(
         ? yield* provider.getModel(agent.model.providerID, agent.model.modelID).pipe(Effect.orDie)
         : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID).pipe(Effect.orDie)
       const cfg = yield* config.get()
-      const history = compactionPart && messages.at(-1)?.info.id === input.parentID ? messages.slice(0, -1) : messages
+      const marker = compactionPart ? messages.findIndex((m) => m.info.id === parentID) : -1
+      const history = marker === -1 ? messages : messages.slice(0, marker)
       const prior = completedCompactions(history)
       const hidden = new Set(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
       const previousSummary = prior.at(-1)?.summary
@@ -390,62 +437,77 @@ const layer = Layer.effect(
           .filter(Boolean)
           .join("\n\n")
       const ctx = yield* InstanceState.context
-      const msg: SessionV1.Assistant = {
-        id: MessageID.ascending(),
-        role: "assistant",
-        parentID: input.parentID,
-        sessionID: input.sessionID,
-        mode: "compaction",
-        agent: "compaction",
-        variant: userMessage.model.variant,
-        summary: true,
-        path: {
-          cwd: ctx.directory,
-          root: ctx.worktree,
-        },
-        cost: 0,
-        tokens: {
-          output: 0,
-          input: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        modelID: model.id,
-        providerID: model.providerID,
-        time: {
-          created: Date.now(),
-        },
-      }
-      yield* session.updateMessage(msg)
-      const processor = yield* processors.create({
-        assistantMessage: msg,
-        sessionID: input.sessionID,
-        model,
-      })
-      const result = yield* processor.process({
-        user: userMessage,
-        agent,
-        sessionID: input.sessionID,
-        tools: {},
-        system: [],
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: [
-                  nextPrompt,
-                  ...(compacting.prompt ? ["The following is the conversation history:", conversation] : []),
-                ]
-                  .filter(Boolean)
-                  .join("\n\n"),
-              },
-            ],
+      const request = [
+        nextPrompt,
+        ...(compacting.prompt ? ["The following is the conversation history:", conversation] : []),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+      const attempt = Effect.fn("SessionCompaction.attempt")(function* () {
+        const msg: SessionV1.Assistant = {
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID,
+          sessionID: input.sessionID,
+          mode: "compaction",
+          agent: "compaction",
+          variant: userMessage.model.variant,
+          summary: true,
+          path: {
+            cwd: ctx.directory,
+            root: ctx.worktree,
           },
-        ],
-        model,
+          cost: 0,
+          tokens: {
+            output: 0,
+            input: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          modelID: model.id,
+          providerID: model.providerID,
+          time: {
+            created: Date.now(),
+          },
+        }
+        yield* session.updateMessage(msg)
+        const processor = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: input.sessionID,
+          model,
+        })
+        const result = yield* processor.process({
+          user: userMessage,
+          agent,
+          sessionID: input.sessionID,
+          tools: {},
+          system: [],
+          messages: [{ role: "user", content: [{ type: "text", text: request }] }],
+          model,
+        })
+        return { processor, result }
       })
+
+      let { processor, result } = yield* attempt()
+      // A summary that failed on a transient error (5xx, timeout) after the processor's
+      // own retries would otherwise stop the loop; long unattended runs then stall.
+      // Overflow returns "compact" and aborts are not retryable, so neither loops here.
+      for (const [index, wait] of COMPACTION_RETRY_DELAYS.entries()) {
+        const error = processor.message.error
+        const retry = result === "stop" && error ? SessionRetry.retryable(error, model.providerID) : undefined
+        if (!retry) break
+        yield* Effect.logWarning("retrying failed compaction", { "session.id": input.sessionID, wait })
+        // drop the failed summary so exactly one summary answers this compaction
+        yield* session.removeMessage({ sessionID: input.sessionID, messageID: processor.message.id })
+        yield* status.set(input.sessionID, {
+          type: "retry",
+          attempt: index + 1,
+          message: `Compaction failed, retrying: ${retry.message}`,
+          next: Date.now() + wait,
+        })
+        yield* Effect.sleep(wait)
+        ;({ processor, result } = yield* attempt())
+      }
 
       if (result === "compact") {
         processor.message.error = new SessionV1.ContextOverflowError({
@@ -465,7 +527,7 @@ const layer = Layer.effect(
         })
       }
 
-      if (result === "continue" && input.auto) {
+      if (result === "continue" && input.auto && !followup) {
         if (replay) {
           const original = replay.info
           const replayMsg = yield* session.updateMessage({
@@ -528,7 +590,7 @@ const layer = Layer.effect(
               (input.overflow
                 ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
                 : "") +
-              "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+              ((yield* autonomous(userMessage.agent, input.sessionID)) ? CONTINUE_AUTONOMOUS : CONTINUE_INTERACTIVE)
             yield* session.updatePart({
               id: PartID.ascending(),
               messageID: continueMsg.id,
@@ -602,6 +664,7 @@ export const node = LayerNode.make({
     Provider.node,
     EventV2Bridge.node,
     RuntimeFlags.node,
+    SessionStatus.node,
   ],
 })
 
