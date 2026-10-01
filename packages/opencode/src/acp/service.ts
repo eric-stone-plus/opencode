@@ -764,7 +764,7 @@ async function loadDirectorySnapshot(sdk: OpencodeClient, directory: string) {
       Provider.Info
     >
     const defaultModelStarted = performance.now()
-    const defaultModel = defaultModelFromConfig(configResponse?.data?.model, providers)
+    const defaultModel = defaultModelFromConfig(configResponse?.data?.model)
     ACPProfile.duration("acp.directory.defaultModel.resolve", defaultModelStarted, { configured: !!defaultModel })
     const modes = agents
       .filter((agent) => agent.mode !== "subagent" && agent.hidden !== true)
@@ -797,19 +797,11 @@ async function loadDirectorySnapshot(sdk: OpencodeClient, directory: string) {
   })
 }
 
-function defaultModelFromConfig(
-  configuredModel: string | undefined,
-  providers: Record<ProviderV2.ID, Provider.Info>,
-): Directory.DefaultModel | undefined {
-  const configured = configuredModel ? Provider.parseModel(configuredModel) : undefined
-  if (configured && providers[configured.providerID]?.models[configured.modelID]) return configured
-
-  // First-session ACP startup must not scan historical sessions just to infer
-  // a default. Configured model, then sorted best model keep the protocol
-  // response deterministic without extra session/message reads.
-  const best = Provider.sort(Object.values(providers).flatMap((provider) => Object.values(provider.models)))[0]
-  if (best) return { providerID: best.providerID, modelID: best.id }
-  if (configured) return configured
+function defaultModelFromConfig(configuredModel: string | undefined): Directory.DefaultModel | undefined {
+  // A configured model is returned even when no provider offers it, so the
+  // request fails downstream instead of silently running on a substitute.
+  // First-session ACP startup must not scan historical sessions to infer one.
+  if (configuredModel) return Provider.parseModel(configuredModel)
 }
 
 function selectDefaultModel(snapshot: Directory.Snapshot) {

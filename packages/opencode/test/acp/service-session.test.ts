@@ -964,6 +964,38 @@ describe("ACP service sessions", () => {
     expect(result.configOptions?.find((option) => option.id === "model")?.currentValue).toBe("test/configured-model")
   })
 
+  it("keeps an unavailable configured model instead of substituting another", async () => {
+    const created: unknown[] = []
+    const sdk = {
+      config: {
+        providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
+        get: () => Promise.resolve({ data: { model: "missing/absent-model" } }),
+      },
+      app: {
+        agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
+        skills: () => Promise.resolve({ data: [] }),
+      },
+      command: {
+        list: () => Promise.resolve({ data: [] }),
+      },
+      session: {
+        create: (input: { model?: { id?: string; providerID?: string } }) => {
+          created.push(input.model)
+          return Promise.resolve({ data: { id: "ses_missing" } })
+        },
+        list: () => Promise.resolve({ data: [] }),
+      },
+      mcp: {
+        add: () => Promise.resolve({ data: {} }),
+      },
+    } as unknown as OpencodeClient
+    const service = ACPService.make({ sdk })
+
+    await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
+
+    expect(created[0]).toMatchObject({ providerID: "missing", id: "absent-model" })
+  })
+
   it("does not scan last-used sessions when resolving the new session default", async () => {
     const historyCalls: string[] = []
     const sdk = {
