@@ -8,7 +8,7 @@ import { DataProvider } from "../../src/context/data"
 import { EditorContextProvider } from "../../src/context/editor"
 import { ExitProvider } from "../../src/context/exit"
 import { KVProvider } from "../../src/context/kv"
-import { LocalProvider } from "../../src/context/local"
+import { LocalProvider, useLocal } from "../../src/context/local"
 import { LocationProvider } from "../../src/context/location"
 import { PermissionProvider } from "../../src/context/permission"
 import { ProjectProvider } from "../../src/context/project"
@@ -69,6 +69,7 @@ export async function mountPrompt(
   let sync!: ReturnType<typeof useSync>
   let stash!: ReturnType<typeof usePromptStash>
   let toast!: ReturnType<typeof useToast>
+  let local!: ReturnType<typeof useLocal>
   const [visible, setVisible] = createSignal(true)
   const [disabled, setDisabled] = createSignal(false)
 
@@ -77,6 +78,7 @@ export async function mountPrompt(
     sync = useSync()
     stash = usePromptStash()
     toast = useToast()
+    local = useLocal()
     return (
       <Show when={visible()}>
         <Prompt
@@ -150,6 +152,8 @@ export async function mountPrompt(
     sync,
     stash,
     toast,
+    local,
+    events,
     requests,
     setVisible,
     setDisabled,

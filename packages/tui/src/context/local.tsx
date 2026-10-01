@@ -11,7 +11,7 @@ import { RGBA } from "@opentui/core"
 import { readJson, writeJsonAtomic } from "../util/persistence"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
-import { useRoute } from "./route"
+import { useRoute, type Route } from "./route"
 import { usePermission } from "./permission"
 
 export type LocalTheme = {
@@ -68,6 +68,46 @@ export function resolveVariant(input: {
   return undefined
 }
 
+export type ModelRef = { providerID: string; modelID: string }
+
+// The model is a per-session choice, not a per-agent one: once the user picks
+// a model in a session (or the session is opened with a model on its last user
+// message) it survives agent switches (Tab, follow, plan_exit). Sessions
+// without a choice resolve to the agent's pinned model, then the fallback.
+// `null` marks a session known to have no choice (created from a draft that
+// had none), `undefined` one this TUI has not seen yet. The draft composer
+// (home, before the first prompt creates a session) has its own scope, handed
+// to the session it creates.
+export type ModelChoice = ModelRef | null | undefined
+
+export const DRAFT_MODEL_SCOPE = ""
+
+export function modelScope(route: Route) {
+  return route.type === "session" ? route.sessionID : DRAFT_MODEL_SCOPE
+}
+
+// Precedence: the session's explicit choice > the agent's pinned model > the
+// global fallback (--model, config model, recents, provider default). Invalid
+// candidates (disconnected provider, removed model) are skipped.
+export function resolveModel(input: {
+  choice: ModelChoice
+  agentModel: ModelRef | undefined
+  fallback: ModelRef | undefined
+  valid(model: ModelRef): boolean
+}) {
+  for (const model of [input.choice, input.agentModel, input.fallback]) {
+    if (model && input.valid(model)) return model
+  }
+}
+
+// Variants are stored per model. A stored variant the newly chosen model does
+// not offer is dropped (unset, i.e. default) rather than kept as a dangling
+// selection; the model dialog then offers the variant picker again.
+export function variantAfterModelChange(selected: string | undefined, variants: string[]) {
+  if (!selected || selected === "default" || variants.includes(selected)) return selected
+  return undefined
+}
+
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
@@ -84,14 +124,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((item) => item.id === model.providerID)
       return !!provider?.models[model.modelID]
-    }
-
-    function getFirstValidModel(...modelFns: (() => { providerID: string; modelID: string } | undefined)[]) {
-      for (const modelFn of modelFns) {
-        const model = modelFn()
-        if (!model) continue
-        if (isModelValid(model)) return model
-      }
     }
 
     function createAgent() {
@@ -157,13 +189,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     function createModel() {
       const [modelStore, setModelStore] = createStore<{
         ready: boolean
-        model: Record<
-          string,
-          {
-            providerID: string
-            modelID: string
-          }
-        >
+        // Session-scoped explicit choice, keyed by modelScope(); in memory only.
+        model: Record<string, ModelChoice>
         recent: {
           providerID: string
           modelID: string
@@ -253,21 +280,50 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }
       })
 
-      const currentModel = createMemo(() => {
-        const a = agent.current()
-        return (
-          getFirstValidModel(
-            () => a && modelStore.model[a.name],
-            () => a && a.model,
-            fallbackModel,
-          ) ?? undefined
-        )
-      })
+      const scope = createMemo(() => modelScope(route.data))
+
+      const currentModel = createMemo(() =>
+        resolveModel({
+          choice: modelStore.model[scope()],
+          agentModel: agent.current()?.model,
+          fallback: fallbackModel(),
+          valid: isModelValid,
+        }),
+      )
+
+      function variantsOf(model: ModelRef) {
+        const info = sync.data.provider.find((item) => item.id === model.providerID)?.models[model.modelID]
+        return info?.variants ? Object.keys(info.variants) : []
+      }
+
+      function choose(model: ModelRef) {
+        batch(() => {
+          setModelStore("model", scope(), { providerID: model.providerID, modelID: model.modelID })
+          const key = `${model.providerID}/${model.modelID}`
+          const next = variantAfterModelChange(modelStore.variant[key], variantsOf(model))
+          if (next === modelStore.variant[key]) return
+          setModelStore("variant", key, next)
+          save()
+        })
+      }
 
       return {
         current: currentModel,
         get ready() {
           return modelStore.ready
+        },
+        // Whether this TUI already holds the session's model state, in which
+        // case opening it must not re-initialize from its last user message.
+        known(sessionID: string) {
+          return modelStore.model[sessionID] !== undefined
+        },
+        // Hand the draft composer's choice (or its absence) to the session it
+        // just created, so the next new session starts from defaults/pins.
+        adopt(sessionID: string) {
+          batch(() => {
+            setModelStore("model", sessionID, modelStore.model[DRAFT_MODEL_SCOPE] ?? null)
+            setModelStore("model", DRAFT_MODEL_SCOPE, undefined)
+          })
         },
         recent() {
           return modelStore.recent
@@ -303,9 +359,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (next >= recent.length) next = 0
           const val = recent[next]
           if (!val) return
-          const a = agent.current()
-          if (!a) return
-          setModelStore("model", a.name, { ...val })
+          choose(val)
         },
         cycleFavorite(direction: 1 | -1) {
           const favorites = modelStore.favorite.filter((item) => isModelValid(item))
@@ -331,9 +385,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
           const next = favorites[index]
           if (!next) return
-          const a = agent.current()
-          if (!a) return
-          setModelStore("model", a.name, { ...next })
+          choose(next)
           setModelStore("recent", recentModels(next, modelStore.recent))
           save()
         },
@@ -347,9 +399,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               })
               return
             }
-            const a = agent.current()
-            if (!a) return
-            setModelStore("model", a.name, model)
+            choose(model)
             if (options?.recent) {
               setModelStore("recent", recentModels(model, modelStore.recent))
               save()
@@ -403,10 +453,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           list() {
             const m = currentModel()
             if (!m) return []
-            const provider = sync.data.provider.find((item) => item.id === m.providerID)
-            const info = provider?.models[m.modelID]
-            if (!info?.variants) return []
-            return Object.keys(info.variants)
+            return variantsOf(m)
           },
           set(value: string | undefined) {
             const m = currentModel()

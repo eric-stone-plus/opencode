@@ -323,8 +323,10 @@ export function Prompt(props: PromptProps) {
 
   // Initialize agent/model/variant from last user message when session
   // changes; after that the agent follows a switch of the last user message's
-  // agent (M4, see followAgent). Model/variant stay session-scoped:
-  // mid-session synthetic turns must not yank the model picker.
+  // agent (M4, see followAgent). Model/variant stay session-scoped (see
+  // local.model): mid-session synthetic turns and agent switches must not yank
+  // the model picker. A session whose model state this TUI already holds
+  // (created here, or picked in on an earlier visit) keeps it.
   let syncedSessionID: string | undefined
   let synced: AgentFollowState = {}
   createEffect(() => {
@@ -339,13 +341,11 @@ export function Prompt(props: PromptProps) {
 
       // Only set agent if it's a primary agent (not a subagent)
       const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
-      if (msg.agent && isPrimaryAgent) {
-        // Keep command line --agent if specified.
-        if (!args.agent) local.agent.set(msg.agent)
-        if (msg.model) {
-          local.model.set(msg.model)
-          local.model.variant.set(msg.model.variant)
-        }
+      // Keep command line --agent if specified.
+      if (msg.agent && isPrimaryAgent && !args.agent) local.agent.set(msg.agent)
+      if (msg.model && !local.model.known(sessionID)) {
+        local.model.set(msg.model)
+        local.model.variant.set(msg.model.variant)
       }
       return
     }
@@ -1203,6 +1203,7 @@ export function Prompt(props: PromptProps) {
       }
 
       sessionID = res.data.id
+      local.model.adopt(sessionID)
     }
 
     const inputText = expandTrackedPastedText(
