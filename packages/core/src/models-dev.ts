@@ -222,20 +222,16 @@ const layer = Layer.effect(
       return text
     })
 
+    // Fork policy: the registry is never fetched implicitly. Runtime data comes only from the
+    // on-disk cache or the bundled build snapshot; a network fetch happens solely through an
+    // explicit `refresh()` (e.g. `opencode models --refresh`). Declared providers keep their
+    // config npm/baseURL regardless of what the registry says (see provider.ts).
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
       if (fromDisk) return stripZenProviders(fromDisk)
       const snapshot = yield* loadSnapshot
       if (snapshot) return stripZenProviders(snapshot)
-      if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
-      // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
-      const text = yield* Effect.scoped(
-        Effect.gen(function* () {
-          yield* Flock.effect(lockKey)
-          return yield* fetchAndWrite()
-        }),
-      )
-      return stripZenProviders(JSON.parse(text) as Record<string, Provider>)
+      return {}
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
@@ -259,11 +255,6 @@ const layer = Layer.effect(
         Effect.ignore,
       )
     })
-
-    if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
-      // Schedule.spaced runs the effect once, then waits between completions.
-      yield* Effect.forkScoped(refresh().pipe(Effect.repeat(Schedule.spaced("60 minutes")), Effect.ignore))
-    }
 
     return Service.of({ get, refresh })
   }),

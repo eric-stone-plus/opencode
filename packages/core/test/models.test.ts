@@ -154,25 +154,30 @@ describe("ModelsDev Service", () => {
     }),
   )
 
-  it.live("get() recovers from a corrupted cache file by fetching a fresh catalog", () =>
+  it.live("get() never fetches implicitly, even with a corrupted cache and fetching not disabled", () =>
     Effect.gen(function* () {
       yield* writeCacheText("{")
       const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
-      const context = yield* Layer.build(buildLayer(state))
       const result = yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           Flag.OPENCODE_DISABLE_MODELS_FETCH = false
         }),
-        () => ModelsDev.Service.use((s) => s.get()).pipe(Effect.provide(context)),
+        () =>
+          Effect.gen(function* () {
+            const context = yield* Layer.build(buildLayer(state))
+            const first = yield* ModelsDev.Service.use((s) => s.get()).pipe(Effect.provide(context))
+            // Give a (removed) background refresh fiber a chance to run before asserting.
+            yield* Effect.sleep("50 millis")
+            return first
+          }),
         () =>
           Effect.sync(() => {
             Flag.OPENCODE_DISABLE_MODELS_FETCH = true
           }),
       )
-      expect(result).toEqual(fixture2)
-      expect(yield* Effect.promise(() => readFile(cacheFile, "utf8"))).toBe(JSON.stringify(fixture2))
+      expect(result).toEqual({})
       const final = yield* Ref.get(state)
-      expect(final.calls.length).toBe(1)
+      expect(final.calls).toEqual([])
     }),
   )
 
