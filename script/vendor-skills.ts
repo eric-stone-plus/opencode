@@ -16,7 +16,7 @@ import { cp, mkdir, readdir, rm, writeFile } from "fs/promises"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const DEST = path.join(ROOT, "skills")
-const DEFAULT_SOURCE = "/home/eric/Documents/Development/public/mattpocock-skills"
+const DEFAULT_SOURCE = "/home/eric/Documents/Development/private/agent-design/tools/mattpocock"
 
 // The upstream repo promotes engineering + productivity only. `misc` and
 // `deprecated` are retired or rarely used, and `in-progress` is explicitly
