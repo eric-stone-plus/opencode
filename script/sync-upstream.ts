@@ -250,9 +250,18 @@ async function main() {
 
 // Replaces each vendored skill directory in place rather than merging into it,
 // so a skill dropped upstream disappears instead of lingering with stale
-// resources. Unrelated skills the user added by hand are left untouched.
+// resources. Unrelated skills the user added by hand are left untouched: a
+// name only counts as "ours to remove" if destination's own PROVENANCE.md
+// listed it before this call, never merely because it's absent from source.
 export async function installSkills(source: string, destination: string) {
   await mkdir(destination, { recursive: true })
+  const dropped = (await previouslyVendored(destination)).difference(
+    new Set(await readdir(path.join(source))),
+  )
+  for (const name of dropped) {
+    await rm(path.join(destination, name), { recursive: true, force: true })
+  }
+
   const entries = await readdir(source, { withFileTypes: true })
   const skills = entries.filter(
     (entry) => entry.isDirectory() && existsSync(path.join(source, entry.name, "SKILL.md")),
@@ -266,6 +275,13 @@ export async function installSkills(source: string, destination: string) {
     await copyFile(path.join(source, file.name), path.join(destination, file.name))
   }
   return skills.length
+}
+
+async function previouslyVendored(destination: string): Promise<Set<string>> {
+  const provenance = path.join(destination, "PROVENANCE.md")
+  if (!existsSync(provenance)) return new Set()
+  const text = await readFile(provenance, "utf8")
+  return new Set([...text.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]))
 }
 
 // Goal-mode config distribution. Managed content (command/goal.md,

@@ -12,7 +12,7 @@ Loaded via the `instructions` list in `~/.config/opencode/opencode.jsonc`
 
 **Self-set goals**: the goal file is ordinary disk state and the goal agent has shell access, so the agent *can* write the next goal itself. This is an entrance, not a hole, and it is protocol-bound: (1) only after the current goal's own checks have passed and the report is delivered; (2) the follow-up objective must be derived from the findings themselves, never invented work; (3) announce it in one line in the report ("set follow-up goal: X because Y"); (4) at most one hop per goal — a self-set goal may not self-set another; (5) never mid-goal, never silently. Write mechanics: `printf '%s\n' '<objective>' > <goal-path>` (the path appears in the goal reminder). Note: a bash-written goal updates the reminder from the next turn but does not emit `goal.updated`, so the footer segment lags until the next `/goal`.
 
-**Skills library**: the mattpocock skill set lives at `~/.config/opencode/skills/<name>/SKILL.md`, vendored into the opencode fork's `skills/` by `bun run vendor-skills` (check `skills/PROVENANCE.md` for the revision before trusting your memory of a skill's text — a re-vendor can change it mid-session). Auto-refreshed by the `mpskills-update` opencode plugin (`tool.execute.before` on the `skill` tool): the first call in a 24h window to any skill this fork vendors blocks briefly to `git fetch` the upstream checkout (`~/.cache/opencode/mattpocock-upstream`), re-run `vendor-skills`, reinstall to `~/.config/opencode/skills`, and commit the result — no manual refresh step, and it never fires for skills-extra or on a bare launch.
+**Skills library**: the mattpocock skill set lives at `~/.config/opencode/skills/<name>/SKILL.md`, vendored into the opencode fork's `skills/` by `bun run vendor-skills` (check `skills/PROVENANCE.md` for the revision before trusting your memory of a skill's text — a re-vendor can change it mid-session). Auto-refreshed by the `mpskills-update` opencode plugin (`tool.execute.before` on the `skill` tool): the first call in a 24h window to any skill this fork vendors blocks (usually a couple seconds, up to ~30s worst case on a bad network) to `git fetch` the upstream checkout (`~/.cache/opencode/mattpocock-upstream`), re-run `vendor-skills`, reinstall to `~/.config/opencode/skills`, and commit the result — no manual refresh step, and it never fires for skills-extra or on a bare launch.
 
 **Subagents CAN load skills natively** — measured 2026-09-27 on opencode: three independent `general` subagents each called the `skill` tool and got full instruction bodies back (`grilling`, `code-review`, `tdd`, `codebase-design`), not errors. `opencode.jsonc` denies subagents only `question`/`todowrite`/`plan_exit`, so `skill` is reachable. The old absolute rule ("never tell a subagent to use skill X by name alone") is therefore wrong **for opencode**, and was written when the only route was manual embedding.
 
@@ -33,7 +33,6 @@ Pick skills by task type:
 | Open question / fact-finding | `research` (primary sources only) |
 | Any claim, finding, or "all clear" to verify | `grilling` (adversarial interrogation) |
 | Work too big for one session | `wayfinder`, `handoff` for state |
-| Merge conflict in the way | `resolving-merge-conflicts` |
 
 **Workflow**:
 
