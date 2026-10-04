@@ -32,7 +32,7 @@ const WRAPPERS = new Set([
 
 const FIX = `Do NOT retry the same shape. Use one of:
   1) two separate calls: ps -eo pid=,ppid=,comm=,args= then kill -TERM <numeric PID> (exclude $$ and $PPID)
-  2) PID file from startup: setsid ./prog > run.log 2>&1 & echo $! > run.pid then kill -- -"$(ps -o pgid= -p "$(cat run.pid)")"
+  2) PID file from startup: setsid ./prog > /tmp/run.log 2>&1 & echo $! > /tmp/run.pid then kill -- -"$(ps -o pgid= -p "$(cat /tmp/run.pid)")"
   3) pattern from a file: ps -eo pid=,args= | grep -F -f /tmp/kill.pat | awk '{print $1}' | xargs -r kill
   4) change the axis: fuser -k PORT/tcp, systemctl kill UNIT, docker compose down
 Full rules: ~/.config/opencode/AGENTS.md`
