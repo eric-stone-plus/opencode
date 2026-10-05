@@ -604,8 +604,6 @@ export function Prompt(props: PromptProps) {
       "prompt.stash.list",
       "prompt.skills",
       "session.interrupt",
-      "session.force_send",
-      "session.queued_prompts",
       "workspace.set",
       "session.move",
     ]),
