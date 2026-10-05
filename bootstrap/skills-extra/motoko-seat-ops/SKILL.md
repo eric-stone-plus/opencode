@@ -24,11 +24,17 @@ number, that file owns the number and re-measurement.
 
 ## Seat surface
 
-The opencode seat carries a plugin whose tools wrap the gated CLI
-(`engine/host/opencode/plugin.ts`): `motoko_status` (digest/health/doctor/
-rules/query/events), `strix_launch` (six-gate wrapper), `shepherd_ctl`
-(systemd, stop is force-gated), `ingest_strix`, `seal_verify`. A bash gate
-blocks raw strix binary invocations — launches only through the gated paths.
+The opencode seat drives the engine through the `motoko` CLI directly — no
+plugin wrapper. Read-side operations are plain subcommands: `motoko digest`,
+`motoko health`, `motoko doctor`, `motoko rules`, `motoko query <eng>`,
+`motoko events <eng>`. Launches go through `motoko strix <eng> …` (the
+six-gate wrapper); shepherd units through `systemctl --user`; report intake
+through `motoko ingest-strix <eng> <report>`; seal reconciliation through
+`motoko seal <eng> --verify`.
+
+Raw `strix` invocations are blocked outside the seat by this host's global
+kill/launch guard and by the motoko-project rules; launches only through the
+gated `motoko strix` path.
 
 ## Before any launch
 

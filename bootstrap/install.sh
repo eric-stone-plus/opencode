@@ -15,8 +15,6 @@
 #                            of copying (live-edit into the checkout). Never used
 #                            for skills/ or command/ (directory symlinks there are
 #                            forbidden: sync-upstream rm+cp's from the same tree).
-#     --motoko-plugin <path> symlink target for plugin/motoko.ts (default: the
-#                            path recorded in plugin/MOTOKO_SYMLINK.txt).
 #     --no-bashrc            do not touch ~/.bashrc (skips the egress/TTY wrapper).
 #
 # What it installs (see README for the full runbook):
@@ -31,8 +29,7 @@
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
 #      (4 hook configs IF they exist; the opencode plugin port via step 7)
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
-#   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts copies, motoko.ts
-#      file-symlink (dangling target = non-fatal, warned)
+#   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts copies
 #   8  command/ + agent/ goal files (only those shipped in the bundle),
 #      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
@@ -50,7 +47,6 @@ TARGET_HOME="${HOME:-}"
 SED_USER="${USER:-$(id -un 2>/dev/null || echo unknown)}"
 LINK_MODE=0
 NO_BASHRC=0
-MOTOKO_TARGET=""
 
 usage() {
   cat <<'EOF'
@@ -60,7 +56,6 @@ install.sh — reproduce the opencode seat from this bootstrap bundle.
   --home <path>          target home (default: $HOME); use a scratch dir to test
   --user <name>          legacy, display only (plans paths derive from --home)
   --link                 file-symlink config/opencode.jsonc into place (live-edit)
-  --motoko-plugin <path> symlink target for plugin/motoko.ts
   --no-bashrc            do not touch ~/.bashrc
   -h, --help             this text
 
@@ -97,10 +92,6 @@ SEAT_HOME="${TARGET_HOME#/}"
 sed_re_escape() {
   printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
-
-if [ -z "$MOTOKO_TARGET" ]; then
-  MOTOKO_TARGET=$(sed -n 's/^TARGET:[[:space:]]*//p' "$BOOTSTRAP_DIR/plugin/MOTOKO_SYMLINK.txt" 2>/dev/null | head -n 1)
-fi
 
 TS=$(date +%Y%m%d%H%M%S)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-install.XXXXXX")
@@ -978,27 +969,6 @@ for f in block-unsafe-kill.ts mpskills-update.ts; do
   STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
-motoko_dst="$PL/motoko.ts"
-if [ -z "$MOTOKO_TARGET" ]; then
-  say "SKIP  motoko.ts not linked: no MOTOKO_TARGET (empty --motoko-plugin value"
-  say "      / no TARGET line in plugin/MOTOKO_SYMLINK.txt)"
-elif [ -L "$motoko_dst" ] && [ "$(readlink "$motoko_dst")" = "$MOTOKO_TARGET" ]; then
-  note "unchanged symlink $motoko_dst"
-else
-  if [ -e "$motoko_dst" ] || [ -L "$motoko_dst" ]; then
-    act "replace $motoko_dst with symlink -> $MOTOKO_TARGET"
-    if [ "$DRY_RUN" -eq 0 ]; then backup_file "$motoko_dst"; rm -f "$motoko_dst"; ln -s "$MOTOKO_TARGET" "$motoko_dst"; fi
-  else
-    act "symlink $motoko_dst -> $MOTOKO_TARGET"
-    [ "$DRY_RUN" -eq 1 ] || ln -s "$MOTOKO_TARGET" "$motoko_dst"
-  fi
-  changed
-fi
-if [ -n "$MOTOKO_TARGET" ] && [ ! -e "$MOTOKO_TARGET" ]; then
-  note "NOTE: $MOTOKO_TARGET does not exist here -> dangling symlink (non-fatal:"
-  note "      the plugin loader ignores load failures and opencode continues)."
-  note "      Clone motoko and pass --motoko-plugin <path> to fix."
-fi
 
 # --- 8. goal command/agent files --------------------------------------------
 say ""

@@ -20,7 +20,13 @@ import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 // skill load. A lockfile keeps two concurrent skill calls (this box runs more
 // than one opencode server at a time) from racing the same checkout and REPO
 // git state; the loser just skips and serves whatever is on disk.
-const REPO = "/home/eric/Documents/Development/private/agent-design/projects/opencode"
+// The fork checkout this plugin vendors INTO. Resolved at run time: the
+// environment override wins, then a HOME-relative default — never a hardcoded
+// absolute home, so the same file works on any seat. Machine-specific paths
+// (and the mainland-CN git proxy the fetch below needs) belong in that
+// machine's environment, not in shipped code.
+const REPO =
+  process.env.OPENCODE_FORK_REPO ?? path.join(homedir(), "Documents", "Development", "private", "agent-design", "projects", "opencode")
 const UPSTREAM_URL = "https://github.com/mattpocock/skills.git"
 const THROTTLE_OK_MS = 24 * 60 * 60 * 1000
 const THROTTLE_FAIL_MS = 10 * 60 * 1000
@@ -108,15 +114,28 @@ async function run(promise: ReturnType<PluginInput["$"]>, label: string) {
   return result
 }
 
+// The cache checkout is a fresh clone with no git config of its own, so the
+// fetch/clone below inherit no proxy — on a censored network that silently
+// fails and the stale copy is served forever. Reuse the fork checkout's
+// configured proxy (or an explicit MPSKILLS_GIT_PROXY override) so the refresh
+// travels the same route the user already configured for GitHub.
+async function gitProxy(sh: PluginInput["$"]) {
+  if (process.env.MPSKILLS_GIT_PROXY) return process.env.MPSKILLS_GIT_PROXY
+  const configured = await run(sh`git -C ${REPO} config --get http.proxy`, "proxy").catch(() => undefined)
+  return configured?.text().trim() || undefined
+}
+
 async function syncCheckout(sh: PluginInput["$"], checkout: string) {
+  const proxy = await gitProxy(sh)
+  const via = proxy ? [`-c`, `http.proxy=${proxy}`, `-c`, `https.proxy=${proxy}`] : []
   if (await Bun.file(path.join(checkout, ".git", "HEAD")).exists()) {
-    await run(sh`timeout 8 git -C ${checkout} fetch --quiet origin main --depth 1`, "fetch")
+    await run(sh`timeout 8 git ${via} -C ${checkout} fetch --quiet origin main --depth 1`, "fetch")
     await run(sh`timeout 3 git -C ${checkout} reset --quiet --hard origin/main`, "reset")
     return
   }
   await run(sh`rm -rf ${checkout}`, "clean stale checkout")
   await run(sh`mkdir -p ${path.dirname(checkout)}`, "create cache dir")
-  await run(sh`timeout 15 git clone --quiet --depth 1 ${UPSTREAM_URL} ${checkout}`, "clone")
+  await run(sh`timeout 15 git ${via} clone --quiet --depth 1 ${UPSTREAM_URL} ${checkout}`, "clone")
 }
 
 // Vendor + install + commit happen together: a revision bump with no change
@@ -140,7 +159,10 @@ async function refresh(sh: PluginInput["$"], home: string) {
   const diff = (await run(sh`timeout 3 git -C ${REPO} status --porcelain -- skills`, "status")).text().trim()
   if (!diff) return
 
-  await run(sh`timeout 3 git -C ${REPO} add skills`, "add")
+  // --only: commit exactly the skills/ changes, ignoring whatever else might
+  // be staged in REPO at the moment this fires (REPO is the user's live
+  // checkout, not a scratch clone). No `git add` first — `--only` stages the
+  // named paths itself.
   const message = `chore: vendor mattpocock skills refresh (${after.slice(0, 8)})\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`
   // --only: commit exactly the skills/ changes, ignoring whatever else might
   // be staged in REPO at the moment this fires (REPO is the user's live
