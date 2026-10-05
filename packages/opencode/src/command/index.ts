@@ -9,7 +9,6 @@ import { MCP } from "../mcp"
 import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
-import PROMPT_GOAL from "./template/goal.txt"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 
 type State = {
@@ -47,7 +46,6 @@ export function hints(template: string) {
 export const Default = {
   INIT: "init",
   REVIEW: "review",
-  GOAL: "goal",
 } as const
 
 export interface Interface {
@@ -87,15 +85,6 @@ const layer = Layer.effect(
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
-      }
-      commands[Default.GOAL] = {
-        name: Default.GOAL,
-        description: "set a persistent session goal, re-stated every turn; 'clear' removes it, 'edit <text>' replaces it",
-        source: "command",
-        get template() {
-          return PROMPT_GOAL
-        },
-        hints: hints(PROMPT_GOAL),
       }
 
       for (const [name, command] of Object.entries(cfg.command ?? {})) {

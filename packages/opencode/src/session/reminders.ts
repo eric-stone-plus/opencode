@@ -114,6 +114,18 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
 
   const ctx = yield* InstanceState.context
   const goalPath = Session.goal(input.session, ctx)
+  // Goal mode owns the objective: the session goal used to be written by the
+  // /goal command, which is gone. Entering goal mode with no goal file yet
+  // seeds it from the user's own message, so the goal reminder below always has
+  // something to state; later messages steer without rewriting it.
+  const goalExists = yield* fsys.existsSafe(goalPath)
+  if (!goalExists && input.agent.name === "goal") {
+    const objective = userMessage.parts
+      .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : []))
+      .join("\n")
+      .trim()
+    if (objective) yield* fsys.writeWithDirs(goalPath, objective).pipe(Effect.catch(Effect.die))
+  }
   const goal = (yield* fsys.readFileStringSafe(goalPath).pipe(Effect.orElseSucceed(() => undefined)))?.trim()
   if (goal) {
     const text = goal.length > GOAL_REMINDER_MAX ? goal.slice(0, GOAL_REMINDER_MAX) + "\n(truncated)" : goal

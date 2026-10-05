@@ -284,14 +284,14 @@ async function previouslyVendored(destination: string): Promise<Set<string>> {
   return new Set([...text.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]))
 }
 
-// Goal-mode config distribution. Managed content (command/goal.md,
-// AGENTS.goal.md, autonomy.md) is replaced on every sync. The agent definition
-// is a seed: installed only when absent, so per-machine tuning (e.g. pinned
-// model or variant) survives subsequent syncs.
+// Goal-mode config distribution. Managed content (AGENTS.goal.md,
+// autonomy.md) is replaced on every sync. The agent definition is a seed:
+// installed only when absent, so per-machine tuning (e.g. pinned model or
+// variant) survives subsequent syncs. The goal objective is no longer set by a
+// /goal command (removed) — goal mode seeds its own goal file.
 export async function installGoalConfig(source: string, configDir: string) {
   const report: string[] = []
   const managed: Array<[string, string]> = [
-    ["command/goal.md", "command/goal.md"],
     ["AGENTS.goal.md", "AGENTS.goal.md"],
     ["autonomy.md", "autonomy.md"],
   ]

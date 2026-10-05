@@ -533,16 +533,6 @@ for f in block-unsafe-kill.ts mpskills-update.ts; do
     fail "plugin/$f missing"
   fi
 done
-if [ -L "$CFG/plugin/motoko.ts" ]; then
-  mt=$(readlink "$CFG/plugin/motoko.ts")
-  if [ -e "$CFG/plugin/motoko.ts" ]; then
-    pass "plugin/motoko.ts symlink resolves ($mt)"
-  else
-    warn "plugin/motoko.ts symlink is dangling ($mt) — non-fatal: startup continues with a logged plugin error"
-  fi
-else
-  warn "plugin/motoko.ts missing or not a symlink (motoko plugin not installed)"
-fi
 
 # --- 9. skills-extra ---------------------------------------------------------
 echo "-- skills-extra"
@@ -565,7 +555,7 @@ else
   n1=$(grep -cE 'level=ERROR.*message="plugin config hook failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
   n2=$(grep -cE 'level=WARN.*message="background dependency install failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
   if [ "${n1:-0}" -gt 0 ]; then
-    warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (a dangling motoko.ts is the usual cause; mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
+    warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (a broken plugin file is the usual cause; mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
   else
     pass "no 'plugin config hook failed' in log"
   fi
@@ -576,23 +566,19 @@ else
   fi
 fi
 
-# --- 11. goal command/agent files -------------------------------------------
-echo "-- goal command/agent + instructions files"
-for pair in "command/goal.md" "agent/goal.md"; do
-  if [ -f "$BOOTSTRAP_DIR/$pair" ]; then
-    if [ -f "$CFG/$pair" ]; then
-      pass "$pair installed"
-    else
-      fail "$pair shipped in bundle but missing at $CFG/$pair"
-    fi
+# --- 11. goal agent + instructions files -------------------------------------
+echo "-- goal agent + instructions files"
+if [ -f "$BOOTSTRAP_DIR/agent/goal.md" ]; then
+  if [ -f "$CFG/agent/goal.md" ]; then
+    pass "agent/goal.md installed"
   else
-    if [ -f "$CFG/$pair" ]; then
-      pass "$pair present at target (not shipped in this bundle revision)"
-    else
-      warn "$pair absent at target and not shipped in bundle"
-    fi
+    fail "agent/goal.md shipped in bundle but missing at $CFG/agent/goal.md"
   fi
-done
+elif [ -f "$CFG/agent/goal.md" ]; then
+  pass "agent/goal.md present at target (not shipped in this bundle revision)"
+else
+  warn "agent/goal.md absent at target and not shipped in bundle"
+fi
 # The `instructions` files opencode.jsonc loads (autonomy.md, AGENTS.goal.md):
 # a listed-but-missing file silently drops that policy from every session.
 for f in autonomy.md AGENTS.goal.md; do
@@ -608,13 +594,6 @@ for f in autonomy.md AGENTS.goal.md; do
     fail "$f missing at $CFG/$f but listed in opencode.jsonc instructions (install.sh step 8)"
   fi
 done
-if [ -f "$CFG/command/goal.md" ]; then
-  if grep -q 'Server result: \$GOAL_RESULT' "$CFG/command/goal.md"; then
-    pass "command/goal.md carries the server-authoritative /goal template"
-  else
-    fail "command/goal.md lacks the \$GOAL_RESULT server-result line (stale template — re-run install.sh)"
-  fi
-fi
 
 echo
 echo "== summary: $FAILS fail(s), $WARNS warn(s) =="

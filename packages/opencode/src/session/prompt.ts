@@ -7,7 +7,6 @@ import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { SessionRevert } from "./revert"
 import { Session } from "./session"
-import { SessionGoal } from "@opencode-ai/schema/session-goal"
 import { Agent } from "../agent/agent"
 import { Provider } from "@/provider/provider"
 
@@ -1577,30 +1576,10 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
-      // /goal routes the agent from its own argument grammar (M3): a set or
-      // "edit <text>" lands on the goal agent (red Goal mode), a bare
-      // clear/none/remove lands on the default agent (Auto), and the
-      // read-only forms (bare "/goal edit", bare "/goal") stay where the
-      // session already is. Every other command routes the old way.
-      const goal = input.command === Command.Default.GOAL ? parseGoalArguments(input.arguments) : undefined
+      // Every other command routes the old way.
       const agentName = yield* Effect.gen(function* () {
-        if (goal === undefined) return cmd.agent ?? input.agent
-        if (goal.cleared) return yield* agents.defaultAgent()
-        if (goal.showOnly) return input.agent
         return cmd.agent ?? input.agent
       })
-
-      if (goal !== undefined && !goal.showOnly) {
-        const ctx = yield* InstanceState.context
-        const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
-        const goalPath = Session.goal(session, ctx)
-        yield* fsys.writeWithDirs(goalPath, goal.cleared ? "" : goal.update).pipe(Effect.orDie)
-        yield* events.publish(SessionGoal.Event.Updated, {
-          sessionID: input.sessionID,
-          text: goal.cleared ? "" : goal.update,
-          path: goalPath,
-        })
-      }
 
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
@@ -1617,11 +1596,9 @@ const layer = Layer.effect(
       // One pass with a function replacer: user text containing `$$`, `$&`,
       // `` $` `` or `$'` lands verbatim instead of being read as a replacement
       // pattern, and an argument that itself contains `$ARGUMENTS` or `$2` is
-      // not expanded again. /goal's `$GOAL_RESULT` is the outcome the server
-      // already applied, so the template never re-derives it from the text.
+      // not expanded again.
       let template = templateCommand.replaceAll(substitutionRegex, (match, index: string | undefined) => {
         if (match === "$ARGUMENTS") return input.arguments
-        if (match === "$GOAL_RESULT") return goal ? goalResult(goal) : match
         const position = Number(index)
         const argIndex = position - 1
         if (argIndex >= args.length) return ""
@@ -1838,81 +1815,10 @@ export function createStructuredOutputTool(input: {
 }
 const bashRegex = /!`([^`]+)`/g
 
-/**
- * Parse /goal's argument grammar. The edit subcommand is only a lowercase
- * `edit` followed by whitespace or the end, checked on the raw argument before
- * any unquoting, so ordinary goal text that happens to begin with the word
- * ("Edit the README …") or a wholly quoted argument (`"edit the README"`, the
- * way to start a goal with "edit") is never eaten as the subcommand. Otherwise
- * one wrapping quote layer is stripped (the run CLI quotes space-containing
- * argv words). `cleared` is only a bare clear/none/remove — "/goal edit clear"
- * stores the literal word as the goal text. `showOnly` covers the two
- * read-only forms (bare "/goal edit", bare "/goal") that report the current
- * goal and write nothing.
- *
- * @internal Exported for testing
- */
-export function parseGoalArguments(raw: string): {
-  text: string
-  edit: boolean
-  update: string
-  showOnly: boolean
-  cleared: boolean
-} {
-  const trimmed = raw.trim()
-  const editMatch = /^edit(?:\s+([\s\S]*))?$/.exec(trimmed)
-  const text = editMatch === null ? unquoteGoalText(trimmed).trim() : trimmed
-  // A quoted empty update (`/goal edit ""`) is an empty update, not the
-  // literal two-quote goal text: strip one wrapping quote layer from the
-  // update the same way the CLI's argv quoting is stripped from a plain goal.
-  const update = editMatch === null ? text : unquoteGoalText((editMatch[1] ?? "").trim()).trim()
-  return {
-    text,
-    edit: editMatch !== null,
-    update,
-    showOnly: text === "" || (editMatch !== null && update === ""),
-    cleared: editMatch === null && /^(clear|none|remove)$/i.test(text),
-  }
-}
-
-/**
- * The server-side outcome of a /goal argument, substituted for `$GOAL_RESULT`
- * in the goal command template: `set` (a new goal was written), `updated`
- * (edit replaced the goal), `unchanged` (show-only, nothing written),
- * `cleared` (the goal was removed).
- *
- * @internal Exported for testing
- */
-export function goalResult(goal: ReturnType<typeof parseGoalArguments>) {
-  if (goal.cleared) return "cleared"
-  if (goal.showOnly) return "unchanged"
-  if (goal.edit) return "updated"
-  return "set"
-}
-
-/**
- * Remove one argv quoting layer from /goal text. The run CLI (`opencode run
- * --command goal …`) sends a space-containing argv word as `"` + word with
- * `"` escaped as `\"` + `"`, so a text that is exactly one such token is
- * decoded, escapes included. A text made of several quoted/bare words
- * (`"a" "b"`) is kept literally: stripping its outer pair would leave the
- * unbalanced `a" "b`. Any other quote-wrapped text loses the outer pair only.
- */
-function unquoteGoalText(text: string) {
-  const double = /^"((?:\\"|[^"])*)"$/.exec(text)
-  if (double) return double[1].replaceAll('\\"', '"')
-  const single = /^'([^']*)'$/.exec(text)
-  if (single) return single[1]
-  const wrapped = /^(["'])([\s\S]*)\1$/.exec(text)
-  if (!wrapped || goalWordsRegex.test(text)) return text
-  return wrapped[2]
-}
-const goalWordsRegex = /^(?:"(?:\\"|[^"])*"|'[^']*'|[^\s"']+)(?:\s+(?:"(?:\\"|[^"])*"|'[^']*'|[^\s"']+))+$/
-
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g
-const substitutionRegex = /\$(?:(\d+)|ARGUMENTS|GOAL_RESULT)/g
+const substitutionRegex = /\$(?:(\d+)|ARGUMENTS)/g
 const quoteTrimRegex = /^["']|["']$/g
 
 export const node = LayerNode.make({

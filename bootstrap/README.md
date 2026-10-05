@@ -8,7 +8,7 @@ Source of truth on machine A:
 | Item | Path |
 | --- | --- |
 | fork repo (binary source) | `/home/eric/Documents/Development/private/agent-design/projects/opencode` (branch `main`) |
-| motoko checkout (optional plugin) | `/home/eric/Documents/Development/private/agent-design/tools/motoko` |
+| motoko checkout (optional; `motoko-seat-ops` skill only) | `/home/eric/Documents/Development/private/agent-design/tools/motoko` |
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
@@ -40,7 +40,7 @@ git clone <this-repo> ~/work/agent-design/projects/opencode
 cd ~/work/agent-design/projects/opencode
 git checkout main                       # REQUIRED: see channel note below
 
-# optional: only if you want the motoko plugin / motoko-seat-ops skills
+# optional: only if you want the motoko-seat-ops skill (no plugin involved)
 git clone <motoko-repo> ~/work/agent-design/tools/motoko
 ```
 
@@ -73,8 +73,8 @@ chmod 755 ~/.opencode/bin/opencode
 ```
 
 `script/sync-upstream.ts` additionally installs `~/.config/opencode/tui.json`
-(`main()`), the vendored `skills/` (`installSkills`, rm+cp), `command/goal.md` +
-`AGENTS.goal.md` + `autonomy.md` (`installGoalConfig`, rm+copyFile) and seeds
+(`main()`), the vendored `skills/` (`installSkills`, rm+cp), and
+`AGENTS.goal.md` + `autonomy.md` (`installGoalConfig`, rm+copyFile), and seeds
 `agent/goal.md`. It does NOT touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, or
 any other `command/*.md` / `agent/*.md`. Run it if you want its pieces.
 
@@ -89,8 +89,7 @@ bash bootstrap/install.sh --home /tmp/opencode/fakehome
 ```
 
 Flags: `--dry-run`, `--home <path>`, `--user <name>` (legacy, banner only), `--link` (file-symlink
-`opencode.jsonc` into the checkout instead of copying), `--motoko-plugin <path>`
-(motoko symlink target), `--no-bashrc`. Idempotent: a second run reports
+`opencode.jsonc` into the checkout instead of copying), `--no-bashrc`. Idempotent: a second run reports
 `0 change(s)` and does nothing. Every overwritten file gets a timestamped
 `*.bak.<YYYYmmddHHMMSS>` sibling (the newest 20 per target are kept, oldest
 pruned by mtime; only that exact installer-made name is ever pruned, a
@@ -142,13 +141,12 @@ a *function*).
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
 | 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts}` | copies, as-is |
-| 7 | `plugin/motoko.ts` | **file-symlink** to the motoko checkout (dangling = non-fatal, warned) |
-| 8 | `command/`, `agent/` goal files, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; `command/goal.md` and the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent) |
+| 8 | `agent/` goal file, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent). There is no `command/goal.md`: the `/goal` command was removed |
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
 Explicit non-goals (owned by `script/sync-upstream.ts` or by hand):
 `tui.json`, the vendored `skills/` set, `AGENTS.md`, the real binary.
-(`command/goal.md`, `autonomy.md` and `AGENTS.goal.md` are installed by both:
+(`autonomy.md` and `AGENTS.goal.md` are installed by both:
 same content, same replace-in-place policy.)
 
 **SYMLINK RULE.** Individual *file* symlinks into a git checkout are safe and
@@ -275,11 +273,13 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * `opencode.jsonc` semantics (provider/model tracks, plan-agent edit allowlist —
   its plans path is rewritten from `--home` on install).
 * The kill-guard battery and its five wirings.
-* Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `motoko.ts` symlink.
+* Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`.
 * Orphan skills `longrun-stability-audit`, `motoko-seat-ops`.
-* Goal-mode files `command/goal.md`, `agent/goal.md`, `autonomy.md`,
-  `AGENTS.goal.md` (when shipped — see bundle layout). `/goal edit <text>` support is a fork-binary patch
-  (`SessionPrompt.command`), so a machine-B build must come from this repo.
+* Goal-mode files `agent/goal.md`, `autonomy.md`,
+  `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
+  command: goal mode seeds and owns its goal file. Goal reminders and the
+  footer segment are fork patches (`SessionReminders`), so a machine-B build
+  must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
   machine-A `~/.bashrc` verbatim **except** the egress probe set: 2026-09-30
   it was extended to the default xiaomi provider endpoint
@@ -296,14 +296,16 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   semantics* still reproduce; only rendering differs.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
-* **`plugin/motoko.ts` content** — a live symlink into the motoko checkout;
-  clone motoko and pass `--motoko-plugin`, or accept the dangling symlink
-  (non-fatal: startup continues with a logged plugin error).
-* **`~/.local/bin/mpskills-update`** (the script `plugin/mpskills-update.ts`
-  runs) — not shipped. The plugin resolves it under `${HOME}` at run time,
-  skips cleanly when it is absent (the spawn ENOENT is caught in the plugin),
-  and runs it detached, so a slow or hung pull never delays startup; only a
-  nonzero exit is reported on stderr.
+* **`plugin/motoko.ts`** — no longer shipped. The motoko seat drives the engine
+  through the `motoko` CLI directly (see the `motoko-seat-ops` skill); there is
+  no plugin to symlink, and the repo carries no motoko checkout path.
+* **`plugin/mpskills-update.ts`** — shipped as-is and self-contained: on the
+  first `skill` call in a 24h window it fetches the vendored upstream checkout
+  under `${HOME}/.cache/opencode/`, re-runs `vendor-skills`, reinstalls to
+  `~/.config/opencode/skills`, and commits. It resolves the fork checkout from
+  `OPENCODE_FORK_REPO` (default `${HOME}/Documents/Development/private/agent-design/projects/opencode`)
+  and reuses that checkout's configured `http.proxy` for the fetch, so a
+  censored network needs no extra setup beyond the proxy the fork already has.
 * **Egress conditions** — the wrapper assumes mainland-CN reachability
   quirks + a local causeway proxy chain (18880 → 17878). On a box without
   causeway it degrades to direct exec (`command opencode`) after failed probes.
@@ -347,9 +349,8 @@ bootstrap/
 │   └── motoko-seat-ops/          SKILL.md
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
-│   ├── mpskills-update.ts        as-is (runs ${HOME}/.local/bin/mpskills-update, detached)
-│   └── MOTOKO_SYMLINK.txt        symlink target record (TARGET: line)
-├── command/                      goal.md (template with /goal edit rules)
+│   ├── mpskills-update.ts        as-is (self-contained; fetches + vendors on first skill call)
+├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
 └── AGENTS.goal.md                goal-mode swarm playbook (instructions array)

@@ -1,5 +1,5 @@
 ---
-description: Goal mode. Every message is a /goal objective: run the adversarial subagent swarm playbook from AGENTS.md end to end.
+description: Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.
 mode: primary
 color: error
 permission:
