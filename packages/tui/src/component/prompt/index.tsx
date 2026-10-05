@@ -445,30 +445,9 @@ export function Prompt(props: PromptProps) {
             })
             setStore("interrupt", 0)
           } else {
-            void withdraw(false)
+            void withdraw()
           }
           dialog.clear()
-        },
-      },
-      {
-        title: "Force send",
-        name: "session.force_send",
-        category: "Session",
-        hidden: true,
-        run: () => {
-          if (!input.focused) return
-          void submit(true)
-        },
-      },
-      {
-        title: "Withdraw queued message",
-        name: "session.queued_prompts",
-        category: "Session",
-        enabled: Boolean(props.sessionID),
-        slashName: "withdraw",
-        run: async () => {
-          dialog.clear()
-          await withdraw(true)
         },
       },
       {
@@ -989,24 +968,18 @@ export function Prompt(props: PromptProps) {
   }
 
   let withdrawing = false
-  async function withdraw(explicit: boolean) {
+  // Esc-only caller: pull back the queued message, but never when the user has
+  // started typing something new (that draft is what they meant to keep).
+  async function withdraw() {
     if (disposed || withdrawing || submitting || !props.sessionID) return false
-    if (!explicit && (input.plainText || store.prompt.parts.length > 0)) return false
+    if (input.plainText || store.prompt.parts.length > 0) return false
     const sessionID = props.sessionID
     const version = revision
     const before = draftState()
     withdrawing = true
     try {
       const result = await sdk.client.session.withdraw({ sessionID })
-      if (result.error || !result.data) {
-        if (explicit && !disposed)
-          toast.show({
-            message: result.error ? errorMessage(result.error) : "No queued message to withdraw",
-            variant: "warning",
-            duration: 3000,
-          })
-        return false
-      }
+      if (result.error || !result.data) return false
       const draft = result.data.parts.reduce(
         (agg, part) => {
           if (part.type === "text" && !part.synthetic) agg.input += part.text
@@ -1042,7 +1015,7 @@ export function Prompt(props: PromptProps) {
   }
 
   let submitting = false
-  async function submit(force = false) {
+  async function submit() {
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
     // input's native onSubmit racing another dispatch). Without this guard,
     // a second call slips past the empty-input check before the first call
@@ -1052,7 +1025,7 @@ export function Prompt(props: PromptProps) {
     if (disposed || submitting || withdrawing) return false
     submitting = true
     try {
-      return await submitInner(force)
+      return await submitInner()
     } finally {
       submitting = false
     }
@@ -1076,7 +1049,7 @@ export function Prompt(props: PromptProps) {
     toast.show({ message: `${entry.display} is not available here`, variant: "warning", duration: 3000 })
   }
 
-  async function submitInner(force: boolean) {
+  async function submitInner() {
     workspace.clearNotice()
 
     // IME: double-defer may fire before onContentChange flushes the last
@@ -1144,28 +1117,6 @@ export function Prompt(props: PromptProps) {
         />
       ))
       return false
-    }
-
-    if (force && props.sessionID && status().type !== "idle") {
-      const sessionID = props.sessionID
-      const version = revision
-      const before = draftState()
-      try {
-        await sdk.client.session.abort({ sessionID }, { throwOnError: true })
-      } catch (error) {
-        if (!disposed)
-          toast.show({ title: "Failed to interrupt session", message: errorMessage(error), variant: "error" })
-        return false
-      }
-      if (
-        disposed ||
-        input.isDestroyed ||
-        props.sessionID !== sessionID ||
-        revision !== version ||
-        draftState() !== before
-      )
-        return false
-      setStore("interrupt", 0)
     }
 
     const variant = local.model.variant.current()

@@ -71,22 +71,6 @@ test("a local slash command that destroys the renderer (exit) does not throw", a
   }
 })
 
-test("/withdraw typed with a trailing space withdraws the queued message", async () => {
-  await using tmp = await tmpdir()
-  using tui = await mountPrompt(tmp.path, (request) => {
-    if (new URL(request.url).pathname.endsWith("/withdraw"))
-      return json({
-        info: { id: "msg_queued", role: "user", sessionID: "ses_a" },
-        parts: [{ id: "prt_text", messageID: "msg_queued", sessionID: "ses_a", type: "text", text: "queued" }],
-      })
-  })
-  tui.prompt.set({ input: "/withdraw ", parts: [] })
-  tui.prompt.submit()
-  await wait(() => tui.prompt.current.input === "queued")
-  expect(tui.requests.filter((request) => request.url.includes("/withdraw"))).toHaveLength(1)
-  expect(tui.requests.filter((request) => request.url.includes("/message"))).toHaveLength(0)
-})
-
 test("a local slash command that does not run restores the input", async () => {
   await using tmp = await tmpdir()
   using tui = await mountPrompt(tmp.path, () => undefined)
