@@ -70,7 +70,6 @@ while [ $# -gt 0 ]; do
     --home) TARGET_HOME="${2:?--home needs a path}"; shift ;;
     --user) SED_USER="${2:?--user needs a name}"; shift ;;
     --link) LINK_MODE=1 ;;
-    --motoko-plugin) MOTOKO_TARGET="${2:?--motoko-plugin needs a path}"; shift ;;
     --no-bashrc) NO_BASHRC=1 ;;
     -h|--help) usage 0 ;;
     *) echo "install.sh: unknown option: $1" >&2; usage 1 ;;
