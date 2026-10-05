@@ -129,25 +129,32 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
       const open = new Set<string>(messages.map((row) => row.id))
 
-      const tools = yield* db
-        .select({
-          id: PartTable.id,
-          message_id: PartTable.message_id,
-          session_id: PartTable.session_id,
-          data: PartTable.data,
-        })
-        .from(PartTable)
-        .innerJoin(SessionTable, eq(PartTable.session_id, SessionTable.id))
-        .where(
-          and(
-            eq(SessionTable.directory, directory),
-            lt(PartTable.time_created, before),
-            sql`json_extract(${PartTable.data}, '$.type') = 'tool'`,
-            sql`json_extract(${PartTable.data}, '$.state.status') IN ('pending', 'running')`,
-          ),
-        )
-        .all()
-        .pipe(Effect.orDie)
+      // Keyed on the open set, not on the directory: a stuck tool part only ever
+      // belongs to a message that never completed (finishing a message finalizes
+      // its parts), and filtering by directory instead forces a full scan of the
+      // part table plus two json_extract per row — seconds of cold-cache IO on a
+      // large history to find nothing.
+      const tools =
+        open.size === 0
+          ? []
+          : yield* db
+              .select({
+                id: PartTable.id,
+                message_id: PartTable.message_id,
+                session_id: PartTable.session_id,
+                data: PartTable.data,
+              })
+              .from(PartTable)
+              .where(
+                and(
+                  inArray(PartTable.message_id, [...open] as MessageID[]),
+                  lt(PartTable.time_created, before),
+                  sql`json_extract(${PartTable.data}, '$.type') = 'tool'`,
+                  sql`json_extract(${PartTable.data}, '$.state.status') IN ('pending', 'running')`,
+                ),
+              )
+              .all()
+              .pipe(Effect.orDie)
       const fragments =
         open.size === 0
           ? []
