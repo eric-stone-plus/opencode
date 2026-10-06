@@ -10,6 +10,7 @@ import { Effect, Layer } from "effect"
 import type { Agent } from "../../src/agent/agent"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceState } from "@/effect/instance-state"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { Session } from "@/session/session"
 import * as SessionReminders from "../../src/session/reminders"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
@@ -22,7 +23,9 @@ import { testEffect } from "../lib/effect"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(LayerNode.group([Session.node, SessionProjector.node, FSUtil.node, CrossSpawnSpawner.node])),
+    LayerNode.compile(
+      LayerNode.group([Session.node, SessionProjector.node, FSUtil.node, CrossSpawnSpawner.node, EventV2Bridge.node]),
+    ),
     RuntimeFlags.layer({ experimentalPlanMode: false }),
   ),
 )
@@ -275,6 +278,30 @@ describe("SessionReminders.apply", () => {
         yield* writeGoal(id, "")
         yield* user(id, "auto")
         expect(texts(yield* apply(id, "auto")).some((text) => text.includes("goal has been cleared"))).toBe(true)
+      }),
+    ),
+  )
+
+  it.live(
+    "entering goal mode with no goal file seeds it from the message and publishes goal.updated",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const events = yield* EventV2Bridge.Service
+        const fsys = yield* FSUtil.Service
+        const { id } = yield* session.create({})
+        const seen: string[] = []
+        const unsub = yield* events.listen((event) => {
+          if (event.type === "goal.updated") seen.push((event.data as { text: string }).text)
+          return Effect.void
+        })
+        yield* Effect.addFinalizer(() => unsub)
+        yield* user(id, "goal", "ship the acceptance report")
+        const out = texts(yield* apply(id, "goal"))
+        expect(out.some((text) => text.includes("ship the acceptance report"))).toBe(true)
+        const goalPath = Session.goal(yield* session.get(id), yield* InstanceState.context)
+        expect(yield* fsys.readFileStringSafe(goalPath)).toBe("ship the acceptance report")
+        expect(seen).toEqual(["ship the acceptance report"])
       }),
     ),
   )

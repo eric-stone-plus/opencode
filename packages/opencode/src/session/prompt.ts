@@ -444,7 +444,10 @@ const layer = Layer.effect(
               taskAbort.abort()
               assistantMessage.finish = "tool-calls"
               assistantMessage.time.completed = Date.now()
-              yield* sessions.updateMessage(assistantMessage)
+              // Settle the tool part BEFORE completing the message: recovery's
+              // sweep only looks at parts under open messages, so a crash
+              // between the two writes must leave the message open (swept),
+              // never a completed message with a stuck running tool.
               if (part.state.status === "running") {
                 yield* sessions.updatePart({
                   ...part,
@@ -457,6 +460,7 @@ const layer = Layer.effect(
                   },
                 } satisfies SessionV1.ToolPart)
               }
+              yield* sessions.updateMessage(assistantMessage)
             }),
           ),
         )
@@ -474,10 +478,8 @@ const layer = Layer.effect(
         result,
       )
 
-      assistantMessage.finish = "tool-calls"
-      assistantMessage.time.completed = Date.now()
-      yield* sessions.updateMessage(assistantMessage)
-
+      // Parts settle before the message completes — same ordering rule as the
+      // interrupt path above; the recovery sweep only covers open messages.
       if (result && part.state.status === "running") {
         yield* sessions.updatePart({
           ...part,
@@ -508,6 +510,10 @@ const layer = Layer.effect(
           },
         } satisfies SessionV1.ToolPart)
       }
+
+      assistantMessage.finish = "tool-calls"
+      assistantMessage.time.completed = Date.now()
+      yield* sessions.updateMessage(assistantMessage)
 
       if (!task.command) return
 
@@ -616,10 +622,8 @@ const layer = Layer.effect(
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
               }
               const completed = Date.now()
-              if (!msg.time.completed) {
-                msg.time.completed = completed
-                yield* sessions.updateMessage(msg)
-              }
+              // Part settles before the message completes (recovery ordering
+              // rule — the sweep only covers parts under open messages).
               if (part.state.status === "running") {
                 part.state = {
                   status: "completed",
@@ -630,6 +634,10 @@ const layer = Layer.effect(
                   output,
                 }
                 yield* sessions.updatePart(part)
+              }
+              if (!msg.time.completed) {
+                msg.time.completed = completed
+                yield* sessions.updateMessage(msg)
               }
             }),
           )
@@ -1363,6 +1371,7 @@ const layer = Layer.effect(
             Effect.provideService(RuntimeFlags.Service, flags),
             Effect.provideService(FSUtil.Service, fsys),
             Effect.provideService(Session.Service, sessions),
+            Effect.provideService(EventV2Bridge.Service, events),
           )
 
           const msg: SessionV1.Assistant = {
@@ -1576,10 +1585,7 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
-      // Every other command routes the old way.
-      const agentName = yield* Effect.gen(function* () {
-        return cmd.agent ?? input.agent
-      })
+      const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))

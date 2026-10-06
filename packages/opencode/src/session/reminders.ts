@@ -1,11 +1,13 @@
 import path from "path"
 import { createHash } from "crypto"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { SessionGoal } from "@opencode-ai/schema/session-goal"
 import { Effect } from "effect"
 import { Agent } from "@/agent/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { Session } from "./session"
@@ -113,6 +115,7 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   })
 
   const ctx = yield* InstanceState.context
+  const events = yield* EventV2Bridge.Service
   const goalPath = Session.goal(input.session, ctx)
   // Goal mode owns the objective: the session goal used to be written by the
   // /goal command, which is gone. Entering goal mode with no goal file yet
@@ -124,7 +127,17 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
       .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : []))
       .join("\n")
       .trim()
-    if (objective) yield* fsys.writeWithDirs(goalPath, objective).pipe(Effect.catch(Effect.die))
+    if (objective) {
+      yield* fsys.writeWithDirs(goalPath, objective).pipe(Effect.catch(Effect.die))
+      // Publish what the old /goal command published: the TUI footer (⎇) and
+      // the SDK both update from goal.updated; without it a goal seeded
+      // mid-session stays invisible until the next hydration.
+      yield* events.publish(SessionGoal.Event.Updated, {
+        sessionID: userMessage.info.sessionID,
+        text: objective,
+        path: goalPath,
+      })
+    }
   }
   const goal = (yield* fsys.readFileStringSafe(goalPath).pipe(Effect.orElseSucceed(() => undefined)))?.trim()
   if (goal) {

@@ -130,10 +130,13 @@ const layer = Layer.effect(
       const open = new Set<string>(messages.map((row) => row.id))
 
       // Keyed on the open set, not on the directory: a stuck tool part only ever
-      // belongs to a message that never completed (finishing a message finalizes
-      // its parts), and filtering by directory instead forces a full scan of the
-      // part table plus two json_extract per row — seconds of cold-cache IO on a
-      // large history to find nothing.
+      // belongs to a message that never completed — completion paths settle
+      // their parts BEFORE writing time.completed (prompt.ts tool/shell
+      // finishers, processor.ts), so a crash between the two writes always
+      // leaves the message open and the part is swept here. Filtering by
+      // directory instead forces a full scan of the part table plus two
+      // json_extract per row — seconds of cold-cache IO on a large history to
+      // find nothing.
       const tools =
         open.size === 0
           ? []
