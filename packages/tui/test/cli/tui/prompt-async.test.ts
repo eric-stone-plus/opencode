@@ -66,3 +66,25 @@ test("Esc withdrawal restores agent parts without persisted IDs", async () => {
     { type: "agent", name: "explore", source: { start: 7, end: 15, value: "@explore" } },
   ])
 })
+
+// The `withdrawing` re-entrancy guard: while one /withdraw is still in flight,
+// a later Esc must not start a second one. Pressing Esc twice inside the
+// window escalates to abort (by design), which resets the interrupt counter —
+// the third press is a fresh withdraw attempt and hits the guard.
+test("Esc withdrawal is serialized while a request is in flight", async () => {
+  await using tmp = await tmpdir()
+  const response = pendingResponse()
+  using tui = await mountPrompt(tmp.path, (request) => {
+    const pathname = new URL(request.url).pathname
+    if (pathname.endsWith("/withdraw")) return response.promise
+    if (pathname.endsWith("/abort")) return json({})
+  })
+  tui.keymap.dispatchCommand("session.interrupt")
+  await wait(() => tui.requests.some((request) => request.url.includes("/withdraw")))
+  tui.keymap.dispatchCommand("session.interrupt") // second press: abort escalation
+  tui.keymap.dispatchCommand("session.interrupt") // fresh press: must not stack a second /withdraw
+  response.resolve(withdrawn())
+  await wait(() => tui.prompt.current.input === "queued @explore")
+  expect(tui.requests.filter((request) => request.url.includes("/withdraw"))).toHaveLength(1)
+  expect(tui.requests.filter((request) => request.url.includes("/abort"))).toHaveLength(1)
+})
