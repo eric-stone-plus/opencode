@@ -29,7 +29,8 @@
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
 #      (4 hook configs IF they exist; the opencode plugin port via step 7)
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
-#   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts copies
+#   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts + secret-path-guard.ts
+#      copies
 #   8  command/ + agent/ goal files (only those shipped in the bundle),
 #      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
@@ -964,14 +965,14 @@ done
 say ""
 say "-- step 7: plugin/"
 PL="$TARGET_HOME/.config/opencode/plugin"
-for f in block-unsafe-kill.ts mpskills-update.ts; do
+for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts; do
   STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
 
-# --- 8. goal command/agent files --------------------------------------------
+# --- 8. goal agent files -----------------------------------------------------
 say ""
-say "-- step 8: command/ + agent/ goal files + autonomy.md + AGENTS.goal.md shipped in the bundle"
+say "-- step 8: agent/ goal files + autonomy.md + AGENTS.goal.md shipped in the bundle"
 # agent/goal.md is a SEED (same contract as script/sync-upstream.ts): installed
 # only when absent, so a per-machine model/variant pin in the file survives
 # re-installs. The seed note inside the file promises exactly this. Everything

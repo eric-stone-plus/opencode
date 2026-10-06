@@ -140,7 +140,7 @@ a *function*).
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
-| 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts}` | copies, as-is |
+| 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts}` | copies, as-is |
 | 8 | `agent/` goal file, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent). There is no `command/goal.md`: the `/goal` command was removed |
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
@@ -273,7 +273,7 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * `opencode.jsonc` semantics (provider/model tracks, plan-agent edit allowlist —
   its plans path is rewritten from `--home` on install).
 * The kill-guard battery and its five wirings.
-* Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`.
+* Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `secret-path-guard.ts`.
 * Orphan skills `longrun-stability-audit`, `motoko-seat-ops`.
 * Goal-mode files `agent/goal.md`, `autonomy.md`,
   `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
@@ -350,6 +350,7 @@ bootstrap/
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── mpskills-update.ts        as-is (self-contained; fetches + vendors on first skill call)
+│   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
 ├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
@@ -367,7 +368,7 @@ bootstrap/
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
   against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
   the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
-* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts}` and
+* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts}` and
   `skills-extra/` are byte-copies of the machine-A files named above.
   `autonomy.md` and `AGENTS.goal.md` are byte-copies of
   `dotfiles/opencode/{autonomy.md,AGENTS.goal.md}` (verify.sh WARNs when the
