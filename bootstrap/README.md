@@ -106,7 +106,7 @@ Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth
 ls -l ~/.local/share/opencode/auth.json   # mode 0600
 # mode 0600 is converged on every run for auth.json, ~/.config/opencode/env
 # and the secret-bearing environment.d drop-ins (content is never touched):
-ls -l ~/.config/opencode/env ~/.config/environment.d/{95-quinte-provider,motoko-keys}.conf
+ls -l ~/.config/opencode/env ~/.config/environment.d/{95-qwen-provider,motoko-keys}.conf
 ```
 
 ### Step 5 — re-login, then verify
@@ -136,7 +136,7 @@ a *function*).
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
-| 4 | `environment.d/{90-fcitx5,95-quinte-provider,motoko-home,motoko-keys}.conf` | **only if absent**; templates carry names only; the three 0600-claiming ones (`95-quinte-provider`, `motoko-home`, `motoko-keys`) get mode 0600 |
+| 4 | `environment.d/{90-fcitx5,95-qwen-provider,motoko-home,motoko-keys}.conf` | **only if absent**; templates carry names only; the three 0600-claiming ones (`95-qwen-provider`, `motoko-home`, `motoko-keys`) get mode 0600 |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
@@ -163,7 +163,7 @@ better (live-edit). *Directory* symlinks for `skills/` and `command/` are
 
 | Provider id (auth.json / opencode.jsonc) | Endpoint | Where the key comes from |
 | --- | --- | --- |
-| `bailian-token-plan-personal` | `token-plan.cn-beijing.maas.aliyuncs.com` (Alibaba Cloud Model Studio) | `QIANWEN_TP_PERSONAL_KEY` — machine A's seed lives in `~/.config/opencode/env` (byte-identical to the auth.json entry; verified by comparison) and is mirrored in `environment.d/95-quinte-provider.conf` |
+| `bailian-token-plan-personal` | `token-plan.cn-beijing.maas.aliyuncs.com` (Alibaba Cloud Model Studio) | `QIANWEN_TP_PERSONAL_KEY` — machine A's seed lives in `~/.config/opencode/env` (byte-identical to the auth.json entry; verified by comparison) and is mirrored in `environment.d/95-qwen-provider.conf` |
 | `glm-coding-plan` | `open.bigmodel.cn/api/anthropic/v1` (GLM Coding Plan) | GLM/Zhipu coding-plan console — **not** present in any env seed on machine A (verified); console-sourced. Do not confuse with `GLM_API_KEY` below (different, separately rotated) |
 | `zhipuai-coding-plan` | Zhipu open platform (coding plan) | Zhipu console (`open.bigmodel.cn` account) |
 | `xiaomi-token-plan-cn` | `token-plan-cn.xiaomimimo.com` (Xiaomi MiMo token plan — current default model track) | Xiaomi token-plan console |
@@ -182,7 +182,7 @@ shell wrapper — keep it purely as the auth.json re-seed seed):
 | --- | --- | --- |
 | `10-opencode-db.conf` | `OPENCODE_DB=opencode-main.db` | not secret — install.sh writes the real value |
 | `90-fcitx5.conf` | `QT_IM_MODULE` `XMODIFIERS` `SDL_IM_MODULE` `GLFW_IM_MODULE` | not secret: `fcitx` / `@im=fcitx` / `fcitx` / `ibus` (and `GTK_IM_MODULE` must stay **unset** — 2026-09-24 dual-channel fix) |
-| `95-quinte-provider.conf` | `QIANWEN_TP_PERSONAL_KEY` `QIANWEN_TP_PERSONAL_BASE_URL` `QUINTE_PROVIDER_KEY_ENV` `QUINTE_PROVIDER_BASE_URL_ENV` | keys from the Alibaba token-plan console; `_ENV` vars carry env-var *names* |
+| `95-qwen-provider.conf` | `QIANWEN_TP_PERSONAL_KEY` `QIANWEN_TP_PERSONAL_BASE_URL` | keys from the Alibaba token-plan console |
 | `motoko-home.conf` | `MOTOKO_HOME` | motoko checkout root (non-secret path) |
 | `motoko-keys.conf` | `MOTOKO_REFLECTOR_*` `MOTOKO_LLM_*` `GLM_API_KEY` | GLM/Zhipu console + motoko setup; all literals (`environment.d` performs no command substitution); `GLM_API_KEY` rotated 2026-09-27 |
 
@@ -338,7 +338,7 @@ bootstrap/
 │   └── environment.d/
 │       ├── 10-opencode-db.conf   the DB pin (real value)
 │       ├── 90-fcitx5.conf        names only
-│       ├── 95-quinte-provider.conf  names only
+│       ├── 95-qwen-provider.conf  names only
 │       ├── motoko-home.conf      names only
 │       └── motoko-keys.conf      names only
 ├── shell/

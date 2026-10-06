@@ -275,7 +275,7 @@ mode_check() {
 }
 mode_check "$DATA/auth.json" FAIL "auth.json"
 mode_check "$CFG/env" FAIL "env seed"
-mode_check "$TARGET_HOME/.config/environment.d/95-quinte-provider.conf" WARN "95-quinte-provider.conf"
+mode_check "$TARGET_HOME/.config/environment.d/95-qwen-provider.conf" WARN "95-qwen-provider.conf"
 mode_check "$TARGET_HOME/.config/environment.d/motoko-keys.conf" WARN "motoko-keys.conf"
 mode_check "$TARGET_HOME/.config/environment.d/motoko-home.conf" WARN "motoko-home.conf"
 

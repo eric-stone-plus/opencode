@@ -352,7 +352,7 @@ STAGE_SED=""
 install_file "$BOOTSTRAP_DIR/config/environment.d/10-opencode-db.conf" \
              "$TARGET_HOME/.config/environment.d/10-opencode-db.conf"
 # Seed-only: never overwrite existing ones (may carry live plumbing on machine A).
-for f in 90-fcitx5.conf 95-quinte-provider.conf motoko-home.conf motoko-keys.conf; do
+for f in 90-fcitx5.conf 95-qwen-provider.conf motoko-home.conf motoko-keys.conf; do
   dst="$TARGET_HOME/.config/environment.d/$f"
   if [ -L "$dst" ] && [ ! -e "$dst" ]; then
     say "WARN  $dst is a dangling symlink -> $(readlink "$dst") (left as-is; templates never overwrite)"
@@ -367,7 +367,7 @@ done
 # F4: the three drop-ins whose headers declare mode 0600 must land 0600 even
 # though the templates ship 0644 (two carry key placeholders; motoko-home is a
 # machine path). 90-fcitx5.conf holds no secrets and keeps default perms.
-for f in 95-quinte-provider.conf motoko-home.conf motoko-keys.conf; do
+for f in 95-qwen-provider.conf motoko-home.conf motoko-keys.conf; do
   require_private "$TARGET_HOME/.config/environment.d/$f"
 done
 note "environment.d changes take effect on next login (systemd user generator)."
