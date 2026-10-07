@@ -29,6 +29,16 @@ Use best judgement when processing input.
 
 ---
 
+## Deterministic Selection via ocr delegate
+
+If `ocr` is on PATH, anchor file selection and rule resolution on it instead of hand-enumerating:
+
+- Run `ocr delegate preview` with `--format json` and the input mapped as above (no arguments → workspace mode; commit hash → `--commit $ARGUMENTS`; branch → `--from $ARGUMENTS --to HEAD`). Treat `reviewable_files` as the reviewable change set and ledger every `excluded_files` entry as `skipped: <exclude_reason>`.
+- Run `ocr delegate rule` with `--format json` over every listed file — reviewable and excluded alike — and apply each group's `rule` text to its `files` on top of the standards below.
+- If `ocr` is not on PATH, fall back to the git enumeration below and say so in the review output.
+
+---
+
 ## Change Set and Coverage Ledger
 
 Build the change set first: every file the diff touches, plus every untracked file from `git status --short`.
