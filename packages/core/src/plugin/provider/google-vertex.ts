@@ -27,17 +27,18 @@ function resolveProject(options: Readonly<Record<string, unknown>>) {
 }
 
 function resolveLocation(options: Readonly<Record<string, unknown>>) {
-  return (
+  const location =
     options.location ??
     process.env.GOOGLE_VERTEX_LOCATION ??
     process.env.GOOGLE_CLOUD_LOCATION ??
-    process.env.VERTEX_LOCATION ??
-    "us-central1"
-  )
+    process.env.VERTEX_LOCATION
+  return typeof location === "string" ? location : undefined
 }
 
 function vertexEndpoint(location: string) {
   if (location === "global") return "aiplatform.googleapis.com"
+  // Jurisdictional multi-regions use Regional Endpoint Platform domains.
+  if (location === "us" || location === "eu") return `aiplatform.${location}.rep.googleapis.com`
   return `${location}-aiplatform.googleapis.com`
 }
 
@@ -71,14 +72,27 @@ export const GoogleVertexPlugin = define({
       .toSorted((a, b) => Number(b === active) - Number(a === active) || a.localeCompare(b))
     const contents = yield* Effect.forEach(configs, (name) => read(path.join(gcloud, "configurations", name)))
     const adcFile = yield* read(path.join(gcloud, "application_default_credentials.json"))
+    const configured = (yield* configuredSettings(Provider.ID.googleVertex)) ?? {}
     const projects = Array.from(
       new Set(
         [
-          resolveProject((yield* configuredSettings(Provider.ID.googleVertex)) ?? {}),
+          resolveProject(configured),
           ...contents.map((content) => content?.match(/^project\s*=\s*(\S+)/m)?.[1]),
           Option.getOrUndefined(decodeADCFile(adcFile ?? ""))?.quota_project_id,
         ].filter((project): project is string => Boolean(project)),
       ),
+    )
+    // Credentials work in every location; locations differ in which models they serve. `global` serves the most.
+    const locations = Array.from(
+      new Set([
+        resolveLocation(configured) ?? "global",
+        "global",
+        "us",
+        "eu",
+        ...contents.flatMap((content) =>
+          Array.from((content ?? "").matchAll(/^region\s*=\s*(\S+)/gm), (match) => match[1]),
+        ),
+      ]),
     )
 
     const load = Effect.fn("GoogleVertexPlugin.load")(function* () {
@@ -88,7 +102,7 @@ export const GoogleVertexPlugin = define({
         connection?.type === "credential" ? yield* credentials.get(Credential.ID.make(connection.id)) : undefined
       if (stored?.value.type !== "external" || stored.value.methodID !== ADC_METHOD) return {}
       // `authMode` keeps an ambient GOOGLE_VERTEX_API_KEY from replacing the selected credentials.
-      return { project: stored.value.metadata?.project, authMode: "adc" }
+      return { project: stored.value.metadata?.project, location: stored.value.metadata?.location, authMode: "adc" }
     })
     const selected = { settings: yield* load() }
     const settingsFor = (provider: {
@@ -123,6 +137,20 @@ export const GoogleVertexPlugin = define({
               default: projects[0],
               options: projects.map((project) => ({ value: project, label: project })),
             },
+            {
+              key: "location",
+              type: "string",
+              title: "Location",
+              description:
+                "global serves the most models. Use us, eu, or a single region for data residency or regional quota.",
+              required: true,
+              minLength: 1,
+              pattern: "\\S",
+              placeholder: "Location",
+              custom: true,
+              default: locations[0],
+              options: locations.map((location) => ({ value: location, label: location })),
+            },
           ],
         },
       })
@@ -139,7 +167,7 @@ export const GoogleVertexPlugin = define({
           continue
         const settings = settingsFor(item.provider)
         const project = resolveProject(settings)
-        const location = String(resolveLocation(settings))
+        const location = resolveLocation(settings) ?? "us-central1"
         evt.update(item.provider.id, (provider) => {
           // Vertex authenticates through ADC rather than a key credential, so a
           // resolvable project is what makes the provider usable.
@@ -167,7 +195,7 @@ export const GoogleVertexPlugin = define({
           continue
         const settings = settingsFor(item.provider)
         const project = resolveProject(settings)
-        const location = String(resolveLocation(settings))
+        const location = resolveLocation(settings) ?? "us-central1"
         for (const model of models.list(item.provider.id)) {
           if (typeof model.settings?.baseURL !== "string") continue
           models.update(item.provider.id, model.id, (draft) => {
