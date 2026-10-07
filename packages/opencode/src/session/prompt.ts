@@ -1275,7 +1275,9 @@ const layer = Layer.effect(
             // A reply cut at the output token limit is not a finished turn. Ask for
             // the rest once with a follow-up user message (thinking models reject
             // assistant prefill); if the continuation is cut off too, surface it.
-            if (lastAssistant.finish === "length" && !lastAssistant.error) {
+            // Summaries are excluded: a truncated compaction summary is retried by
+            // the compaction loop, never continued as a normal reply.
+            if (lastAssistant.finish === "length" && !lastAssistant.error && !lastAssistant.summary) {
               const continued = msgs
                 .find((msg) => msg.info.id === lastUser.id)
                 ?.parts.some(
@@ -1670,6 +1672,11 @@ const layer = Layer.effect(
       yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
 
       const templateParts = yield* resolvePromptParts(template)
+      // Mark the expanded template so consumers can tell it apart from the
+      // user's own words (goal seeding must not adopt a /command template).
+      for (const part of templateParts) {
+        if (part.type === "text") part.metadata = { ...part.metadata, command: input.command }
+      }
       const inputFiles = new Set(
         input.parts?.filter((part) => new URL(part.url).protocol === "file:").map((part) => fileURLToPath(part.url)),
       )

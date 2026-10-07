@@ -90,7 +90,13 @@ const addUser = Effect.fn("Test.addUser")(function* (sessionID: SessionID, text?
 const addAssistant = Effect.fn("Test.addAssistant")(function* (
   sessionID: SessionID,
   parentID: MessageID,
-  opts?: { summary?: boolean; finish?: string; error?: SessionV1.Assistant["error"]; created?: number },
+  opts?: {
+    summary?: boolean
+    finish?: string
+    error?: SessionV1.Assistant["error"]
+    created?: number
+    text?: false
+  },
 ) {
   const session = yield* SessionNs.Service
   const id = MessageID.ascending()
@@ -111,6 +117,17 @@ const addAssistant = Effect.fn("Test.addAssistant")(function* (
     finish: opts?.finish,
     error: opts?.error,
   } as unknown as SessionV1.Info)
+  // Mirror production: a completed summary carries text. `text: false`
+  // models the unusable all-reasoning summary (parts but no text).
+  if (opts?.summary && opts.text !== false) {
+    yield* session.updatePart({
+      id: PartID.ascending(),
+      sessionID,
+      messageID: id,
+      type: "text",
+      text: "summary",
+    } as any)
+  }
   return id
 })
 
@@ -708,6 +725,40 @@ describe("MessageV2.filterCompacted", () => {
 
         // summary=true but no finish
         yield* addAssistant(sessionID, u1, { summary: true })
+        yield* addUser(sessionID, "next")
+
+        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        expect(result).toHaveLength(3)
+      }),
+    ),
+  )
+
+  it.instance("skips a completed summary with no text", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const u1 = yield* addUser(sessionID, "hello")
+        yield* addCompactionPart(sessionID, u1)
+
+        // finish set but the summary produced no text: an empty summary
+        // replaced nothing, so the boundary must not collapse history.
+        yield* addAssistant(sessionID, u1, { summary: true, finish: "end_turn", text: false })
+        yield* addUser(sessionID, "next")
+
+        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        expect(result).toHaveLength(3)
+      }),
+    ),
+  )
+
+  it.instance("skips a length-truncated summary", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        const u1 = yield* addUser(sessionID, "hello")
+        yield* addCompactionPart(sessionID, u1)
+
+        // Cut at the output token limit: compaction retries it, so the
+        // boundary stays open and history is preserved.
+        yield* addAssistant(sessionID, u1, { summary: true, finish: "length" })
         yield* addUser(sessionID, "next")
 
         const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))

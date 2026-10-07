@@ -14,8 +14,9 @@ import { NotFoundError } from "@/storage/storage"
 import { Permission } from "@/permission"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
+import { NamedError } from "@opencode-ai/core/util/error"
 
-import { Effect, Layer, Context } from "effect"
+import { Effect, Layer, Context, Option } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow, usable } from "./overflow"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -143,10 +144,15 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
 
   return messages.flatMap((msg, assistantIndex): CompletedCompaction[] => {
     if (msg.info.role !== "assistant") return []
-    if (!msg.info.summary || !msg.info.finish || msg.info.error) return []
+    // A summary cut at the output token limit is not a finished summary, and a
+    // summary with no text is not a summary at all: accepting either would
+    // mark the boundary complete and silently drop the history it replaced.
+    if (!msg.info.summary || !msg.info.finish || msg.info.finish === "length" || msg.info.error) return []
+    const summary = summaryText(msg)
+    if (!summary) return []
     const userIndex = users.get(msg.info.parentID)
     if (userIndex === undefined) return []
-    return [{ userIndex, assistantIndex, summary: summaryText(msg) }]
+    return [{ userIndex, assistantIndex, summary }]
   })
 }
 
@@ -548,6 +554,30 @@ const layer = Layer.effect(
         processor.message.finish = "error"
         yield* session.updateMessage(processor.message)
         return "stop"
+      }
+
+      // A summary cut at the output token limit, or one that produced no text
+      // at all, is not a usable summary. Accepting it would mark the boundary
+      // complete and silently drop the history it replaced; retrying hits the
+      // same cap, so surface the failure instead and let the run stop.
+      const summaryMsg = yield* session
+        .findMessage(input.sessionID, (m) => m.info.id === processor.message.id)
+        .pipe(Effect.orDie)
+      const summary = Option.getOrUndefined(summaryMsg)
+      const truncated = processor.message.finish === "length"
+      // An all-reasoning summary (parts but no text) is equally unusable. A
+      // message with no parts at all cannot happen through the real processor
+      // and is left to the completion predicates, which reject it too.
+      const empty = summary !== undefined && summary.parts.length > 0 && !summaryText(summary)
+      if (!processor.message.error && (truncated || empty)) {
+        processor.message.error = new NamedError.Unknown({
+          message: truncated
+            ? "Compaction summary was cut off at the output token limit. The session was not compacted; send a message to retry."
+            : "Compaction produced no summary text. The session was not compacted; send a message to retry.",
+        }).toObject()
+        processor.message.finish = "error"
+        yield* session.updateMessage(processor.message)
+        result = "stop"
       }
 
       if (compactionPart && selected.tail_start_id && compactionPart.tail_start_id !== selected.tail_start_id) {

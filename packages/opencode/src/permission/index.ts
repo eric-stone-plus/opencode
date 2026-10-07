@@ -83,6 +83,9 @@ const layer = Layer.effect(
       }
 
       if (!needsAsk) return
+      // Explicit user intent for this call (skipAsk) bypasses the prompt, but
+      // never the deny branch above: it only downgrades "ask" to "allow".
+      if (request.skipAsk) return
 
       const id = request.id ?? PermissionV1.ID.ascending()
       const info: PermissionV1.Request = {

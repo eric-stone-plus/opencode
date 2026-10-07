@@ -48,7 +48,15 @@ export const Approval = Schema.Struct({ projectID: Project.ID, patterns: Schema.
 })
 export type Approval = typeof Approval.Type
 
-export const AskInput = Schema.Struct({ ...Request.fields, id: Schema.optional(ID), ruleset: Ruleset }).annotate({
+export const AskInput = Schema.Struct({
+  ...Request.fields,
+  id: Schema.optional(ID),
+  ruleset: Ruleset,
+  // Callers that already have user intent for this exact call (e.g. the task
+  // tool invoked via an explicit @agent mention) set this to skip the prompt,
+  // but deny rules are still enforced: it only downgrades "ask" to "allow".
+  skipAsk: Schema.optional(Schema.Boolean),
+}).annotate({
   identifier: "PermissionAskInput",
 })
 export type AskInput = typeof AskInput.Type

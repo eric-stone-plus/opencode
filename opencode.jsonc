@@ -1,11 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
-  // Default track (2026-09-29): switched to the mainland Xiaomi MiMo token
-  // plan (xiaomi-token-plan-cn, mimo-v2.6-pro). Revert to
-  // "zhipuai-coding-plan/glm-5.3" to go back to the Zhipu coding-plan track;
-  // the glm-coding-plan block below stays as a manual anthropic-face fallback.
-  "model": "xiaomi-token-plan-cn/mimo-v2.6-pro",
+  // Default track (2026-10-07): temporary switch to DeepSeek-V4.1-Flash.
+  // API id is deepseek-flash (deepseek-v4-flash is a retired alias that
+  // now routes to the same model). Revert this line and the auto/goal
+  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back. Other
+  // provider blocks are unchanged.
+  "model": "deepseek/deepseek-flash",
   "provider": {
     "bailian-token-plan-personal": {
       "npm": "@ai-sdk/anthropic",
@@ -218,6 +219,67 @@
           }
         }
       }
+    },
+    // DeepSeek official API. npm + baseURL are the registry values, so
+    // this block only overlays the flash model. Key is already in
+    // auth.json under provider id "deepseek".
+    //
+    // deepseek-flash is DeepSeek-V4.1-Flash (1M context, 384K max output,
+    // text+image). Effort on the wire is reasoning_effort low|high|max;
+    // max is the top (medium and xhigh are aliases, not higher tiers).
+    // Thinking is on by default. temperature is ignored while thinking;
+    // top_p below 0.95 is raised to 0.95. Published agent evals use
+    // top_p 0.95. Reasoning tokens count against max_tokens when the cap
+    // is enforced (probed 2026-10-07: effort max with max_tokens 16
+    // finished "length" and returned an empty answer). Enforcement is
+    // not universal: probed 2026-10-08, a main-agent request carrying
+    // the `task` tool ignored max_tokens 64 (2231 completion tokens,
+    // "stop"); removing only `task` from the toolset made the same
+    // request enforce the cap (64, "length"). Do not rely on
+    // max_tokens to bound a main-agent turn.
+    //
+    // limit.input is load-bearing (overflow.ts): with it the compaction
+    // watermark is the 256k working cap minus 20k. Without it the full
+    // output budget is deducted. 606784 = 1000000 - 393216.
+    //
+    // options.maxOutputTokens is the FULL 384K (393216) on purpose:
+    // probed on the wire 2026-10-07, without it the request carries
+    // max_tokens 32000 (transform.ts OUTPUT_TOKEN_MAX fallback) and with
+    // it the request carries max_tokens 393216. The larger cap costs
+    // nothing unless the model uses it, and reasoning tokens count
+    // against max_tokens. If a shell ever exports
+    // OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX, that flag overrides this
+    // value (probed: env 65536 -> max_tokens 65536 even with
+    // maxOutputTokens 393216). ~/.config/opencode/env holds such an
+    // export but nothing sources it (not the opencode wrapper, not
+    // bashrc, not opencode itself), so it is inert unless sourced.
+    "deepseek": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek",
+      "options": {
+        "baseURL": "https://api.deepseek.com"
+      },
+      "models": {
+        "deepseek-flash": {
+          "name": "DeepSeek-V4.1-Flash",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "input": 606784,
+            "output": 393216
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "reasoningEffort": "max",
+            "top_p": 0.95,
+            "maxOutputTokens": 393216
+          }
+        }
+      }
     }
   },
   "compaction": {
@@ -235,18 +297,14 @@
       "description": "Autonomous mode. Never asks, never blocks: adopts the recommended option and runs to completion.",
       "mode": "primary",
       "color": "success",
-      // Variant applies via prompt.ts `same` gate (agent model must equal
-      // the resolved model — both are mimo here, so it is live). Swarm
-      // verdict 2026-09-29: mimo's computed variant set is {low,medium,high}
-      // (generic openai-compatible ladder, transform.ts:1000-1008 — the
-      // registry's toggle-only reasoning_options collapses to undefined and
-      // falls through); pins are wire-live (reasoning_effort emitted,
-      // @ai-sdk/openai-compatible dist:538) but the gateway honors
-      // none-vs-on only — low/medium/high measured indistinguishable.
-      // "high" = ladder top (mimo has no "max"); also a legal glm value
-      // if the session model ever switches back.
-      "model": "xiaomi-token-plan-cn/mimo-v2.6-pro",
-      "variant": "high",
+      // Variant applies via the same-model gate (agent model must equal
+      // the resolved model). deepseek-flash's effort set is
+      // {low, high, max}; "max" is the top and is sent as
+      // reasoning_effort. Model options.reasoningEffort is the same
+      // value, so a turn that does not carry the variant still asks
+      // for max.
+      "model": "deepseek/deepseek-flash",
+      "variant": "max",
       // findLast() keeps the LAST matching rule, so the wildcard must come
       // first and the narrow denials after it, or they get overridden.
       "permission": {
@@ -262,11 +320,11 @@
     // profiles declare it in one place. Same no-interrupt surface as auto:
     // the swarm playbook must never be blocked by a prompt mid-run.
     "goal": {
-      "description": "Goal mode. Every message is a /goal objective: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
+      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
       "mode": "primary",
       "color": "error",
-      "model": "xiaomi-token-plan-cn/mimo-v2.6-pro",
-      "variant": "high",
+      "model": "deepseek/deepseek-flash",
+      "variant": "max",
       "permission": {
         "*": "allow",
         "question": "deny",
@@ -323,6 +381,19 @@
     "general": {
       "permission": { "question": "deny", "todowrite": "deny", "plan_exit": "deny" }
     },
-    "explore": { "permission": { "question": "deny", "plan_exit": "deny" } }
+    // Same global-wildcard defeat as plan: without this, the global
+    // "permission": "allow" merges after explore's native "*": "deny" and
+    // findLast() keeps the allow, so explore can edit files (probed
+    // 2026-10-08: `explore edit /etc/passwd -> allow`). Re-assert the
+    // native read-only surface so exploration cannot route edits.
+    "explore": {
+      "permission": {
+        "edit": "deny",
+        "task": "deny",
+        "todowrite": "deny",
+        "question": "deny",
+        "plan_exit": "deny"
+      }
+    }
   }
 }

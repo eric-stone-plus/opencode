@@ -1428,7 +1428,7 @@ export function Prompt(props: PromptProps) {
   const showVariant = createMemo(() => {
     const variants = local.model.variant.list()
     if (variants.length === 0) return false
-    const current = local.model.variant.current()
+    const current = local.model.variant.effective()
     return !!current
   })
 
@@ -1599,7 +1599,7 @@ export function Prompt(props: PromptProps) {
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <text>
                               <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                                {local.model.variant.current()}
+                                {local.model.variant.effective()}
                               </span>
                             </text>
                           </Show>

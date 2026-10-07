@@ -237,14 +237,8 @@ const AgentListCommand = effectCmd({
   handler: Effect.fn("Cli.agent.list")(function* () {
     const { Agent } = yield* Effect.promise(() => import("../../agent/agent"))
     const agents = yield* Agent.Service.use((svc) => svc.list())
-    const sortedAgents = agents.sort((a, b) => {
-      if (a.native !== b.native) {
-        return a.native ? -1 : 1
-      }
-      return a.name.localeCompare(b.name)
-    })
 
-    for (const agent of sortedAgents) {
+    for (const agent of agents) {
       process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
       process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
     }

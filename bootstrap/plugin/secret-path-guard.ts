@@ -35,6 +35,11 @@ const DENY: Array<[RegExp, string]> = [
   [/(^|\/)\.git-credentials$/, "git credentials"],
   [/(^|\/)\.netrc$/, "netrc credentials"],
   [/\.config\/gcloud(\/|$)/, "gcloud application-default credentials"],
+  [/(^|\/)credentials\.json$/, "credentials store (credentials.json)"],
+  [/(^|\/)[^/]*\.env$/, "env file (may hold secrets)"],
+  // `.env.example` is the documented template and stays readable; other
+  // `.env.<suffix>` variants (`.env.local`, …) may hold real secrets.
+  [/(^|\/)(?![^/]*\.env\.example$)[^/]*\.env\.[^/]+$/, "env file (may hold secrets)"],
   [/\.pem$/, "PEM key material"],
   [/(^|\/)id_(rsa|ed25519|ecdsa|dsa)$/, "SSH private key"],
   [/(^|\/)agent-secrets\.env$/, "credential env file"],

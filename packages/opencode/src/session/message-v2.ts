@@ -600,10 +600,19 @@ function compactionBoundary() {
       retain = part.tail_start_id
       return msg.info.id === retain
     }
-    if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
-      completed.add(msg.info.parentID)
+    if (msg.info.role === "assistant" && isCompletedSummary(msg)) completed.add(msg.info.parentID)
     return false
   }
+}
+
+// A length-truncated summary is not complete (compaction retries it), and an
+// empty one replaced nothing: treating either as complete would hide history
+// behind a broken boundary. Mirrors compaction.ts completedCompactions.
+function isCompletedSummary(msg: WithParts) {
+  const info = msg.info
+  if (info.role !== "assistant") return false
+  if (!info.summary || !info.finish || info.finish === "length" || info.error) return false
+  return msg.parts.some((part) => part.type === "text" && part.text.trim())
 }
 
 function orderCompacted(result: WithParts[]) {
@@ -613,9 +622,7 @@ function orderCompacted(result: WithParts[]) {
       (msg, i) =>
         i > index &&
         msg.info.role === "assistant" &&
-        msg.info.summary &&
-        msg.info.finish &&
-        !msg.info.error &&
+        isCompletedSummary(msg) &&
         msg.info.parentID === result[index]!.info.id,
     )
   let compactionIndex = -1

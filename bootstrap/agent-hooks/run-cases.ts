@@ -18,7 +18,11 @@ const die = (msg: string): never => {
 }
 
 const here = new URL(".", import.meta.url).pathname
-const pluginPath = process.argv[2] ?? `${here}../opencode/plugin/block-unsafe-kill.ts`
+// Deployed layout: ~/.config/agent-hooks/ next to ~/.config/opencode/plugin/.
+// Repo layout: bootstrap/agent-hooks/ next to bootstrap/plugin/. Resolve both
+// so the battery is runnable from a checkout, not just from the seat.
+const pluginCandidates = [`${here}../opencode/plugin/block-unsafe-kill.ts`, `${here}../plugin/block-unsafe-kill.ts`]
+const pluginPath = process.argv[2] ?? pluginCandidates.find((candidate) => existsSync(candidate)) ?? pluginCandidates[0]
 const hookPath = `${here}block-unsafe-kill.sh`
 const casesPath = `${here}cases.json`
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   configuredModel,
   DRAFT_MODEL_SCOPE,
+  effectiveVariant,
   modelScope,
   parseModel,
   recentModels,
@@ -123,6 +124,86 @@ describe("resolveVariant", () => {
   test("agent without a model never triggers the fallback (server: same requires ag.model)", () => {
     expect(
       resolveVariant({ selected: undefined, variants, model: glm, agentModel: undefined, agentVariant: "max" }),
+    ).toBe(undefined)
+  })
+})
+
+describe("effectiveVariant (display-only model pin fallback)", () => {
+  test("no explicit/agent variant, model pins reasoningEffort -> pinned value is shown", () => {
+    expect(
+      effectiveVariant({
+        selected: undefined,
+        variants,
+        model: glm,
+        agentModel: undefined,
+        agentVariant: undefined,
+        pinned: "max",
+      }),
+    ).toBe("max")
+  })
+
+  test("explicit selection wins over the pin", () => {
+    expect(
+      effectiveVariant({
+        selected: "high",
+        variants,
+        model: glm,
+        agentModel: glm,
+        agentVariant: "max",
+        pinned: "max",
+      }),
+    ).toBe("high")
+  })
+
+  test("agent variant wins over the pin when the same-model gate holds", () => {
+    expect(
+      effectiveVariant({
+        selected: undefined,
+        variants,
+        model: glm,
+        agentModel: glm,
+        agentVariant: "high",
+        pinned: "max",
+      }),
+    ).toBe("high")
+  })
+
+  test("agent variant gated off by a different model -> the pin still describes the request", () => {
+    expect(
+      effectiveVariant({
+        selected: undefined,
+        variants,
+        model: flash,
+        agentModel: glm,
+        agentVariant: "high",
+        pinned: "max",
+      }),
+    ).toBe("max")
+  })
+
+  test("a pin outside the model's variant list is not shown", () => {
+    expect(
+      effectiveVariant({
+        selected: undefined,
+        variants: ["high"],
+        model: glm,
+        agentModel: undefined,
+        agentVariant: undefined,
+        pinned: "max",
+      }),
+    ).toBe(undefined)
+  })
+
+  test("no pin and no resolution -> nothing shown", () => {
+    expect(
+      effectiveVariant({
+        selected: undefined,
+        variants,
+        model: glm,
+        agentModel: undefined,
+        agentVariant: undefined,
+        pinned: undefined,
+      }),
     ).toBe(undefined)
   })
 })

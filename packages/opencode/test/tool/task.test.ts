@@ -405,11 +405,23 @@ describe("tool.task", () => {
       yield* exec()
       yield* exec({ bypassAgentCheck: true })
 
-      expect(calls).toHaveLength(1)
+      // The permission layer is always consulted; bypass only asks it to skip
+      // the prompt (skipAsk), so explicit deny rules still apply.
+      expect(calls).toHaveLength(2)
       expect(calls[0]).toEqual({
         permission: "task",
         patterns: ["general"],
         always: ["*"],
+        metadata: {
+          description: "inspect bug",
+          subagent_type: "general",
+        },
+      })
+      expect(calls[1]).toEqual({
+        permission: "task",
+        patterns: ["general"],
+        always: ["*"],
+        skipAsk: true,
         metadata: {
           description: "inspect bug",
           subagent_type: "general",

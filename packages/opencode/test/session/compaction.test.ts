@@ -1399,6 +1399,90 @@ describe("session.compaction.process", () => {
   )
 
   itCompaction.instance(
+    "rejects a summary cut at the output token limit instead of silently dropping history",
+    () => {
+      const stub = llm()
+      stub.push(
+        Stream.make(
+          LLMEvent.textStart({ id: "txt-0" }),
+          LLMEvent.textDelta({ id: "txt-0", text: "partial summary" }),
+          LLMEvent.textEnd({ id: "txt-0" }),
+          LLMEvent.stepFinish({ index: 0, reason: "length", usage: basicUsage() }),
+          LLMEvent.finish({ reason: "length", usage: basicUsage() }),
+        ),
+      )
+      return Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const msg = yield* createUserMessage(session.id, "hello")
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        const result = yield* SessionCompaction.use.process({
+          parentID: msg.id,
+          messages: msgs,
+          sessionID: session.id,
+          auto: true,
+        })
+
+        expect(result).toBe("stop")
+        const all = yield* ssn.messages({ sessionID: session.id })
+        const summary = all.find((item) => item.info.role === "assistant" && item.info.summary)
+        expect(summary?.info.role).toBe("assistant")
+        if (summary?.info.role === "assistant") {
+          expect(summary.info.finish).toBe("error")
+          expect(summary.info.error).toBeTruthy()
+        }
+        // No synthetic continue was queued behind the broken summary.
+        expect(all.at(-1)?.info.id).toBe(summary?.info.id)
+        // The truncated summary must not collapse the boundary: history survives.
+        const filtered = MessageV2.filterCompacted(all)
+        expect(filtered.some((item) => item.info.id === msg.id)).toBe(true)
+      }).pipe(withCompaction({ llm: stub.llmLayer }))
+    },
+    { git: true },
+  )
+
+  itCompaction.instance(
+    "rejects an all-reasoning summary with no text instead of silently dropping history",
+    () => {
+      const stub = llm()
+      stub.push(
+        Stream.make(
+          LLMEvent.reasoningStart({ id: "reasoning-0" }),
+          LLMEvent.reasoningDelta({ id: "reasoning-0", text: "thinking only" }),
+          LLMEvent.reasoningEnd({ id: "reasoning-0" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop", usage: basicUsage() }),
+          LLMEvent.finish({ reason: "stop", usage: basicUsage() }),
+        ),
+      )
+      return Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const msg = yield* createUserMessage(session.id, "hello")
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        const result = yield* SessionCompaction.use.process({
+          parentID: msg.id,
+          messages: msgs,
+          sessionID: session.id,
+          auto: true,
+        })
+
+        expect(result).toBe("stop")
+        const all = yield* ssn.messages({ sessionID: session.id })
+        const summary = all.find((item) => item.info.role === "assistant" && item.info.summary)
+        expect(summary?.info.role).toBe("assistant")
+        if (summary?.info.role === "assistant") {
+          expect(summary.info.finish).toBe("error")
+          expect(summary.info.error).toBeTruthy()
+        }
+        // The unusable summary must not collapse the boundary: history survives.
+        const filtered = MessageV2.filterCompacted(all)
+        expect(filtered.some((item) => item.info.id === msg.id)).toBe(true)
+      }).pipe(withCompaction({ llm: stub.llmLayer }))
+    },
+    { git: true },
+  )
+
+  itCompaction.instance(
     "summarizes only the head while keeping recent tail out of summary input",
     () => {
       const stub = llm()

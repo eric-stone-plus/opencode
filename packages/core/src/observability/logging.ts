@@ -49,12 +49,15 @@ function format(input: unknown) {
 
 export const ROTATE_BYTES = 20 * 1024 * 1024
 export const ROTATE_KEEP = 3
-const rotated = new Set<string>()
+const lastRotateCheck = new Map<string, number>()
+const ROTATE_CHECK_INTERVAL = 60_000
 
 /**
- * Size-based rotation, once per process per file: when the log exceeds
- * `maxBytes`, shift `file.N-1` -> `file.N` (dropping the oldest beyond `keep`)
- * and move the current file to `file.1`. Best-effort; never throws.
+ * Size-based rotation, checked at most once a minute per file: when the log
+ * exceeds `maxBytes`, shift `file.N-1` -> `file.N` (dropping the oldest beyond
+ * `keep`) and move the current file to `file.1`. Best-effort; never throws.
+ * The check used to run once per process, so long-lived servers (serve, acp)
+ * never rotated again after startup.
  */
 export function rotate(file: string, options?: { maxBytes?: number; keep?: number }) {
   const maxBytes = options?.maxBytes ?? ROTATE_BYTES
@@ -77,8 +80,9 @@ export function rotate(file: string, options?: { maxBytes?: number; keep?: numbe
 }
 
 export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id: string = runID) {
-  if (!rotated.has(file)) {
-    rotated.add(file)
+  const now = Date.now()
+  if (now - (lastRotateCheck.get(file) ?? 0) >= ROTATE_CHECK_INTERVAL) {
+    lastRotateCheck.set(file, now)
     rotate(file)
   }
   // Do not set batchWindow to 0; it causes high idle CPU usage.

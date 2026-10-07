@@ -88,6 +88,11 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
         providerOptions: input.provider.options,
       })
   const options = mergeOptions(mergeOptions(mergeOptions(base, input.model.options), input.agent.options), variant)
+  // Small calls (title generation) must not inherit a main-turn effort pin:
+  // model options merge after smallOptions, so without this the cheap call
+  // runs at the same effort as a full turn (probed: title at max).
+  const smallEffort = input.small && "reasoningEffort" in base ? base.reasoningEffort : undefined
+  if (smallEffort !== undefined) options.reasoningEffort = smallEffort
   if (
     input.model.api.npm === "@ai-sdk/azure" &&
     (input.provider.options.useCompletionUrls || input.model.options.useCompletionUrls || options.useCompletionUrls)

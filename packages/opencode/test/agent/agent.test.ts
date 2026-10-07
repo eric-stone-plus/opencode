@@ -120,6 +120,50 @@ it.instance("explore agent denies edit and write", () =>
   }),
 )
 
+it.instance(
+  "agent-level permission re-asserts merge after the global permission",
+  () =>
+    Effect.gen(function* () {
+      const explore = yield* load((svc) => svc.get("explore"))
+      const plan = yield* load((svc) => svc.get("plan"))
+      expect(explore).toBeDefined()
+      expect(plan).toBeDefined()
+      // The global "allow" merges after the native rules and would otherwise
+      // defeat the read-only surface; an agent block re-asserting the deny is
+      // merged last and wins (findLast). Mirrors the live config pattern.
+      expect(evalPerm(explore, "edit")).toBe("deny")
+      expect(Permission.evaluate("task", "general", explore!.permission).action).toBe("deny")
+      expect(evalPerm(plan, "edit")).toBe("deny")
+      expect(Permission.evaluate("task", "general", plan!.permission).action).toBe("deny")
+    }),
+  {
+    config: {
+      permission: { "*": "allow" },
+      agent: {
+        explore: {
+          permission: {
+            edit: "deny",
+            task: "deny",
+            todowrite: "deny",
+            question: "deny",
+            plan_exit: "deny",
+          },
+        },
+        plan: {
+          permission: {
+            "*": "allow",
+            question: "allow",
+            plan_enter: "deny",
+            plan_exit: "allow",
+            edit: { "*": "deny" },
+            task: { general: "deny" },
+          },
+        },
+      },
+    },
+  },
+)
+
 it.instance("explore agent asks for external directories and allows whitelisted external paths", () =>
   Effect.gen(function* () {
     const explore = yield* load((svc) => svc.get("explore"))
@@ -435,12 +479,14 @@ it.instance(
 )
 
 it.instance(
-  "Agent.list keeps the default agent first and sorts the rest by name",
+  "Agent.list keeps the default agent first, configured agents in config order, then the rest by name",
   () =>
     Effect.gen(function* () {
       const names = (yield* load((svc) => svc.list())).map((a) => a.name)
       expect(names[0]).toBe("plan")
-      expect(names.slice(1)).toEqual(names.slice(1).toSorted((a, b) => a.localeCompare(b)))
+      // Declared zebra before alpha: config order wins over name order.
+      expect(names.slice(1, 3)).toEqual(["zebra", "alpha"])
+      expect(names.slice(3)).toEqual(names.slice(3).toSorted((a, b) => a.localeCompare(b)))
     }),
   {
     config: {

@@ -592,6 +592,45 @@ it.instance(
 )
 
 it.instance(
+  "ask - skipAsk still throws DeniedError when action is deny",
+  () =>
+    Effect.gen(function* () {
+      const err = yield* fail(
+        ask({
+          sessionID: SessionID.make("session_test"),
+          permission: "task",
+          patterns: ["general"],
+          metadata: {},
+          always: [],
+          skipAsk: true,
+          ruleset: [{ permission: "task", pattern: "general", action: "deny" }],
+        }),
+      )
+      expect(err).toBeInstanceOf(PermissionV1.DeniedError)
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - skipAsk resolves without prompting when action is ask",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "task",
+        patterns: ["general"],
+        metadata: {},
+        always: [],
+        skipAsk: true,
+        ruleset: [{ permission: "task", pattern: "*", action: "ask" }],
+      })
+      expect(result).toBeUndefined()
+      expect(yield* list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
   "ask - stays pending when action is ask",
   () =>
     Effect.gen(function* () {

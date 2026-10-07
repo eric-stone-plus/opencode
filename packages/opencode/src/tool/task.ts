@@ -121,17 +121,19 @@ export const TaskTool = Tool.define(
         )
       }
 
-      if (!ctx.extra?.bypassAgentCheck) {
-        yield* ctx.ask({
-          permission: id,
-          patterns: [params.subagent_type],
-          always: ["*"],
-          metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
-          },
-        })
-      }
+      // The user naming an agent in the prompt (bypassAgentCheck) skips the
+      // prompt, but not deny rules: plan mode's `task: {general: deny}` must
+      // hold even when the user @-mentions general.
+      yield* ctx.ask({
+        permission: id,
+        patterns: [params.subagent_type],
+        always: ["*"],
+        ...(ctx.extra?.bypassAgentCheck === true ? { skipAsk: true } : {}),
+        metadata: {
+          description: params.description,
+          subagent_type: params.subagent_type,
+        },
+      })
 
       const next = yield* agent.get(params.subagent_type)
       if (!next) {

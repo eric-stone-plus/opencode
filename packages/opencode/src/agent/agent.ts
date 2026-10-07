@@ -315,11 +315,16 @@ const layer = Layer.effect(
 
         const list = Effect.fnUntraced(function* () {
           const cfg = yield* config.get()
+          // Configured agents keep the order they are declared in the config
+          // (the four mode profiles: auto, goal, build, plan), so the mode
+          // cycle follows the config file. Unconfigured agents sort by name.
+          const order = new Map(Object.keys(cfg.agent ?? {}).map((name, index) => [name, index] as const))
           return pipe(
             agents,
             values(),
             sortBy(
               [(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"],
+              [(x) => order.get(x.name) ?? Number.MAX_SAFE_INTEGER, "asc"],
               [(x) => x.name, "asc"],
             ),
           )

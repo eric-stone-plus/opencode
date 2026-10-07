@@ -68,6 +68,25 @@ export function resolveVariant(input: {
   return undefined
 }
 
+// Display-only companion to resolveVariant: when no explicit or agent variant
+// resolves, a model-level `options.reasoningEffort` pin still reaches every
+// request (the server merges model options over the variant), so the footer
+// must show it instead of hiding the effort. This never feeds back into the
+// request or the variant store.
+export function effectiveVariant(input: {
+  selected: string | undefined
+  variants: string[]
+  model: { providerID: string; modelID: string }
+  agentModel: { providerID: string; modelID: string } | undefined
+  agentVariant: string | undefined
+  pinned: string | undefined
+}) {
+  const resolved = resolveVariant(input)
+  if (resolved) return resolved
+  if (input.pinned && input.variants.includes(input.pinned)) return input.pinned
+  return undefined
+}
+
 export type ModelRef = { providerID: string; modelID: string }
 
 // The model is a per-session choice, not a per-agent one: once the user picks
@@ -463,6 +482,23 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               model: m,
               agentModel: a?.model,
               agentVariant: a?.variant,
+            })
+          },
+          effective() {
+            const m = currentModel()
+            if (!m) return undefined
+            const variants = this.list()
+            if (variants.length === 0) return undefined
+            const a = agent.current()
+            const info = sync.data.provider.find((item) => item.id === m.providerID)?.models[m.modelID]
+            const pinned = info?.options?.reasoningEffort
+            return effectiveVariant({
+              selected: this.selected(),
+              variants,
+              model: m,
+              agentModel: a?.model,
+              agentVariant: a?.variant,
+              pinned: typeof pinned === "string" ? pinned : undefined,
             })
           },
           list() {

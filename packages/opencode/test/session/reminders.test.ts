@@ -33,7 +33,12 @@ const it = testEffect(
 const model = { providerID: ProviderV2.ID.make("openai"), modelID: ModelV2.ID.make("gpt-4") }
 const agent = (name: string) => ({ name, mode: "primary", permission: [], options: {} }) as unknown as Agent.Info
 
-const user = Effect.fn("test.user")(function* (sessionID: SessionID, name: string, text = "go") {
+const user = Effect.fn("test.user")(function* (
+  sessionID: SessionID,
+  name: string,
+  text = "go",
+  metadata?: Record<string, unknown>,
+) {
   const session = yield* Session.Service
   const msg = yield* session.updateMessage({
     id: MessageID.ascending(),
@@ -43,7 +48,14 @@ const user = Effect.fn("test.user")(function* (sessionID: SessionID, name: strin
     model,
     time: { created: Date.now() },
   })
-  yield* session.updatePart({ id: PartID.ascending(), messageID: msg.id, sessionID, type: "text", text })
+  yield* session.updatePart({
+    id: PartID.ascending(),
+    messageID: msg.id,
+    sessionID,
+    type: "text",
+    text,
+    ...(metadata ? { metadata } : {}),
+  })
   return msg
 })
 
@@ -302,6 +314,32 @@ describe("SessionReminders.apply", () => {
         const goalPath = Session.goal(yield* session.get(id), yield* InstanceState.context)
         expect(yield* fsys.readFileStringSafe(goalPath)).toBe("ship the acceptance report")
         expect(seen).toEqual(["ship the acceptance report"])
+      }),
+    ),
+  )
+
+  it.live(
+    "a command message does not seed the goal",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const events = yield* EventV2Bridge.Service
+        const fsys = yield* FSUtil.Service
+        const { id } = yield* session.create({})
+        const seen: string[] = []
+        const unsub = yield* events.listen((event) => {
+          if (event.type === "goal.updated") seen.push((event.data as { text: string }).text)
+          return Effect.void
+        })
+        yield* Effect.addFinalizer(() => unsub)
+        // Command templates are marked with metadata.command (prompt.ts); they
+        // are the user's keystrokes only in the sense that they invoked the
+        // command, so they must not become the objective.
+        yield* user(id, "goal", "# Init\n\nCreate or update AGENTS.md", { command: "init" })
+        yield* apply(id, "goal")
+        const goalPath = Session.goal(yield* session.get(id), yield* InstanceState.context)
+        expect(yield* fsys.readFileStringSafe(goalPath)).toBeUndefined()
+        expect(seen).toEqual([])
       }),
     ),
   )
