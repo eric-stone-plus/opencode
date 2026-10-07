@@ -8,7 +8,6 @@ Source of truth on machine A:
 | Item | Path |
 | --- | --- |
 | fork repo (binary source) | `/home/eric/Documents/Development/private/agent-design/projects/opencode` (branch `main`) |
-| motoko checkout (optional; `motoko-seat-ops` skill only) | `/home/eric/Documents/Development/private/agent-design/tools/motoko` |
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
@@ -39,9 +38,6 @@ time (`OPENCODE_CHANNEL` define, `packages/opencode/script/build.ts:196-204`).
 git clone <this-repo> ~/work/agent-design/projects/opencode
 cd ~/work/agent-design/projects/opencode
 git checkout main                       # REQUIRED: see channel note below
-
-# optional: only if you want the motoko-seat-ops skill (no plugin involved)
-git clone <motoko-repo> ~/work/agent-design/tools/motoko
 ```
 
 **Channel discipline (do not skip).** The build bakes the channel in from the
@@ -274,7 +270,7 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   its plans path is rewritten from `--home` on install).
 * The kill-guard battery and its five wirings.
 * Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `secret-path-guard.ts`.
-* Orphan skills `longrun-stability-audit`, `motoko-seat-ops`.
+* Orphan skill `longrun-stability-audit`.
 * Goal-mode files `agent/goal.md`, `autonomy.md`,
   `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
   command: goal mode seeds and owns its goal file. Goal reminders and the
@@ -296,9 +292,8 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   semantics* still reproduce; only rendering differs.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
-* **`plugin/motoko.ts`** — no longer shipped. The motoko seat drives the engine
-  through the `motoko` CLI directly (see the `motoko-seat-ops` skill); there is
-  no plugin to symlink, and the repo carries no motoko checkout path.
+* **Motoko seat** — not part of this bundle. The live seat is the codewhale
+  plugin. This fork ships no motoko skill, agent profile, or plugin.
 * **`plugin/mpskills-update.ts`** — shipped as-is and self-contained: on the
   first `skill` call in a 24h window it fetches the vendored upstream checkout
   under `${HOME}/.cache/opencode/`, re-runs `vendor-skills`, reinstalls to
@@ -354,8 +349,7 @@ bootstrap/
 │   └── bashrc-opencode-block.sh  byte-exact ~/.bashrc extraction + install notes
 ├── agent-hooks/                  full guard battery (4 files)
 ├── skills-extra/
-│   ├── longrun-stability-audit/  SKILL.md + references/
-│   └── motoko-seat-ops/          SKILL.md
+│   └── longrun-stability-audit/  SKILL.md + references/
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── mpskills-update.ts        as-is (self-contained; fetches + vendors on first skill call)

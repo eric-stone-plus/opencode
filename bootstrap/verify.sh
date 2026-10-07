@@ -536,7 +536,7 @@ done
 
 # --- 9. skills-extra ---------------------------------------------------------
 echo "-- skills-extra"
-for s in longrun-stability-audit motoko-seat-ops; do
+for s in longrun-stability-audit; do
   if [ -d "$CFG/skills/$s" ]; then
     pass "skill present: $s"
   else
