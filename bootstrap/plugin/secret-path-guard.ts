@@ -26,7 +26,6 @@ const DENY: Array<[RegExp, string]> = [
   [/LarkShell\/(logout_token|sdk_storage(\/|$))/, "LarkShell tokens / client state"],
   [/causeway\/secrets(\/|$)/, "causeway secrets"],
   [/firecrawl-cli\/credentials\.json$/, "firecrawl credentials"],
-  [/environment\.d\/motoko-keys\.conf$/, "motoko LLM keys"],
   [/\.config\/opencode\/env$/, "provider API key env"],
   [/\.config\/claude-env$/, "Anthropic auth token env"],
   [/(^|\/)\.ssh(\/|$)/, "SSH key material"],

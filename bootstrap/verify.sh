@@ -251,7 +251,7 @@ fi
 echo "-- secret seed file modes"
 # FAIL for auth.json / env: the primary secret surfaces must never be
 # group/world-readable. WARN for the environment.d drop-ins: they carry
-# placeholder names until re-seeded (and motoko-home/90-fcitx5 hold no secret
+# placeholder names until re-seeded (90-fcitx5 holds no secret
 # at all), so a hard FAIL would block machine-B verification over files that
 # still contain nothing sensitive.
 mode_check() {
@@ -276,8 +276,6 @@ mode_check() {
 mode_check "$DATA/auth.json" FAIL "auth.json"
 mode_check "$CFG/env" FAIL "env seed"
 mode_check "$TARGET_HOME/.config/environment.d/95-qwen-provider.conf" WARN "95-qwen-provider.conf"
-mode_check "$TARGET_HOME/.config/environment.d/motoko-keys.conf" WARN "motoko-keys.conf"
-mode_check "$TARGET_HOME/.config/environment.d/motoko-home.conf" WARN "motoko-home.conf"
 
 # --- 7. kill-guard battery + 5 hook surfaces ---------------------------------
 echo "-- kill-guard wiring"

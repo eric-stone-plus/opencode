@@ -102,7 +102,7 @@ Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth
 ls -l ~/.local/share/opencode/auth.json   # mode 0600
 # mode 0600 is converged on every run for auth.json, ~/.config/opencode/env
 # and the secret-bearing environment.d drop-ins (content is never touched):
-ls -l ~/.config/opencode/env ~/.config/environment.d/{95-qwen-provider,motoko-keys}.conf
+ls -l ~/.config/opencode/env ~/.config/environment.d/95-qwen-provider.conf
 ```
 
 ### Step 5 — re-login, then verify
@@ -132,7 +132,7 @@ a *function*).
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
-| 4 | `environment.d/{90-fcitx5,95-qwen-provider,motoko-home,motoko-keys}.conf` | **only if absent**; templates carry names only; the three 0600-claiming ones (`95-qwen-provider`, `motoko-home`, `motoko-keys`) get mode 0600 |
+| 4 | `environment.d/{90-fcitx5,95-qwen-provider}.conf` | **only if absent**; templates carry names only; `95-qwen-provider` gets mode 0600 |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
@@ -179,8 +179,6 @@ shell wrapper — keep it purely as the auth.json re-seed seed):
 | `10-opencode-db.conf` | `OPENCODE_DB=opencode-main.db` | not secret — install.sh writes the real value |
 | `90-fcitx5.conf` | `QT_IM_MODULE` `XMODIFIERS` `SDL_IM_MODULE` `GLFW_IM_MODULE` | not secret: `fcitx` / `@im=fcitx` / `fcitx` / `ibus` (and `GTK_IM_MODULE` must stay **unset** — 2026-09-24 dual-channel fix) |
 | `95-qwen-provider.conf` | `QIANWEN_TP_PERSONAL_KEY` `QIANWEN_TP_PERSONAL_BASE_URL` | keys from the Alibaba token-plan console |
-| `motoko-home.conf` | `MOTOKO_HOME` | motoko checkout root (non-secret path) |
-| `motoko-keys.conf` | `MOTOKO_REFLECTOR_*` `MOTOKO_LLM_*` `GLM_API_KEY` | GLM/Zhipu console + motoko setup; all literals (`environment.d` performs no command substitution); `GLM_API_KEY` rotated 2026-09-27 |
 
 Claude Code plumbing (`~/.claude/settings.json` `env` block: `ANTHROPIC_BASE_URL`
 =`https://apinebula.ai`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_DEFAULT_*_MODEL`) is
@@ -292,8 +290,6 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   semantics* still reproduce; only rendering differs.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
-* **Motoko seat** — not part of this bundle. The live seat is the codewhale
-  plugin. This fork ships no motoko skill, agent profile, or plugin.
 * **`plugin/mpskills-update.ts`** — shipped as-is and self-contained: on the
   first `skill` call in a 24h window it fetches the vendored upstream checkout
   under `${HOME}/.cache/opencode/`, re-runs `vendor-skills`, reinstalls to
@@ -342,9 +338,7 @@ bootstrap/
 │   └── environment.d/
 │       ├── 10-opencode-db.conf   the DB pin (real value)
 │       ├── 90-fcitx5.conf        names only
-│       ├── 95-qwen-provider.conf  names only
-│       ├── motoko-home.conf      names only
-│       └── motoko-keys.conf      names only
+│       └── 95-qwen-provider.conf  names only
 ├── shell/
 │   └── bashrc-opencode-block.sh  byte-exact ~/.bashrc extraction + install notes
 ├── agent-hooks/                  full guard battery (4 files)
