@@ -66,17 +66,58 @@ for (const bucket of BUCKETS) {
 if (vendored.length === 0) throw new Error(`no skills found under ${source}/skills`)
 
 // Fork policy: this deployment is agent-native, so skills the agents
-// demonstrably load by name (protocol-named in AGENTS.goal.md, or directed by
-// orchestrator prompts) must not be hidden behind upstream's user-only flag.
+// demonstrably load by name (protocol-named in AGENTS.goal.md or autonomy.md,
+// directed by orchestrator prompts, or situation-matchable per the router
+// table) must not be hidden behind upstream's user-only flag.
 // `disable-model-invocation` is honored by packages/opencode/src/skill/index.ts
 // as of this fork; without this patch a re-vendor would silently error every
 // legitimate name+load of the skills below. Applied after the copy loop so the
-// patch survives every re-vendor and the 24h auto-refresh.
-const UNFLAG = ["wayfinder", "handoff", "implement", "ask-matt", "grill-me", "implement-spec"]
+// patch survives every re-vendor and the 24h auto-refresh. Stays out (flag
+// kept): `wait-what` (only the human knows a message did not land),
+// `setup-matt-pocock-skills` (one-shot repo setup with side effects), and
+// `improve-codebase-architecture` (which deepening to pursue is the human's
+// call per autonomy.txt's stewardship list — never the router's).
+const UNFLAG = [
+  "wayfinder",
+  "handoff",
+  "implement",
+  "ask-matt",
+  "grill-me",
+  "implement-spec",
+  "retro",
+  "teach",
+  "grill-with-docs",
+  "triage",
+  "to-spec",
+  "to-tickets",
+  "to-questionnaire",
+]
 for (const skill of UNFLAG) {
   const file = path.join(DEST, skill, "SKILL.md")
   const body = await Bun.file(file).text()
   await writeFile(file, body.replace(/^disable-model-invocation: true\n/m, ""))
+}
+
+// Auto-activation is pure description matching (system.ts has no keyword or
+// retrieval router), so a skill the model never loads needs its trigger
+// phrases in the description the listing shows. These reword descriptions for
+// the never-invoked tail; the replace is anchored on the whole description
+// line so upstream wording drift cannot silently drop a patch.
+const DESCRIPTIONS: Record<string, string> = {
+  retro:
+    "Conduct a retrospective on a coding session. Use when the user asks for a retro, retrospective, post-mortem, or lessons-learned pass over the session or work just completed - not for reviewing code diffs (that is code-review).",
+  teach:
+    "Teach the user a new skill or concept, within this workspace. Use when the user asks to be taught, to learn hands-on, or to have a skill or concept explained with practice here.",
+  "grill-with-docs":
+    "A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go. Use when the user wants to grill or stress-test a plan AND wants those docs captured; prefer plain grilling when no docs are wanted.",
+  pr: "Use when writing a PR body, merge-request description, or pull-request summary for the current changes.",
+  "to-questionnaire":
+    "Turn a decision you can't fully answer into a questionnaire for someone else to fill in. Use when a decision that belongs to a person blocks the work (the AFK/HITL handoff rule) - not for decisions the agent may adopt provisionally.",
+}
+for (const [skill, description] of Object.entries(DESCRIPTIONS)) {
+  const file = path.join(DEST, skill, "SKILL.md")
+  const body = await Bun.file(file).text()
+  await writeFile(file, body.replace(/^description: .*$/m, `description: ${description}`))
 }
 
 // MIT requires the copyright and permission notice to travel with the work.
@@ -99,6 +140,7 @@ await writeFile(
     `- Skills: ${vendored.length}, files: ${totalFiles}`,
     `- Excluded: ${[...EXCLUDED].join(", ")}`,
     `- Unflagged (disable-model-invocation removed): ${UNFLAG.join(", ")}`,
+    `- Descriptions reworded with trigger phrases: ${Object.keys(DESCRIPTIONS).join(", ")}`,
     `- License: MIT, see [LICENSE](LICENSE) (Copyright (c) 2026 Matt Pocock)`,
     "",
     "`sync-upstream` copies this tree to `~/.config/opencode/skills/`, where the",

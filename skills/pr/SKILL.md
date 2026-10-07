@@ -1,6 +1,6 @@
 ---
 name: pr
-description: "Use when writing a PR body."
+description: Use when writing a PR body, merge-request description, or pull-request summary for the current changes.
 metadata:
   credits:
     skill: show-me

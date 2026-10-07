@@ -33,7 +33,24 @@ Pick skills by task type:
 | Open question / fact-finding | `research` (primary sources only) |
 | Any claim, finding, or "all clear" to verify | `grilling` (adversarial interrogation) |
 | Work too big for one session | `wayfinder`, `handoff` for state |
-| Multi-ticket spec builds (to-spec/to-tickets output, parallel implementers) | `implement-spec` |
+| Multi-ticket spec builds (to-spec/to-tickets output, parallel implementers) | `to-spec`, `to-tickets`, `implement-spec` |
+| Session or work retrospective | `retro` |
+| Teaching a concept or skill | `teach` |
+| Issue / PR triage | `triage` |
+| Decision belongs to a person (AFK/HITL) | `to-questionnaire`; `wizard` when that person must perform live steps |
+| Stress-test a plan AND capture ADRs/glossary | `grill-with-docs` (no docs wanted: `grilling`/`grill-me`) |
+| Domain vocabulary, GLOSSARY.md, ADRs | `domain-modeling` |
+| Local PDF text/table extraction | `marker` (over ad-hoc pdftotext) |
+| Draw.io architecture diagrams | `drawio` |
+| Compaction or restart just happened | `planning-with-files` (planning read) |
+
+Auto-activation is description matching only — trigger phrases live in each
+skill's description, so keep them there when adding skills. `wait-what`,
+`setup-matt-pocock-skills`, and `improve-codebase-architecture` keep
+`disable-model-invocation: true` on purpose: only the user may start them (a
+human judges that a message did not land; repo setup is a one-shot with side
+effects; which deepening to pursue is the human's call per autonomy.md's
+stewardship list, so the router never selects it).
 
 **Workflow**:
 
