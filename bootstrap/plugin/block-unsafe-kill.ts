@@ -15,8 +15,12 @@ const READONLY = new Set([
 // A quoted argument to one of these is OPERATOR text (it will be executed),
 // not data: keep it live. `bash|sh|zsh|dash -c` payloads, `timeout … bash -c`
 // (the -c rule sees through the prefix), `eval`, and `ssh` remote commands.
+// env doubles as an interpreter via --split-string/-S (the split text runs as a
+// command line), so it is tracked with the interpreter set; its -S payload is
+// recognized by the `s` payload letter below.
 const CODE_SHELLS = new Set([
   "bash", "sh", "zsh", "dash", "ksh", "python", "python3", "python2", "pypy", "pypy3",
+  "env",
 ])
 const PYTHONS = new Set(["python", "python3", "python2", "pypy", "pypy3"])
 const CODE_E = new Set(["perl", "ruby", "node", "deno", "lua"])
@@ -24,11 +28,24 @@ const PAYLOAD_CMDS = new Set(["eval", "ssh"])
 // Bare shell interpreters: anything that reads COMMANDS from a pipe/stdin.
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"])
 // Wrappers that only schedule the real command (sudo nice -n 5 pkill …): a
-// kill-family word after one of these is still an invocation.
+// kill-family word after one of these is still an invocation. Prefix executors
+// (taskset/nsenter/setpriv/strace/…) exec their argv unchanged, so they are
+// wrappers too. busybox provides kill-family applets (`busybox pkill -f x`).
 const WRAPPERS = new Set([
   "sudo", "doas", "env", "nice", "nohup", "time", "timeout", "stdbuf",
-  "setsid", "command", "builtin", "exec", "xargs",
+  "setsid", "command", "builtin", "exec", "xargs", "busybox", "nsenter",
+  "setpriv", "unshare", "taskset", "ionice", "chrt", "prlimit", "numactl",
+  "strace", "ltrace", "setarch", "watch", "systemd-run",
 ])
+// Words whose identity matters to the guard even when quoted: a quoted
+// `"pkill"` still EXECUTES pkill, so the mask must keep these visible (the
+// basename is what lands in argv[0]: "/usr/bin/pkill" counts too).
+const GUARD_WORDS = new Set([
+  "kill", "killall", "pkill", "pgrep", "cgroup_cleanup", "git",
+  ...CODE_SHELLS, ...CODE_E, ...PAYLOAD_CMDS, ...WRAPPERS,
+])
+// Shell block keywords are transparent: `then pkill -f x` executes pkill.
+const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "for", "select", "!"])
 
 const FIX = `Do NOT retry the same shape. Use one of:
   1) two separate calls: ps -eo pid=,ppid=,comm=,args= then kill -TERM <numeric PID> (exclude $$ and $PPID)
@@ -36,6 +53,150 @@ const FIX = `Do NOT retry the same shape. Use one of:
   3) pattern from a file: ps -eo pid=,args= | grep -F -f /tmp/kill.pat | awk '{print $1}' | xargs -r kill
   4) change the axis: fuser -k PORT/tcp, systemctl kill UNIT, docker compose down
 Full rules: ~/.config/opencode/AGENTS.md`
+
+// ---- variable resolution (dataflow-lite) — f197 port ----
+// The guard tracks simple `NAME=value` assignments it has seen in the current
+// substitution frame, because the real shell expands them too:
+// `F=-f; pkill $F x` assembles a real `-f`. Values that were quoted and masked
+// (or contain substitutions) are recorded as the opaque marker `<v>`: the
+// guard knows the variable exists but not its content. Subshell frames (`$(…)`)
+// inherit bindings and discard their own on exit, like the real shell.
+// PORTABILITY: this table is deliberately duplicated in the bash hook
+// (agent-hooks/block-unsafe-kill.sh) — the plugin is self-contained and must
+// not import from agent-hooks. Keep both copies semantically identical.
+let vars = new Map<string, string>()
+
+// Parse a $NAME / ${NAME} / ${NAME:-def} / ${NAME:=def} reference at `i`.
+// Returns null for anything not resolvable (${N:?msg}, ${N:+alt}, …).
+function parseVarRef(
+  text: string,
+  i: number,
+): { name: string; op: string; def: string; end: number } | null {
+  if (text[i + 1] === "{") {
+    let j = i + 2
+    let br = ""
+    while (j < text.length && text[j] !== "}") {
+      br += text[j]
+      j++
+    }
+    if (j >= text.length) return null
+    let name = br
+    let op = ""
+    let def = ""
+    const colon = br.indexOf(":")
+    if (colon >= 0) {
+      name = br.slice(0, colon)
+      const rest = br.slice(colon + 1)
+      if (rest.startsWith("-") || rest.startsWith("=")) {
+        op = rest[0]
+        def = rest.slice(1)
+      } else return null
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null
+    return { name, op, def, end: j + 1 }
+  }
+  let j = i + 1
+  while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++
+  const name = text.slice(i + 1, j)
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null
+  return { name, op: "", def: "", end: j }
+}
+
+// Resolve `name` with operator `op` ('' | '-' | '=') and default `def` against
+// vars. `:-` and `:=` fire on unset OR empty, like the real shell.
+function varValue(name: string, op: string, def: string): { set: boolean; out: string } {
+  if (vars.has(name)) {
+    let out = vars.get(name) as string
+    if (out === "" && op !== "") out = def
+    return { set: true, out }
+  }
+  if (op !== "") return { set: true, out: def }
+  return { set: false, out: "" }
+}
+
+// ANSI-C quoting decode ($'…'): escapes expand before the word reaches argv,
+// so classification must see the decoded text (`pkill -$'\146' x` is a real
+// `-f`). Faithful to bash: unknown escapes keep their backslash, NUL vanishes,
+// surrogate/out-of-range codepoints collapse to 0x1A.
+function decodeAnsiC(s: string): string {
+  let out = ""
+  let i = 0
+  while (i < s.length) {
+    const c = s[i]
+    if (c !== "\\") {
+      out += c
+      i++
+      continue
+    }
+    i++
+    if (i >= s.length) {
+      out += "\\"
+      break
+    }
+    let e = s[i]
+    i++
+    if ("abefnrtv".includes(e) && e.length === 1) {
+      const map: Record<string, string> = {
+        a: "\x07", b: "\x08", e: "\x1b", f: "\x0c", n: "\n", r: "\r", t: "\t", v: "\v",
+      }
+      out += map[e] ?? ""
+      continue
+    }
+    if (e === "E") {
+      out += "\x1b"
+      continue
+    }
+    if ("\\" === e || e === "'" || e === '"' || e === "?") {
+      out += e
+      continue
+    }
+    if (e === "x" || e === "u" || e === "U") {
+      const max = e === "u" ? 4 : e === "U" ? 8 : 2
+      let digits = ""
+      while (i < s.length && digits.length < max && /[0-9A-Fa-f]/.test(s[i])) {
+        digits += s[i]
+        i++
+      }
+      if (digits === "") {
+        out += "\\" + e
+        continue
+      }
+      const cp = parseInt(digits, 16)
+      if (cp === 0) {
+        // NUL vanishes
+      } else if (cp > 1114111 || (cp >= 55296 && cp <= 57343)) {
+        out += "\x1a"
+      } else {
+        out += String.fromCodePoint(cp)
+      }
+      continue
+    }
+    if (/[0-7]/.test(e)) {
+      let digits = e
+      while (i < s.length && digits.length < 3 && /[0-7]/.test(s[i])) {
+        digits += s[i]
+        i++
+      }
+      const cp = parseInt(digits, 8)
+      if (cp !== 0) out += String.fromCharCode(cp)
+      continue
+    }
+    if (e === "c") {
+      if (i < s.length) {
+        e = s[i]
+        i++
+        const cp = e.codePointAt(0) ?? 0
+        const ctl = cp & 31
+        if (ctl !== 0) out += String.fromCharCode(ctl)
+      } else {
+        out += "\\c"
+      }
+      continue
+    }
+    out += "\\" + e
+  }
+  return out
+}
 
 // ---- masking stage 1: heredoc bodies are stdin data, not operators ----
 // `cat > /tmp/x.sh <<'EOF' …body… EOF` is the guard's own documented approach
@@ -81,7 +242,10 @@ function maskHeredocs(cmd: string): string {
 
 // Data span whose substitutions still run (double-quoted text, unquoted
 // heredoc bodies): literal chunks collapse to `mask`, `$(…)`/backticks are
-// rescanned as live operator text and spliced back in. Definitions live here
+// rescanned as live operator text and spliced back in. A variable reference to
+// a KNOWN literal binding splices the value (the real shell expands it too,
+// e.g. `F=-f; pkill "$F" x`); unknown references stay masked (a quoted
+// `$unknown` is one argv word, never a flag). Definitions live here
 // (above scanText) because scanText and the heredoc stage call each other
 // through function hoisting.
 function maskDataSpan(inner: string, mask = "<q>"): string {
@@ -93,6 +257,21 @@ function maskDataSpan(inner: string, mask = "<q>"): string {
       literal += inner.slice(i, i + 2)
       i += 2
       continue
+    }
+    if (inner[i] === "$" && !inner.startsWith("$(", i)) {
+      const ref = parseVarRef(inner, i)
+      if (ref) {
+        const v = varValue(ref.name, ref.op, ref.def)
+        if (v.set) {
+          if (literal) {
+            out += mask
+            literal = ""
+          }
+          out += v.out
+          i = ref.end
+          continue
+        }
+      }
     }
     if (inner.startsWith("$(", i) || inner[i] === "`") {
       if (literal) {
@@ -173,9 +352,38 @@ function scanText(text: string, keepQuotes = false): string {
   let sawPositional = false
   let optArgNext = false
 
+  // Interpreter/positional bookkeeping for one visible word (unquoted token or
+  // kept-visible quote content — `"bash" -c` executes exactly like bash -c).
+  const trackWord = (tok: string) => {
+    // Interpreter identity is the argv[0] BASENAME: `/bin/bash -c …` executes
+    // exactly like `bash -c …`. Assignments are never interpreter words
+    // (`F=bash` must not turn a later -c into a payload flag).
+    const tokbase = /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok) ? "" : tok.replace(/^.*\//, "")
+    if (CODE_SHELLS.has(tokbase) || CODE_E.has(tokbase)) {
+      segInterp = tokbase
+      sawPositional = false
+      optArgNext = false
+      return
+    }
+    if (optArgNext) {
+      optArgNext = false // argument of -O/-o (`extglob`), not a positional
+      return
+    }
+    if (tok.startsWith("-") && tok.length > 1) {
+      // any option, long or short (`--norc`, `-O`, `-c`, `--`): not a
+      // positional, so a later -c still addresses the interpreter
+      if (tok === "-O" || tok === "-o") optArgNext = true
+      return
+    }
+    if (tok === "<v>") return // opaque variable content: unknown, not a positional
+    if (tok !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
+      sawPositional = true // script name / host / filename
+    }
+  }
+
   const flush = () => {
     if (!pending) return
-    const tok = pending
+    let tok = pending
     pending = ""
     if (maskNext || maskRest) {
       out += "<q>"
@@ -184,6 +392,26 @@ function scanText(text: string, keepQuotes = false): string {
       lastTok = "<q>"
       return
     }
+    // A whole-token variable reference resolves through assignments seen in
+    // this frame: `F=-f; pkill $F x` is a real `-f`. Unknown variables become
+    // the opaque marker <v> (an unquoted `$X` word-splits at runtime, so it
+    // CAN be a flag): computedArgv denies <v> in kill-family invocations.
+    const whole = tok.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)
+    const defaulted = tok.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(:-|:=)(.*)\}$/)
+    if (whole) {
+      const v = varValue(whole[1], "", "")
+      tok = v.set ? v.out : "<v>"
+    } else if (defaulted) {
+      const v = varValue(defaulted[1], defaulted[2], defaulted[3])
+      tok = v.out
+    }
+    // An empty substitution result vanishes like the shell's word removal —
+    // crucially it must not count as a positional or token for -c detection.
+    if (tok === "") return
+    // Remember plain literal assignments so later $NAME references resolve.
+    // Runs after the mask check on purpose: a masked token is data, not code.
+    const assign = tok.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/)
+    if (assign) vars.set(assign[1], assign[2])
     if (tok.startsWith("--message=")) {
       if (tok.length > "--message=".length) {
         out += "<msg-masked>"
@@ -201,29 +429,16 @@ function scanText(text: string, keepQuotes = false): string {
     out += tok
     if (tok === "-m" || tok === "--message" || /^-[A-Za-z0-9]*m$/.test(tok)) {
       // Bundled short-option cluster carrying -m (`-qm`, `-am`, `-1m`, ...):
-      // the next token is the commit message (data), not operators.
-      // `python -m module` executes the module (a live operator, e.g.
-      // `python -m gateway.cgroup_cleanup`); any other -m takes a message.
-      // `git commit -m fix pkill -f x`: the tail is message + pathspec data,
-      // so mask to the end of the statement, not just one token.
-      if (!PYTHONS.has(lastTok)) {
+      // the next token is the commit message (data), not operators. Scoped to
+      // git: an arbitrary tool's -m is an ordinary flag (`unshare -m pkill -f
+      // x` must keep pkill visible). `python -m module` executes the module
+      // (a live operator), so python is exempt either way.
+      if (!PYTHONS.has(lastTok) && segFirst === "git") {
         maskNext = true
-        if (segFirst === "git") maskRest = true
+        maskRest = true
       }
     }
-    if (CODE_SHELLS.has(tok) || CODE_E.has(tok)) {
-      segInterp = tok
-      sawPositional = false
-      optArgNext = false
-    } else if (optArgNext) {
-      optArgNext = false // argument of -O/-o (`extglob`), not a positional
-    } else if (tok.startsWith("-") && tok.length > 1) {
-      // any option, long or short (`--norc`, `-O`, `-c`, `--`): not a
-      // positional, so a later -c still addresses the interpreter
-      if (tok === "-O" || tok === "-o") optArgNext = true
-    } else if (tok !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
-      sawPositional = true // script name / host / filename
-    }
+    trackWord(tok)
     prevTok = lastTok
     lastTok = tok
     if (!segFirst) segFirst = tok
@@ -238,32 +453,74 @@ function scanText(text: string, keepQuotes = false): string {
   // `n` is no-exec syntax checking in every CODE_SHELLS member, so
   // `bash -nc '…'` runs nothing. Long options never bundle. Read at call
   // time: the tokenizer keeps advancing while quotes are masked.
+  // The `s` letter is env's -S/--split-string: env word-splits the string and
+  // EXECUTES the result, so the quote is a payload (spliced space-separated —
+  // env's own splitting means the content is a fresh command line, and keeping
+  // its spaces visible lets the statement rules see it).
   const payloadLetter = (): string => {
     if (lastTok === "-c") return "c"
     if (lastTok === "-m") return "m"
     if (lastTok === "-e") return "e"
+    if (lastTok === "-S" || lastTok === "--split-string" || lastTok === "--split-string=") return "s"
     if (/^-[^-].+/.test(lastTok)) {
       if (lastTok.includes("c")) return lastTok.includes("n") ? "" : "c"
       if (lastTok.includes("m")) return "m"
       if (lastTok.includes("e")) return "e"
+      if (lastTok.includes("S")) return "s"
     }
     return ""
   }
 
-  const isPayload = () => {
+  // Which payload kind isPayload finds: "" (not a payload), "raw" (splice
+  // verbatim), or "split" (env -S/--split-string: splice space-separated).
+  const isPayload = (): "" | "raw" | "split" => {
     const flag = payloadLetter()
-    return (
-      PAYLOAD_CMDS.has(segFirst) ||
-      (flag === "c" &&
-        (CODE_SHELLS.has(prevTok) || (CODE_SHELLS.has(segInterp) && !sawPositional))) ||
-      (flag === "m" && PYTHONS.has(prevTok)) ||
-      (flag === "e" && CODE_E.has(prevTok))
+    if (PAYLOAD_CMDS.has(segFirst)) return "raw"
+    if (
+      flag === "c" &&
+      (CODE_SHELLS.has(prevTok) || (CODE_SHELLS.has(segInterp) && !sawPositional))
     )
+      return "raw"
+    if (flag === "m" && PYTHONS.has(prevTok)) return "raw"
+    if (flag === "e" && CODE_E.has(prevTok)) return "raw"
+    if (flag === "s" && !sawPositional && segInterp === "env") return "split"
+    return ""
   }
 
   // A double-quoted span is data, but substitutions inside it still run.
   const maskDouble = (inner: string) => {
     out += maskDataSpan(inner)
+  }
+
+  // Emit one quoted span into out after classification (quote_span in the
+  // bash hook): payload text stays live and raw, a guarded command word or an
+  // option FRAGMENT stays visible (`"pkill" -f x`, `pkill "-"f x`), anything
+  // else is data. A kept-visible word behaves like an unquoted one for
+  // interpreter context and for bindings: `F='-f'` records the literal, a
+  // masked `F='…'` records the opaque marker <v>.
+  const classifyQuote = (inner: string, mode: "single" | "double") => {
+    let tok = "<q>"
+    const payload = isPayload()
+    if (payload === "split") {
+      out += " " + inner
+    } else if (payload) {
+      out += inner
+    } else if (isGuardWord(inner) || isOptionToken(inner)) {
+      out += inner
+      tok = inner
+      trackWord(inner)
+      if (!segFirst) segFirst = inner
+      const bind = lastTok.match(/^([A-Za-z_][A-Za-z0-9_]*)=$/)
+      if (bind) vars.set(bind[1], inner)
+    } else {
+      if (mode === "double") maskDouble(inner)
+      else out += "<q>"
+      const bind = lastTok.match(/^([A-Za-z_][A-Za-z0-9_]*)=$/)
+      if (bind) vars.set(bind[1], "<v>")
+    }
+    maskNext = false
+    prevTok = lastTok
+    lastTok = tok
   }
 
   let i = 0
@@ -289,10 +546,23 @@ function scanText(text: string, keepQuotes = false): string {
       i++
       continue
     }
-    // ANSI-C quoting (`$'…'`) and locale quoting (`$"…"`): the `$` belongs to
-    // the quote, not to the previous token — keep the interpreter context
-    // (`bash -c $'pkill -f x'` must still see -c as the payload flag).
-    if (c === "$" && (text[i + 1] === "'" || text[i + 1] === '"')) {
+    // ANSI-C quoting (`$'…'`): the `$` belongs to the quote (keep interpreter
+    // context), and the escapes decode BEFORE argv — classify the decoded text
+    // or `$'\146'` hides a real `f`. Locale quoting (`$"…"`) is a plain
+    // double-quote span; the `$` is emitted so the quote branch sees the word.
+    if (c === "$" && text[i + 1] === "'") {
+      flush()
+      out += "$"
+      let j = i + 2
+      while (j < text.length && text[j] !== "'") {
+        if (text[j] === "\\") j++
+        j++
+      }
+      classifyQuote(decodeAnsiC(text.slice(i + 2, j)), "single")
+      i = j + 1
+      continue
+    }
+    if (c === "$" && text[i + 1] === '"') {
       flush()
       out += "$"
       i++
@@ -306,28 +576,14 @@ function scanText(text: string, keepQuotes = false): string {
         j++
       }
       const inner = text.slice(i + 1, j)
-      let tok = "<q>"
-      if (c === "'") {
-        // single quotes are pure data (no substitutions inside), unless the
-        // span is executed text
-        if (isPayload()) out += inner
-        else if (isOptionToken(inner)) {
-          out += inner
-          tok = inner
-        } else out += "<q>"
-      } else if (c === '"') {
-        if (isPayload()) out += inner
-        else if (isOptionToken(inner)) {
-          out += inner
-          tok = inner
-        } else maskDouble(inner)
-      } else {
+      if (c === "`") {
         out += "`" + scanText(inner) + "`"
-        tok = "<sub>"
+        maskNext = false
+        prevTok = lastTok
+        lastTok = "<sub>"
+      } else {
+        classifyQuote(inner, c === "'" ? "single" : "double")
       }
-      maskNext = false
-      prevTok = lastTok
-      lastTok = tok
       i = j + 1
       continue
     }
@@ -341,6 +597,23 @@ function scanText(text: string, keepQuotes = false): string {
       i = end + 1
       continue
     }
+    if (c === "<" || c === ">") {
+      if (text[i + 1] === "(") {
+        // Process substitution EXECUTES its body: `<(pkill -f x)` runs
+        // pkill even in a read-only-looking pipeline. Scan it like $(…).
+        flush()
+        const end = matchParen(text, i + 2)
+        out += c + "(" + scanText(text.slice(i + 2, end)) + ")"
+        maskNext = false
+        prevTok = lastTok
+        lastTok = "<sub>"
+        i = end + 1
+        continue
+      }
+      pending += c
+      i++
+      continue
+    }
     pending += c
     i++
   }
@@ -350,11 +623,12 @@ function scanText(text: string, keepQuotes = false): string {
 
 // ---- rule evaluation, per statement ----
 // A compound command is denied only if at least one statement is denied.
-// Statements split on `;`, `&`, `||` and newlines; `|` separates pipeline
-// segments inside a statement. The `>&` in `2>&1` is a redirect, not a
-// statement boundary.
+// Statements split on `;`, `&`, `||`, `{`, `}` (command groups) and newlines;
+// `|` separates pipeline segments inside a statement. The `&` in `2>&1` is a
+// redirect, not a statement boundary. Braces inside ${…} expansions were
+// consumed by the masker; any brace left in the masked text is a bare word.
 function statementsOf(masked: string): string[] {
-  return masked.replace(/([<>])&/g, "$1").split(/[;&\n]|\|\|/)
+  return masked.replace(/([<>])&/g, "$1").replace(/\|\|/g, ";").split(/[;&\n{}]/)
 }
 
 function firstToken(seg: string): string {
@@ -362,11 +636,17 @@ function firstToken(seg: string): string {
   return m ? m[0] : ""
 }
 
+// A substitution of any kind ($(), backticks, process substitution) can hide
+// an executed kill inside an inspector-looking pipeline.
+function hidesSubstitution(seg: string): boolean {
+  return seg.includes("$(") || seg.includes("`") || seg.includes("<(") || seg.includes(">(")
+}
+
 // A segment led by a read-only inspector carries the pattern as data, not as
 // an operator. Command substitution or a kill inside it voids the exemption.
 function isDataSegment(seg: string): boolean {
   if (!READONLY.has(firstToken(seg))) return false
-  if (seg.includes("$(") || seg.includes("`")) return false
+  if (hidesSubstitution(seg)) return false
   return !KILL.test(seg)
 }
 
@@ -377,7 +657,7 @@ function isDataSegment(seg: string): boolean {
 function hasKillSink(stmt: string): boolean {
   return stmt.split("|").some((seg) => {
     if (!KILL.test(seg)) return false
-    if (READONLY.has(firstToken(seg)) && !seg.includes("$(") && !seg.includes("`")) return false
+    if (READONLY.has(firstToken(seg)) && !hidesSubstitution(seg)) return false
     return true
   })
 }
@@ -416,17 +696,27 @@ function normalizeFlagWord(word: string): string {
   return w
 }
 
-// Is a quoted span exactly one option NAME (`-f`, `--full`, `-9f`)? The shell
-// strips the quotes before getopt sees the word, so a quoted flag is still a
-// flag — the mask must keep it visible or hasFlag goes blind. Only a plain
-// option name qualifies: anything else (`=`, `|`, `;`, `&`, `$`, backticks,
-// whitespace, non-ASCII) is unmasked operator text and would leak into the
-// statement scanner as a phantom `pkill -f`. The accepted charset is the same
-// as the bash m_opt_token gate — any `-`-led run of [A-Za-z0-9._+-] except
-// `-` and `--`. That is wider than what getopt accepts (`-+f` errors out in
-// pkill), but the wide direction is fail-safe: hasFlag still sees the token.
+// Is a quoted span exactly one option FRAGMENT (`-f`, `--full`, `-9f`, but
+// also bare `-` or a bare letter)? The shell strips the quotes and GLUES
+// adjacent fragments into one argv word, so `pkill "-"f x` is a real `-f` and
+// the mask must keep every fragment visible or hasFlag goes blind. Anything
+// else (`=`, `|`, `;`, `&`, `$`, backticks, whitespace, non-ASCII) is unmasked
+// operator text and would leak into the statement scanner as a phantom
+// `pkill -f`. The accepted charset (an optional leading `-` plus a run of
+// [A-Za-z0-9._+-], empty included) is wider than what getopt accepts (`-+f`
+// errors out in pkill) — fail-safe on purpose, and mirrored exactly by
+// m_opt_token in the bash hook.
 function isOptionToken(inner: string): boolean {
-  return /^-[A-Za-z0-9._+-]+$/.test(inner) && inner !== "--"
+  return /^-?[A-Za-z0-9._+-]*$/.test(inner)
+}
+
+// Is a quoted span exactly one command word the guard tracks (a kill-family
+// name, interpreter, wrapper, git), or a path whose basename is one? Quoting
+// argv[0] does not protect it: `"pkill" -f x` and `"/usr/bin/pkill" -f x` both
+// exec pkill with -f, so the mask keeps these visible.
+function isGuardWord(inner: string): boolean {
+  if (!/^[A-Za-z0-9._/+-]+$/.test(inner)) return false
+  return GUARD_WORDS.has(inner.replace(/^.*\//, ""))
 }
 
 function segsWith(stmt: string, prog: string): string[] {
@@ -439,11 +729,16 @@ function segsWith(stmt: string, prog: string): string[] {
 // `VAR=value` prefixes: if the trail ends at a wrapper (`xargs`, `sudo`, …)
 // or an interpreter shell (`bash -c …`), the word runs. A real positional
 // before it (`git commit -m fix pkill …`, `grep killall .`) makes it data.
+// Shell block keywords are transparent: `then pkill -f x` executes pkill.
 function atCommandPosition(words: Word[], i: number): boolean {
   if (words[i].fresh) return true // `$(pkill …)`, backtick, quote payload start
   for (let j = i - 1; j >= 0; j--) {
     const t = words[j].t
-    if (WRAPPERS.has(t) || CODE_SHELLS.has(t) || PAYLOAD_CMDS.has(t)) return true
+    // Wrapper/interpreter identity is the argv[0] basename: a path-qualified
+    // `/usr/bin/sudo pkill -f x` still execs pkill through sudo.
+    const tb = t.replace(/^.*\//, "")
+    if (WRAPPERS.has(tb) || CODE_SHELLS.has(tb) || PAYLOAD_CMDS.has(tb)) return true
+    if (SHELL_KEYWORDS.has(t)) return true
     if (t.startsWith("-") || /^\d+[a-z%]?$/.test(t) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue
     // flag argument (`-O extglob`, `-m fix`, `-n 5`) or ssh's hostname slot
     if (j > 0) {
@@ -489,11 +784,82 @@ function segHasInvocation(seg: string, wordTest: (t: string) => boolean): boolea
   return words.some((w, i) => wordTest(w.t) && atCommandPosition(words, i))
 }
 
-function scanFlag(stmt: string, prog: string, letter: string, longName: string): boolean {
-  const wordTest = (t: string) => t === prog || t.endsWith(`/${prog}`)
-  return segsWith(stmt, prog).some(
-    (s) => !isDataSegment(s) && segHasInvocation(s, wordTest) && hasFlag(s, letter, longName),
+// The segment's argv is partly computed at runtime: a substitution, a process
+// substitution, an unresolved/opaquely-assigned variable (<v>), or a raw
+// `$name` fragment the guard never saw assigned. Flags arriving from any of
+// those are invisible to hasFlag (`pkill $(cat /tmp/flags)`, `pkill $FLAGS`).
+function computedArgv(seg: string): boolean {
+  if (seg.includes("`") || seg.includes("<(") || seg.includes(">(") || seg.includes("<v>")) return true
+  // `$((…))` is arithmetic — it yields a number, never a flag — so only a
+  // `$(` NOT followed by another paren marks computed argv.
+  return /\$\([^()]|\$[A-Za-z_{]/.test(seg)
+}
+
+// xargs feeding a kill-family command from a file (`xargs -a flags pkill`,
+// `xargs pkill < flags`): the flags arrive as data the guard never sees.
+// Pipeline-fed `… | xargs -r kill` is approach #3 and stays allowed — this
+// fires only when xargs and the kill-family word share one segment AND a file
+// feed flag (-a/--arg-file) or an input redirect is present.
+function xargsFeeds(seg: string): boolean {
+  if (!segHasInvocation(seg, (t) => t === "xargs" || t.endsWith("/xargs"))) return false
+  return wordsOf(seg).some((w) => {
+    const t = w.t
+    if (t === "-a" || /^-a.+/.test(t) || t === "--arg-file" || /^--arg-file=/.test(t)) return true
+    // `<`-led words that are not one of the guard's masks (`<q>`, `<v>`,
+    // `<sub>`, `<msg-masked>`, `<heredoc-body>`, including glued forms like
+    // `<q>f` from fragment masking) are input redirects.
+    return t.startsWith("<") && !/^<(q>|v>|sub>|msg-masked>|heredoc-body>)/.test(t)
+  })
+}
+
+// The command word itself is a substitution: `"$(which pkill)" -f x` execs
+// whatever the substitution prints, with flags the guard cannot attribute to a
+// program. Deny when such a segment carries a kill-style flag family.
+function substLedFlag(stmt: string): boolean {
+  return stmt.split("|").some((seg) => {
+    const t = seg.replace(/^\s+/, "")
+    if (t.startsWith("$((")) return false // arithmetic: yields a number, never a flag
+    if (!(t.startsWith("$(") || t.startsWith("`") || t.startsWith("<(") || t.startsWith(">(")))
+      return false
+    return hasFlag(seg, "f", "f*") || hasFlag(seg, "r", "re*")
+  })
+}
+
+// Any kill/killall INVOCATION in this statement (path-qualified forms count).
+// Used for the cross-statement rule: after an earlier `pgrep -f pat`, the
+// shell's own argv contains pat, so pgrep matched the shell — killing anything
+// it listed (via a file, a substitution, xargs, …) kills the session.
+function stmtKillInvocation(stmt: string): boolean {
+  return stmt.split("|").some((s) =>
+    segHasInvocation(s, (t) => {
+      const tb = t.replace(/^.*\//, "")
+      return tb === "kill" || tb === "killall"
+    }),
   )
+}
+
+// scanFlag denies when the program runs with the flag — or with flags the
+// guard cannot see (computed argv, xargs file feed), in which case the
+// returned reason says so (SF_REASON in the bash hook). `undefined` = clear.
+function scanFlag(
+  stmt: string,
+  prog: string,
+  letter: string,
+  longName: string,
+): { reason?: string } | undefined {
+  const wordTest = (t: string) => t === prog || t.endsWith(`/${prog}`)
+  for (const s of segsWith(stmt, prog)) {
+    if (isDataSegment(s)) continue
+    if (!segHasInvocation(s, wordTest)) continue
+    if (hasFlag(s, letter, longName)) return {}
+    if (computedArgv(s))
+      return {
+        reason: `${prog} invoked with flags computed by a substitution or a variable the guard cannot resolve — the resulting argv is invisible to it.`,
+      }
+    if (xargsFeeds(s))
+      return { reason: `xargs feeding ${prog}: the flags arrive from a data file the guard cannot see.` }
+  }
+  return undefined
 }
 
 // gateway.cgroup_cleanup (hermes) SIGKILLs every PID in the caller's own
@@ -520,35 +886,110 @@ function reapsOwnCgroup(stmt: string): boolean {
 // `… | bash` (bare shell reading stdin) EXECUTES the upstream text, so any
 // kill-family word upstream is a live operator, not data: `echo pkill -f x |
 // bash`, `printf '%s\n' 'pkill -f x' | bash`, `cat <<'EOF' | bash` bodies.
-const STDIN_SHELL = /(^|[|;&\n])\s*((sudo|doas|env|nice|nohup|time|timeout|stdbuf|setsid|command|builtin|exec|xargs)\s+)*((ba|z|da|k)?sh)\s*($|[;&\n])/
+// The shell still reads stdin behind flags that do not name a payload
+// (`| bash -s`, `| bash --`, `| bash --norc`) and behind /dev/stdin as the
+// "script". `-c` is excluded from the flag class on purpose: `| bash -c '…'`
+// runs its argument, not stdin, and the payload is judged by the masking
+// stage; `| bash -c` with no argument is a getopt error, not an execution.
+const WRAPPER_ALT =
+  "(sudo|doas|env|nice|nohup|time|timeout|stdbuf|setsid|command|builtin|exec|xargs|busybox|nsenter|setpriv|unshare|taskset|ionice|chrt|prlimit|numactl|strace|ltrace|setarch|watch|systemd-run)"
+const STDIN_SHELL = new RegExp(
+  "(^|[|;&\\n])\\s*(" +
+    WRAPPER_ALT +
+    "\\s+)*((ba|z|da|k)?sh)(\\s+(-[abd-zA-Z0-9]*|--[a-z-]*))*(\\s+(/dev/stdin|/dev/fd/[0-9]+))?\\s*($|[;&\\n])",
+)
+// `xargs -d/-i/-I … sh -c` (payload arriving as an xargs ARGUMENT): plain
+// `xargs bash -c` only hands the first whitespace-split word to -c, but
+// -d/-i/-I preserve whole lines, so `echo 'pkill -f x' | xargs -d '\n' bash -c`
+// executes it. The payload word is absent (end) or the -I placeholder {}.
+const XARGS_SH_C = new RegExp(
+  "(^|[|;&\\n])\\s*((sudo|doas|env|nice|nohup|time|timeout|stdbuf|setsid|command|builtin|exec)\\s+)*xargs(\\s+[^\\s]+)*\\s+-[diI][^\\s]*((\\s+[^\\s]+)*\\s+)((ba|z|da|k)?sh)(\\s+-[^\\s]+)*\\s+-c(\\s+\\{\\})?\\s*($|[;&\\n])",
+)
+// Text executed through a pipe is decoded by printf/$''-style escapes first:
+// `printf '\x70kill -f x\n' | bash` contains no literal kill word yet runs it.
+// When a stdin-shell (or xargs -c) shape is present, any hex/unicode/octal
+// escape upstream is unverifiable — deny. \n, \t, \\ and sed-style \1 stay
+// allowed (they cannot spell a command letter).
+const ESCAPED_RE = /\\(x[0-9A-Fa-f]|u[0-9A-Fa-f]|U[0-9A-Fa-f]|0[0-7]|[1-7][0-7][0-7])/
+const KILLWORD = /(^|[^A-Za-z0-9_])(kill|killall|pkill|pgrep|cgroup_cleanup)([^A-Za-z0-9_]|$)/
+
 function pipesToStdinShell(cmd: string): boolean {
-  return STDIN_SHELL.test(cmd)
+  return STDIN_SHELL.test(cmd) || XARGS_SH_C.test(cmd)
+}
+
+// A compound statement's own denial (stmt_denied in the bash hook).
+function stmtDenied(stmt: string): string | undefined {
+  if (reapsOwnCgroup(stmt)) {
+    return "gateway.cgroup_cleanup SIGKILLs every PID in the caller's own cgroup — from an agent shell that is the agent's own process tree. The hermes-gateway unit it served as ExecStopPost was retired 2026-09-28; the module must never be run manually. This rule stays as defense-in-depth."
+  }
+  // getopt_long runs any unique prefix of a long option: `--f` IS `--full`
+  // (pkill/pgrep have no other --f* option). `--full=v` is not: it is an
+  // argument to a no-argument option and dies in getopt_long (see hasFlag).
+  const pkillHit = scanFlag(stmt, "pkill", "f", "f*")
+  if (pkillHit)
+    return (
+      pkillHit.reason ??
+      "pkill -f matches the full cmdline of every process, including the shell running this very command."
+    )
+  const pgrepHit = scanFlag(stmt, "pgrep", "f", "f*")
+  if (pgrepHit && hasKillSink(stmt))
+    return (
+      pgrepHit.reason ??
+      "pgrep -f combined with kill on the same command line: the pattern still sits in the killing shell's argv."
+    )
+  // psmisc killall's long option is --regexp, and getopt_long accepts any
+  // unique prefix (--re, --rege, --regex, --regexp all run): match the
+  // whole --re* family, not a single spelling.
+  const killallHit = scanFlag(stmt, "killall", "r", "re*")
+  if (killallHit)
+    return (
+      killallHit.reason ??
+      "killall -r/--regexp matches by regex from inside a cmdline that contains the same text."
+    )
+  if (substLedFlag(stmt)) {
+    return "the command word is a substitution: its result executes with flags the guard cannot attribute to a program ($(…) -f x could be pkill)."
+  }
+  if (PS.test(stmt) && PIPE_GREP.test(stmt) && hasKillSink(stmt) && !GREP_FROM_FILE.test(stmt)) {
+    return "ps | grep <literal> | kill: grep matches itself and the wrapping shell's argv."
+  }
+  return undefined
 }
 
 function inspect(cmd: string): string | undefined {
-  if (pipesToStdinShell(cmd) && /\b(kill|killall|pkill|pgrep|cgroup_cleanup)\b/.test(cmd)) {
-    return "piping text into a shell runs it: the kill pattern inside that text would execute in the very shell being piped to."
+  vars = new Map()
+  // Cheap reject-first: no kill-family word, no ANSI-C/hex escape channel and
+  // no pipe-into-shell shape means no rule can fire — skip the (quadratic)
+  // masking stage for it. The escape/pipe triggers stay because printf-style
+  // decoding and `| bash` can produce kill words at runtime that the raw text
+  // does not contain.
+  if (!/kill|pgrep|cgroup_cleanup|\$'|\\x|\\0/.test(cmd) && !pipesToStdinShell(cmd)) return undefined
+  if (pipesToStdinShell(cmd)) {
+    if (KILLWORD.test(cmd)) {
+      return "piping text into a shell runs it: the kill pattern inside that text would execute in the very shell being piped to."
+    }
+    if (ESCAPED_RE.test(cmd)) {
+      return "piping text into a shell runs it, and the text carries hex/octal/unicode escapes that only decode at runtime (printf, $'…') — the guard cannot verify what command they spell."
+    }
   }
   const masked = scanText(maskHeredocs(cmd))
+  // Size gate AFTER heredoc masking: documented approach #6 (write the script
+  // to a file) collapses to <heredoc-body> lines and stays scannable, while a
+  // giant one-liner is denied rather than scanned for minutes.
+  if (masked.length > 16384) {
+    return "command is too large for the kill-guard's masking stage (>16384 bytes after heredoc masking; the scan is quadratic). Write the script to a file and run the file (approach #6), or split the command."
+  }
+  let pgrepfSeen = false
   for (const stmt of statementsOf(masked)) {
-    if (reapsOwnCgroup(stmt)) {
-      return "gateway.cgroup_cleanup SIGKILLs every PID in the caller's own cgroup — from an agent shell that is the agent's own process tree. The hermes-gateway unit it served as ExecStopPost was retired 2026-09-28; the module must never be run manually. This rule stays as defense-in-depth."
+    if (stmt.trim() === "") continue
+    // Cross-statement: an earlier pgrep -f already matched THIS shell (its
+    // argv holds the whole compound text), so a later kill of those results
+    // kills the session — `pgrep -f foo > f; kill $(cat f)`.
+    if (pgrepfSeen && stmtKillInvocation(stmt)) {
+      return "an earlier pgrep -f in this compound command matched the shell itself (its argv contains the pattern); killing anything it listed kills the session."
     }
-    if (scanFlag(stmt, "pkill", "f", "f*")) {
-      return "pkill -f matches the full cmdline of every process, including the shell running this very command."
-    }
-    if (scanFlag(stmt, "pgrep", "f", "f*") && hasKillSink(stmt)) {
-      return "pgrep -f combined with kill on the same command line: the pattern still sits in the killing shell's argv."
-    }
-    // psmisc killall's long option is --regexp, and getopt_long accepts any
-    // unique prefix (--re, --rege, --regex, --regexp all run): match the
-    // whole --re* family, not a single spelling.
-    if (scanFlag(stmt, "killall", "r", "re*")) {
-      return "killall -r/--regexp matches by regex from inside a cmdline that contains the same text."
-    }
-    if (PS.test(stmt) && PIPE_GREP.test(stmt) && hasKillSink(stmt) && !GREP_FROM_FILE.test(stmt)) {
-      return "ps | grep <literal> | kill: grep matches itself and the wrapping shell's argv."
-    }
+    const denied = stmtDenied(stmt)
+    if (denied) return denied
+    if (scanFlag(stmt, "pgrep", "f", "f*")) pgrepfSeen = true
   }
   return undefined
 }

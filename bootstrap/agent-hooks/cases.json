@@ -676,5 +676,131 @@
     "label": "cluster -cn runs `n`, not the payload",
     "cmd": "bash -cn \"pkill -f x\"",
     "expect": "allow"
+  },
+  {
+    "label": "f197 variable assembly: F=-f; pkill $F x",
+    "cmd": "F=-f; pkill $F x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 variable assembly: quoted assignment binds literally",
+    "cmd": "F='-f'; pkill $F x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 variable assembly: brace reference ${F}",
+    "cmd": "F=-f; pkill ${F} x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 variable assembly: quoted known binding splices",
+    "cmd": "F=-f; pkill \"$F\" x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 opaque variable is computed argv",
+    "cmd": "pkill $FLAGS x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 substitution-computed argv",
+    "cmd": "pkill $(cat /tmp/flags) x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 substitution-led command word",
+    "cmd": "\"$(which pkill)\" -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 xargs file feed",
+    "cmd": "xargs -a flags pkill",
+    "expect": "block"
+  },
+  {
+    "label": "f197 cross-statement pgrep -f then kill",
+    "cmd": "pgrep -f foo > f; kill $(cat f)",
+    "expect": "block"
+  },
+  {
+    "label": "f197 xargs -d bash -c laundering",
+    "cmd": "echo 'pkill -f x' | xargs -d '\\n' bash -c",
+    "expect": "block"
+  },
+  {
+    "label": "f197 hex escape upstream of bash",
+    "cmd": "printf '\\x70kill -f x\\n' | bash",
+    "expect": "block"
+  },
+  {
+    "label": "f197 env -S split-string payload",
+    "cmd": "env -S \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "f197 env --split-string long form",
+    "cmd": "env --split-string \"pkill -f x\"",
+    "expect": "block"
+  },
+  {
+    "label": "f197 busybox applet variant",
+    "cmd": "busybox pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 path-qualified busybox",
+    "cmd": "/bin/busybox pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 prefix executor nsenter",
+    "cmd": "nsenter -t 1 -m pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 option-fragment gluing",
+    "cmd": "pkill \"-\"f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 quoted guard word stays visible",
+    "cmd": "\"pkill\" -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 -m is scoped to git",
+    "cmd": "unshare -m pkill -f x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 ANSI-C decode: $'\\146' is a real f",
+    "cmd": "pkill -$'\\146' x",
+    "expect": "block"
+  },
+  {
+    "label": "f197 arithmetic is not a substitution",
+    "cmd": "pkill $((0)) x",
+    "expect": "allow"
+  },
+  {
+    "label": "f197 echo assignment is data",
+    "cmd": "echo F=-f",
+    "expect": "allow"
+  },
+  {
+    "label": "f197 env -S benign text is data",
+    "cmd": "env -S \"echo hi\"",
+    "expect": "allow"
+  },
+  {
+    "label": "f197 busybox echo is not kill-family",
+    "cmd": "busybox echo pkill",
+    "expect": "allow"
+  },
+  {
+    "label": "f197 xargs redirect feed with lowercase filename",
+    "cmd": "xargs pkill <flags",
+    "expect": "block",
+    "note": "closes the <flags gap in the f197 xargs_feeds redirect glob"
   }
 ]

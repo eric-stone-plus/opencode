@@ -1015,7 +1015,9 @@ computed_argv() {
 # Pipeline-fed `… | xargs -r kill` is approach #3 and stays allowed — this
 # fires only when xargs and the kill-family word share one segment AND a file
 # feed flag (-a/--arg-file) or an input redirect is present. Redirect words
-# are recognized as `<`-led words that are not one of the guard's masks.
+# are `<`-led words that are not one of the guard's masks (`<q>`, `<v>`,
+# `<sub>`, `<msg-masked>`, `<heredoc-body>`, including glued forms like
+# `<q>f` from fragment masking).
 xargs_feeds() { # $1 = segment
   seg_invokes "$1" xargs || return 1
   local w i
@@ -1024,7 +1026,12 @@ xargs_feeds() { # $1 = segment
     w="${W_WORDS[i]}"
     case "$w" in
       -a|-a?*|--arg-file|--arg-file=*) return 0 ;;
-      \<|\<[!a-z]*) return 0 ;;
+      \<*)
+        case "$w" in
+          \<q\>*|\<v\>*|\<sub\>*|\<msg-masked\>*|\<heredoc-body\>*) ;;
+          *) return 0 ;;
+        esac
+        ;;
     esac
   done
   return 1
