@@ -5,7 +5,14 @@
 // Provenance: alibaba/open-code-review
 //   plugins/open-code-review/opencode/open-code-review.ts
 //   @182898cf522da3d04157b422752d028417974e19 (fetched 2026-10-07)
-// Unmodified except this header. Upstream ships its tests alongside
+// Local modifications (kept minimal, see git history of bootstrap/plugin/):
+//   1. install-error hint also matches bun's spawn error shape
+//      ("Executable not found in $PATH"), not just "ENOENT".
+//   2. explicit `repo` tool argument on ocr_review/ocr_health: the session
+//      working directory may live outside the repository (e.g. workspace root
+//      `/`), and OCR requires cwd inside a git repo.
+//   3. a "not a git repository" failure now tells the caller to pass `repo`.
+// Upstream ships its tests alongside
 // (test/open-code-review.test.mjs, 36 cases): run `npm install && npm run
 // check` in a scratch copy of plugins/open-code-review/opencode/ before
 // re-vendoring a newer revision.
@@ -24,7 +31,7 @@
 import { spawn } from "node:child_process"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { type Plugin, tool } from "@opencode-ai/plugin"
 import type { Plugin as PluginV2 } from "@opencode/plugin"
 
@@ -33,6 +40,7 @@ const backgroundCleanupMaxRetries = 20
 const backgroundCleanupRetryDelayMs = 50
 
 interface ReviewInput {
+  repo?: string
   commit?: string
   from?: string
   to?: string
@@ -96,7 +104,7 @@ function pushValue(args: string[], flag: string, value: string | number | undefi
   }
 }
 
-function buildReviewArgs(input: ReviewInput, repo: string, backgroundFile?: string): string[] {
+export function buildReviewArgs(input: ReviewInput, repo: string, backgroundFile?: string): string[] {
   const hasRange = input.from !== undefined || input.to !== undefined
   if (hasRange && (!input.from || !input.to)) {
     throw new Error("Both 'from' and 'to' are required for a branch comparison.")
@@ -185,7 +193,7 @@ function appendChunk(
   return nextBytes
 }
 
-async function runOcr(args: string[], options: RunOptions): Promise<RunResult> {
+export async function runOcr(args: string[], options: RunOptions): Promise<RunResult> {
   const invocation = options.invocation ?? { command: "ocr", prefixArgs: [] }
   const timeoutMs = options.timeoutMs === undefined ? 15 * 60 * 1000 : options.timeoutMs
   const maxOutputBytes = options.maxOutputBytes ?? 10 * 1024 * 1024
@@ -290,8 +298,12 @@ async function runOcr(args: string[], options: RunOptions): Promise<RunResult> {
         const cause = signal
           ? `was terminated by signal ${signal}`
           : `exited with code ${exitCode ?? 1}`
+        const detail = stderr || stdout || `OpenCodeReview ${cause}.`
+        const hint = /not a git repository/i.test(detail)
+          ? " Hint: pass the repository path via the 'repo' tool argument — the session working directory is not inside a git repository."
+          : ""
         reject(new OcrExecutionError(
-          stderr || stdout || `OpenCodeReview ${cause}.`,
+          detail + hint,
           { exitCode, signal, stdout, stderr },
         ))
       })
@@ -348,10 +360,24 @@ function formatReviewResult(result: RunResult, preview: boolean): string {
 const optionalString = (description: string) =>
   tool.schema.string().optional().describe(description)
 
+// OCR requires cwd inside the target git repository. The session working
+// directory is only a default — when it sits outside the repo (workspace root
+// `/`, home-directory sessions), the caller passes the repo explicitly.
+export function resolveRepoDir(base: string, repo: string | undefined): string {
+  if (repo === undefined || repo === "") return base
+  return resolve(base, repo)
+}
+
+const repoArg = optionalString(
+  "Path to the git repository to review. Defaults to the session working directory. " +
+    "Required when the session directory is not inside the repository (OCR needs cwd in a git repo).",
+)
+
 const optionalPositiveInt = (description: string) =>
   tool.schema.number().int().positive().optional().describe(description)
 
 const reviewArgs = {
+  repo: repoArg,
   commit: optionalString("Review one commit against its parent."),
   from: optionalString("Base ref for a branch/range comparison. Must be paired with 'to'."),
   to: optionalString("Target ref for a branch/range comparison. Must be paired with 'from'."),
@@ -410,7 +436,8 @@ export const OpenCodeReviewPlugin: Plugin = async ({ client, worktree }) => {
       ocr_review: tool({
         description:
           "Run OpenCodeReview on workspace changes, one commit, or a ref range. " +
-          "Returns structured line-level findings as JSON. Use preview=true to inspect scope without LLM usage.",
+          "Returns structured line-level findings as JSON. Use preview=true to inspect scope without LLM usage. " +
+          "Pass repo when the session directory is not inside the target git repository.",
         args: reviewArgs,
         async execute(args, context) {
           const input = args as ReviewInput
@@ -419,7 +446,10 @@ export const OpenCodeReviewPlugin: Plugin = async ({ client, worktree }) => {
           const normalizedInput: ReviewInput = normalizedBackground
             ? { ...inputWithoutBackground, background: normalizedBackground }
             : inputWithoutBackground
-          const cwd = context.worktree || context.directory || worktree
+          const cwd = resolveRepoDir(
+            context.worktree || context.directory || worktree,
+            input.repo,
+          )
           const defaultOverallMs = 30 * 60 * 1000
           const options: RunOptions = {
             cwd,
@@ -444,9 +474,12 @@ export const OpenCodeReviewPlugin: Plugin = async ({ client, worktree }) => {
       ocr_health: tool({
         description:
           "Check the installed OpenCodeReview version and verify its configured LLM connection.",
-        args: {},
-        async execute(_args, context) {
-          const cwd = context.worktree || context.directory || worktree
+        args: { repo: repoArg },
+        async execute(args, context) {
+          const cwd = resolveRepoDir(
+            context.worktree || context.directory || worktree,
+            (args as { repo?: string }).repo,
+          )
           const [version, llm] = await Promise.allSettled([
             runOcr(["version"], {
               cwd,
@@ -500,7 +533,8 @@ export const OpenCodeReviewPlugin: Plugin = async ({ client, worktree }) => {
 
 const OCR_REVIEW_DESCRIPTION =
   "Run OpenCodeReview on workspace changes, one commit, or a ref range. " +
-  "Returns structured line-level findings as JSON. Use preview=true to inspect scope without LLM usage."
+  "Returns structured line-level findings as JSON. Use preview=true to inspect scope without LLM usage. " +
+  "Pass repo when the session directory is not inside the target git repository."
 
 const OCR_HEALTH_DESCRIPTION =
   "Check the installed OpenCodeReview version and verify its configured LLM connection."
@@ -519,6 +553,12 @@ const OCR_HEALTH_COMMAND_TEMPLATE =
 const reviewInputSchema = {
   type: "object",
   properties: {
+    repo: {
+      type: "string",
+      description:
+        "Path to the git repository to review. Defaults to the session working directory. " +
+        "Required when the session directory is not inside the repository (OCR needs cwd in a git repo).",
+    },
     commit: { type: "string", description: "Review one commit against its parent." },
     from: { type: "string", description: "Base ref for a branch/range comparison. Must be paired with 'to'." },
     to: { type: "string", description: "Target ref for a branch/range comparison. Must be paired with 'from'." },
@@ -557,7 +597,7 @@ async function setupV2(ctx: PluginV2.Context): Promise<void> {
       input: reviewInputSchema,
       execute: async (input, toolCtx) => {
         const review = input as ReviewInput
-        const cwd = await resolveSessionCwd(ctx, toolCtx.sessionID)
+        const cwd = resolveRepoDir(await resolveSessionCwd(ctx, toolCtx.sessionID), review.repo)
         const result = await runOcr(buildReviewArgs(review, cwd), {
           cwd,
           timeoutMs: review.overallTimeoutMinutes !== undefined
@@ -570,9 +610,12 @@ async function setupV2(ctx: PluginV2.Context): Promise<void> {
     editor.add({
       name: "ocr_health",
       description: OCR_HEALTH_DESCRIPTION,
-      input: { type: "object", properties: {}, additionalProperties: false },
-      execute: async (_input, toolCtx) => {
-        const cwd = await resolveSessionCwd(ctx, toolCtx.sessionID)
+      input: { type: "object", properties: { repo: reviewInputSchema.properties.repo }, additionalProperties: false },
+      execute: async (input, toolCtx) => {
+        const cwd = resolveRepoDir(
+          await resolveSessionCwd(ctx, toolCtx.sessionID),
+          (input as { repo?: string }).repo,
+        )
         const [version, llm] = await Promise.allSettled([
           runOcr(["version"], { cwd, timeoutMs: 30_000 }),
           runOcr(["llm", "test"], { cwd, timeoutMs: 60_000 }),
