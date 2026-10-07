@@ -112,12 +112,9 @@ export const GoogleVertexPlugin = define({
               key: "project",
               type: "string",
               title: "Google Cloud project",
-              description: [
-                projects.length
-                  ? `Found ${projects.length} project${projects.length === 1 ? "" : "s"} in your gcloud configuration on the server.`
-                  : "No projects found in your gcloud configuration on the server.",
-                "Sign in with `gcloud auth application-default login`, GOOGLE_APPLICATION_CREDENTIALS, or the machine's service account.",
-              ].join(" "),
+              description: projects.length
+                ? `Found ${projects.length} project${projects.length === 1 ? "" : "s"} in your gcloud configuration.`
+                : "No projects found in your gcloud configuration.",
               required: true,
               minLength: 1,
               pattern: "\\S",
