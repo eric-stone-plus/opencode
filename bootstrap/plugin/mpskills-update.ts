@@ -12,14 +12,17 @@ import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 // retries for a full day either.
 //
 // Blocking by design: the point is that the skill content the model reads in
-// *this* call is current. Every external command runs under `timeout`, so a
-// stalled network bounds this one call to well under a minute worst case
-// (first-time clone; an existing checkout is faster) — plugin.trigger awaits
-// hooks sequentially, so that cost really is paid inline. Any failure is
-// swallowed and the stale on-disk copy is served instead of blocking the
-// skill load. A lockfile keeps two concurrent skill calls (this box runs more
-// than one opencode server at a time) from racing the same checkout and REPO
-// git state; the loser just skips and serves whatever is on disk.
+// *this* call is current. That holds because the fork's skill tool re-reads
+// SKILL.md at execute time — after this `tool.execute.before` hook — instead
+// of serving the InstanceState snapshot taken at system-prompt build. Every
+// external command runs under `timeout`, so a stalled network bounds this one
+// call to well under a minute worst case (first-time clone; an existing
+// checkout is faster) — plugin.trigger awaits hooks sequentially, so that
+// cost really is paid inline. Any failure is swallowed and the stale on-disk
+// copy is served instead of blocking the skill load. A lockfile keeps two
+// concurrent skill calls (this box runs more than one opencode server at a
+// time) from racing the same checkout and REPO git state; the loser just
+// skips and serves whatever is on disk.
 // The fork checkout this plugin vendors INTO. Resolved at run time: the
 // environment override wins, then a HOME-relative default — never a hardcoded
 // absolute home, so the same file works on any seat. Machine-specific paths

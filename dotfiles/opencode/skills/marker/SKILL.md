@@ -1,6 +1,6 @@
 ---
 name: marker
-description: Convert a local PDF to structured Markdown, JSON, or HTML artifacts with a separate local Marker CLI, or explicitly extract text from a digital PDF.
+description: Convert a local PDF to structured Markdown, JSON, or HTML artifacts with a separate local Marker CLI, or pull text from any local PDF (including verifying or grepping a generated PDF text layer) - use this instead of ad-hoc pdftotext.
 ---
 
 Use `marker(input, output_dir)` with a local PDF and a new workspace output

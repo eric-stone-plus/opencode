@@ -33,6 +33,7 @@ Pick skills by task type:
 | Open question / fact-finding | `research` (primary sources only) |
 | Any claim, finding, or "all clear" to verify | `grilling` (adversarial interrogation) |
 | Work too big for one session | `wayfinder`, `handoff` for state |
+| Multi-ticket spec builds (to-spec/to-tickets output, parallel implementers) | `implement-spec` |
 
 **Workflow**:
 

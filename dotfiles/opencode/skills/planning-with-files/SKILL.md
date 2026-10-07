@@ -1,6 +1,5 @@
 ---
 name: planning-with-files
-description: Persist or recover the plan, findings, and progress of a multi-step OpenCode task across compaction and restarts using workspace files.
 ---
 
 Use the `planning` tool for substantial work that benefits from durable notes.

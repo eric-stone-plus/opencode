@@ -65,6 +65,20 @@ for (const bucket of BUCKETS) {
 
 if (vendored.length === 0) throw new Error(`no skills found under ${source}/skills`)
 
+// Fork policy: this deployment is agent-native, so skills the agents
+// demonstrably load by name (protocol-named in AGENTS.goal.md, or directed by
+// orchestrator prompts) must not be hidden behind upstream's user-only flag.
+// `disable-model-invocation` is honored by packages/opencode/src/skill/index.ts
+// as of this fork; without this patch a re-vendor would silently error every
+// legitimate name+load of the skills below. Applied after the copy loop so the
+// patch survives every re-vendor and the 24h auto-refresh.
+const UNFLAG = ["wayfinder", "handoff", "implement", "ask-matt", "grill-me", "implement-spec"]
+for (const skill of UNFLAG) {
+  const file = path.join(DEST, skill, "SKILL.md")
+  const body = await Bun.file(file).text()
+  await writeFile(file, body.replace(/^disable-model-invocation: true\n/m, ""))
+}
+
 // MIT requires the copyright and permission notice to travel with the work.
 // `bun build --compile` strips comments and ships only `dist/<name>/bin/*`, so
 // the notice is vendored as data next to the skills rather than as a comment.
@@ -84,6 +98,7 @@ await writeFile(
     `- Buckets: ${BUCKETS.join(", ")}`,
     `- Skills: ${vendored.length}, files: ${totalFiles}`,
     `- Excluded: ${[...EXCLUDED].join(", ")}`,
+    `- Unflagged (disable-model-invocation removed): ${UNFLAG.join(", ")}`,
     `- License: MIT, see [LICENSE](LICENSE) (Copyright (c) 2026 Matt Pocock)`,
     "",
     "`sync-upstream` copies this tree to `~/.config/opencode/skills/`, where the",
