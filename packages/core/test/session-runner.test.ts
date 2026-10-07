@@ -154,8 +154,14 @@ const echo = Layer.effectDiscard(
 const echoNode = makeLocationNode({ name: "test/session-runner-tools", layer: echo, deps: [ToolRegistry.node] })
 let modelResolveHook = Effect.void
 let currentModel = model
+let currentCost: ModelV2.Info["cost"] = []
 const models = SessionRunnerModel.layerWith((session) =>
-  modelResolveHook.pipe(Effect.as(session.model?.id === "replacement" ? replacementModel : currentModel)),
+  modelResolveHook.pipe(
+    Effect.as({
+      model: session.model?.id === "replacement" ? replacementModel : currentModel,
+      cost: currentCost,
+    }),
+  ),
 )
 const systemContextKey = SystemContext.Key.make("test/context")
 let systemBaseline = "Initial context"
@@ -318,6 +324,7 @@ const setup = Effect.gen(function* () {
   systemLoadHook = Effect.void
   modelResolveHook = Effect.void
   currentModel = model
+  currentCost = []
   skillBaselines.clear()
   responses = undefined
   streamFailure = undefined
@@ -3461,6 +3468,94 @@ describe("SessionRunnerLLM", () => {
       expect(yield* session.resume(sessionID).pipe(Effect.catchDefect(Effect.succeed))).toBe(
         "Tool input delta before start: call-1",
       )
+    }),
+  )
+
+  it.effect("Step.Ended cost is computed from the resolved model cost rates", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      currentCost = [{ input: 2, output: 6, cache: { read: 0.25, write: 2.5 } }]
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Price me" }), resume: false })
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.textStart({ id: "text-1" }),
+        LLMEvent.textDelta({ id: "text-1", text: "Hello!" }),
+        LLMEvent.textEnd({ id: "text-1" }),
+        LLMEvent.stepFinish({
+          index: 0,
+          reason: "stop",
+          usage: {
+            inputTokens: 10,
+            nonCachedInputTokens: 8,
+            outputTokens: 4,
+            reasoningTokens: 1,
+            cacheReadInputTokens: 2,
+          },
+        }),
+        LLMEvent.finish({ reason: "stop" }),
+      ]
+      yield* session.resume(sessionID)
+
+      const { db } = yield* Database.Service
+      const rows = yield* db
+        .select({ type: EventTable.type, data: EventTable.data })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, sessionID))
+        .all()
+      const ended = rows.find((row) => row.type.startsWith("session.next.step.ended"))
+      expect(ended).toBeDefined()
+      const cost = (ended?.data as Record<string, unknown>)["cost"]
+      // Hand-expanded at the base rates: tokens { input: 8, output: 3,
+      // reasoning: 1, cache: { read: 2, write: 0 } } →
+      // (8*2 + 3*6 + 2*0.25 + 0*2.5 + 1*6) / 1e6 = 40.5 / 1e6.
+      expect(cost).toBeCloseTo(0.0000405, 12)
+    }),
+  )
+
+  it.effect("Step.Ended cost selects the context tier from reconstructed context tokens", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      currentCost = [
+        { input: 2, output: 6, cache: { read: 0.25, write: 2.5 } },
+        { tier: { type: "context", size: 128_000 }, input: 0.5, output: 1, cache: { read: 0.05, write: 0.1 } },
+      ]
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Price me big" }), resume: false })
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.textStart({ id: "text-1" }),
+        LLMEvent.textDelta({ id: "text-1", text: "Hello!" }),
+        LLMEvent.textEnd({ id: "text-1" }),
+        LLMEvent.stepFinish({
+          index: 0,
+          reason: "stop",
+          usage: {
+            inputTokens: 200_000,
+            nonCachedInputTokens: 190_000,
+            outputTokens: 100,
+            reasoningTokens: 0,
+            cacheReadInputTokens: 10_000,
+          },
+        }),
+        LLMEvent.finish({ reason: "stop" }),
+      ]
+      yield* session.resume(sessionID)
+
+      const { db } = yield* Database.Service
+      const rows = yield* db
+        .select({ type: EventTable.type, data: EventTable.data })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, sessionID))
+        .all()
+      const ended = rows.find((row) => row.type.startsWith("session.next.step.ended"))
+      const cost = (ended?.data as Record<string, unknown>)["cost"]
+      // tokens { input: 190_000, output: 100, reasoning: 0, cache: { read:
+      // 10_000, write: 0 } }, context = 200_000 > 128_000 → tier rates →
+      // (190_000*0.5 + 100*1 + 10_000*0.05 + 0*0.1) / 1e6 = 95_600 / 1e6.
+      expect(cost).toBeCloseTo(0.0956, 12)
+      // Base rates would have produced 0.3831; the gap proves tier selection.
+      expect(cost).not.toBeCloseTo(0.3831, 6)
     }),
   )
 })

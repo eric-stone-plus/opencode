@@ -68,6 +68,7 @@ export const Model = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   family: Schema.optional(Schema.String),
+  canonical_model_id: Schema.optional(Schema.String),
   release_date: Schema.String,
   attachment: Schema.Boolean,
   reasoning: Schema.Boolean,
@@ -137,7 +138,13 @@ declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined
 
 export interface Interface {
   readonly get: () => Effect.Effect<Record<string, Provider>>
-  readonly refresh: (force?: boolean) => Effect.Effect<void>
+  /**
+   * Refresh the on-disk cache from the registry. Never fails: returns true
+   * when the registry data is fresh afterwards (already fresh or fetched),
+   * false when the fetch failed and no fresh cache exists. Callers like
+   * Pricing throttle on the result.
+   */
+  readonly refresh: (force?: boolean) => Effect.Effect<boolean>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelsDev") {}
@@ -239,20 +246,23 @@ const layer = Layer.effect(
     const get = (): Effect.Effect<Record<string, Provider>> => cachedGet
 
     const refresh = Effect.fn("ModelsDev.refresh")(function* (force = false) {
-      if (!force && (yield* fresh())) return
-      yield* Effect.scoped(
+      if (!force && (yield* fresh())) return true
+      return yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Flock.effect(lockKey)
           // Re-check under the lock: another process may have refreshed between
           // our outer check and lock acquisition.
-          if (!force && (yield* fresh())) return
+          if (!force && (yield* fresh())) return true
           yield* fetchAndWrite()
           yield* invalidate
           yield* events.publish(Event.Refreshed, {})
+          return true
         }),
       ).pipe(
         Effect.tapCause((cause) => Effect.logError("Failed to fetch models.dev", { cause: cause })),
-        Effect.ignore,
+        // Failures stay swallowed for callers, but report them as "not fresh"
+        // so throttles can retry instead of treating stale data as success.
+        Effect.catch(() => Effect.succeed(false)),
       )
     })
 

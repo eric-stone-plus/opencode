@@ -71,8 +71,13 @@ export type Error =
   | UnsupportedApiError
   | Integration.AuthorizationError
 
+export type Resolved = {
+  readonly model: Model
+  readonly cost: ModelV2.Info["cost"]
+}
+
 export interface Interface {
-  readonly resolve: (session: SessionSchema.Info) => Effect.Effect<Model, Error>
+  readonly resolve: (session: SessionSchema.Info) => Effect.Effect<Resolved, Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionRunnerModel") {}
@@ -205,11 +210,14 @@ export const locationLayer = Layer.effect(
         const connection = yield* integrations.connection.active(
           provider?.integrationID ?? Integration.ID.make(selected.providerID),
         )
-        return yield* resolve(
-          session,
-          selected,
-          connection ? yield* integrations.connection.resolve(connection) : undefined,
-        )
+        return {
+          model: yield* resolve(
+            session,
+            selected,
+            connection ? yield* integrations.connection.resolve(connection) : undefined,
+          ),
+          cost: selected.cost,
+        }
       }),
     })
   }),

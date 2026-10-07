@@ -37,6 +37,38 @@ import { createLLMEventPublisher } from "./publish-llm-event"
 import { toLLMMessages } from "./to-llm-message"
 import { MAX_STEPS_PROMPT } from "./max-steps"
 import { Snapshot } from "../../snapshot"
+import { Pricing } from "../../pricing"
+
+// V2 cost arrays (base entry + tiered entries) to the rate shape Pricing.costOf
+// prices with. An entry without a tier is the base rate; tiered entries keep
+// their tier (context_over_200k arrives here as a 200k context tier).
+const v2Rates = (cost: ModelV2.Info["cost"]): Pricing.Rates => {
+  const base = cost.find((entry) => entry.tier === undefined)
+  return {
+    input: base?.input ?? 0,
+    output: base?.output ?? 0,
+    cache: {
+      read: base?.cache.read ?? 0,
+      write: base?.cache.write ?? 0,
+    },
+    ...(cost.some((entry) => entry.tier !== undefined)
+      ? {
+          tiers: cost.flatMap((entry) =>
+            entry.tier === undefined
+              ? []
+              : [
+                  {
+                    input: entry.input,
+                    output: entry.output,
+                    cache: { read: entry.cache.read, write: entry.cache.write },
+                    tier: entry.tier,
+                  },
+                ],
+          ),
+        }
+      : {}),
+  }
+}
 import { makeLocationNode } from "../../effect/app-node"
 import { llmClient } from "../../effect/app-node-platform"
 
@@ -196,7 +228,7 @@ const layer = Layer.effect(
       }
       const system =
         initialized ?? (yield* SessionContextEpoch.prepare(db, events, loadSystemContext(agent), session.id))
-      const model = yield* models.resolve(session)
+      const { model, cost: modelCost } = yield* models.resolve(session)
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
       const context = entries.map((entry) => entry.message)
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
@@ -335,7 +367,11 @@ const layer = Layer.effect(
                 timestamp: yield* DateTime.now,
                 assistantMessageID: yield* publisher.startAssistant(),
                 finish: stepSettlement.finish,
-                cost: 0,
+                cost: Pricing.costOf(
+                  v2Rates(modelCost),
+                  stepSettlement.tokens,
+                  stepSettlement.tokens.input + stepSettlement.tokens.cache.read + stepSettlement.tokens.cache.write,
+                ),
                 tokens: stepSettlement.tokens,
                 snapshot: endSnapshot,
                 files,

@@ -9,7 +9,7 @@ import { useClipboard } from "../context/clipboard"
 import { useToast } from "../ui/toast"
 import { useBindings } from "../keymap"
 
-const money = new Intl.NumberFormat("en-US", {
+export const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 })
@@ -17,6 +17,56 @@ const money = new Intl.NumberFormat("en-US", {
 // Mirrors the per-session message window hydration keeps (context/sync.tsx):
 // counts derived from the loaded list can under-count once it is at the cap.
 const MESSAGE_CAP = 100
+
+export function usageSection(input: {
+  loadedMessages: number
+  userMessages: number
+  assistantMessages: number
+  toolCalls: number
+  turns: number
+  totals: {
+    input: number
+    output: number
+    reasoning: number
+    cacheRead: number
+    cacheWrite: number
+    cost: number
+    sum: number
+    source: "session" | "messages"
+  }
+}) {
+  if (input.assistantMessages === 0 && input.totals.sum <= 0) {
+    return { rows: [{ label: "Usage", value: "No model calls yet in this session." }], footnotes: [] }
+  }
+  if (input.totals.sum <= 0) {
+    return {
+      rows: [{ label: "Usage", value: "None recorded, but tracking is incomplete and may under-count." }],
+      footnotes: [],
+    }
+  }
+  return {
+    rows: [
+      { label: "Input tokens", value: input.totals.input.toLocaleString() },
+      { label: "Output tokens", value: input.totals.output.toLocaleString() },
+      { label: "Reasoning tokens", value: input.totals.reasoning.toLocaleString() },
+      { label: "Cache read tokens", value: input.totals.cacheRead.toLocaleString() },
+      { label: "Cache write tokens", value: input.totals.cacheWrite.toLocaleString() },
+      { label: "Cost", value: money.format(input.totals.cost) },
+      { label: "Messages", value: `${input.userMessages} user / ${input.assistantMessages} assistant` },
+      { label: "Tool calls", value: input.toolCalls.toLocaleString() },
+      { label: "Turns", value: input.turns.toLocaleString() },
+    ],
+    footnotes: [
+      input.totals.source === "session"
+        ? "Source: Totals from session aggregates."
+        : `Source: Totals aggregated from ${input.loadedMessages} loaded messages.`,
+      ...(input.totals.source === "messages" || input.loadedMessages >= MESSAGE_CAP
+        ? ["Note: usage is incomplete and may under-count."]
+        : []),
+      "Note: providers that declare no price are matched to canonical registry list prices; cost is estimated.",
+    ],
+  }
+}
 
 export type DialogUsageProps = {}
 
@@ -113,42 +163,15 @@ export function DialogUsage() {
 
   const usage = createMemo(() => {
     const msgs = messages()
-    const assts = assistants()
-    const sum = totals()
-    if (assts.length === 0 && sum.sum <= 0) {
-      return { rows: [{ label: "Usage", value: "No model calls yet in this session." }], footnotes: [] }
-    }
-    if (sum.sum <= 0) {
-      return {
-        rows: [{ label: "Usage", value: "None recorded, but tracking is incomplete and may under-count." }],
-        footnotes: [],
-      }
-    }
     const parts = msgs.flatMap((message) => sync.data.part[message.id] ?? [])
-    return {
-      rows: [
-        { label: "Input tokens", value: sum.input.toLocaleString() },
-        { label: "Output tokens", value: sum.output.toLocaleString() },
-        { label: "Reasoning tokens", value: sum.reasoning.toLocaleString() },
-        { label: "Cache read tokens", value: sum.cacheRead.toLocaleString() },
-        { label: "Cache write tokens", value: sum.cacheWrite.toLocaleString() },
-        { label: "Cost", value: money.format(sum.cost) },
-        {
-          label: "Messages",
-          value: `${msgs.filter((message) => message.role === "user").length} user / ${assts.length} assistant`,
-        },
-        { label: "Tool calls", value: parts.filter((part) => part.type === "tool").length.toLocaleString() },
-        { label: "Turns", value: parts.filter((part) => part.type === "step-finish").length.toLocaleString() },
-      ],
-      footnotes: [
-        sum.source === "session"
-          ? "Source: Totals from session aggregates."
-          : `Source: Totals aggregated from ${msgs.length} loaded messages.`,
-        ...(sum.source === "messages" || msgs.length >= MESSAGE_CAP
-          ? ["Note: usage is incomplete and may under-count."]
-          : []),
-      ],
-    }
+    return usageSection({
+      loadedMessages: msgs.length,
+      userMessages: msgs.filter((message) => message.role === "user").length,
+      assistantMessages: assistants().length,
+      toolCalls: parts.filter((part) => part.type === "tool").length,
+      turns: parts.filter((part) => part.type === "step-finish").length,
+      totals: totals(),
+    })
   })
 
   const report = createMemo(() => {

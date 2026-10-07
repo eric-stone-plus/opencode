@@ -25,6 +25,7 @@ import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
+import { Pricing } from "@opencode-ai/core/pricing"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { NamedError } from "@opencode-ai/core/util/error"
 
@@ -53,6 +54,10 @@ export function doomLoopMessage(tool: string, count: number) {
     "or move on to the next step. If you keep repeating this exact call, the run will be stopped."
   )
 }
+
+const hasNonzeroTokens = (tokens: { input: number; output: number; reasoning: number; cache: { read: number; write: number } }) =>
+  tokens.input > 0 || tokens.output > 0 || tokens.reasoning > 0 || tokens.cache.read > 0 || tokens.cache.write > 0
+
 export type Result = "compact" | "stop" | "continue"
 
 export interface Handle {
@@ -122,6 +127,7 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
     const database = yield* Database.Service
     const provider = yield* Provider.Service
+    const pricing = yield* Pricing.Service
     // Consecutive identical tool calls per session, across steps. In-memory only:
     // a restart starts the count over.
     const streaks = new Map<SessionID, { userID: string; key: string; count: number }>()
@@ -491,8 +497,26 @@ const layer = Layer.effect(
               usage: value.usage ?? new Usage({}),
               metadata: value.providerMetadata,
             })
+            // Auto price match: an all-zero catalog cost means the catalog has
+            // no price for this model — resolve one (offline match, then a
+            // throttled web registry refresh) and re-price the step, but only
+            // for steps that actually consumed tokens. Copilot nanoAiu billing
+            // wins over rate-based pricing when present.
+            const nanoAiu = value.providerMetadata?.["copilot"]?.["totalNanoAiu"]
+            const nanoAiuApplies = typeof nanoAiu === "number" && Number.isFinite(nanoAiu) && nanoAiu >= 0
+            const matched =
+              !nanoAiuApplies && hasNonzeroTokens(usage.tokens) && Pricing.isZeroRates(ctx.model.cost)
+                ? yield* pricing.resolve({ providerID: ctx.model.providerID, modelID: ctx.model.api.id })
+                : undefined
+            const stepCost = matched
+              ? Pricing.costOf(
+                  Pricing.rates(matched.cost),
+                  usage.tokens,
+                  usage.tokens.input + usage.tokens.cache.read + usage.tokens.cache.write,
+                )
+              : usage.cost
             ctx.assistantMessage.finish = value.reason
-            ctx.assistantMessage.cost += usage.cost
+            ctx.assistantMessage.cost += stepCost
             ctx.assistantMessage.tokens = usage.tokens
             yield* session.updatePart({
               id: PartID.ascending(),
@@ -502,7 +526,7 @@ const layer = Layer.effect(
               sessionID: ctx.assistantMessage.sessionID,
               type: "step-finish",
               tokens: usage.tokens,
-              cost: usage.cost,
+              cost: stepCost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
             if (ctx.snapshot) {
@@ -866,6 +890,7 @@ export const node = LayerNode.make({
     EventV2Bridge.node,
     Database.node,
     Provider.node,
+    Pricing.node,
   ],
 })
 

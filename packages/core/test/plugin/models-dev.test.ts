@@ -79,7 +79,7 @@ describe("ModelsDevPlugin", () => {
               },
             },
           } satisfies Record<string, ModelsDev.Provider>),
-        refresh: () => Effect.void,
+        refresh: () => Effect.succeed(true),
       })
 
       yield* ModelsDevPlugin.effect(

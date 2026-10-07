@@ -16,10 +16,17 @@ import { openWorkspaceSelect, type WorkspaceSelection, warpWorkspaceSession } fr
 import { Spinner } from "./spinner"
 import { errorMessage } from "../util/error"
 import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
+import { money } from "./dialog-usage"
 import { useCommandShortcut } from "../keymap"
 import { useEvent } from "../context/event"
 
 type SessionListFilter = { scope?: "project"; path?: string }
+
+export function sessionRowFooter(input: { directory: string | undefined; cost: number | undefined }) {
+  const cost = money.format(input.cost ?? 0)
+  if (!input.directory) return cost
+  return `${input.directory} · ${cost}`
+}
 
 export function createDialogSessionListQuery(input: { search?: string; filter: SessionListFilter }) {
   const search = input.search?.trim()
@@ -230,8 +237,13 @@ export function DialogSessionList() {
           ? x.directory.slice(0, -x.path.length).replace(/\/$/, "")
           : undefined
         : x.directory
-      const footer =
-        directory && directory !== project.data.project.mainDir ? Locale.truncate(path.basename(directory), 20) : ""
+      const footer = sessionRowFooter({
+        directory:
+          directory && directory !== project.data.project.mainDir
+            ? Locale.truncate(path.basename(directory), 20)
+            : undefined,
+        cost: x.cost,
+      })
 
       const isDeleting = toDelete() === x.id
       const status = sync.data.session_status?.[x.id]

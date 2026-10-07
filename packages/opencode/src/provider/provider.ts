@@ -11,6 +11,7 @@ import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
+import { Pricing } from "@opencode-ai/core/pricing"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -1191,36 +1192,24 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pr
 export const use = serviceUse(Service)
 
 function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
-  const result: Model["cost"] = {
-    input: c?.input ?? 0,
-    output: c?.output ?? 0,
-    cache: {
-      read: c?.cache_read ?? 0,
-      write: c?.cache_write ?? 0,
-    },
+  // Registry→rates conversion lives in Pricing.rates (the single mapping);
+  // only the Model boundary requires concrete cache numbers.
+  const rates = Pricing.rates(c)
+  return {
+    input: rates.input,
+    output: rates.output,
+    cache: { read: rates.cache.read ?? 0, write: rates.cache.write ?? 0 },
+    ...(rates.tiers
+      ? {
+          tiers: rates.tiers.map((item) => ({
+            input: item.input,
+            output: item.output,
+            cache: { read: item.cache.read ?? 0, write: item.cache.write ?? 0 },
+            tier: item.tier,
+          })),
+        }
+      : {}),
   }
-  if (c?.tiers) {
-    result.tiers = c.tiers.map((item) => ({
-      input: item.input,
-      output: item.output,
-      cache: {
-        read: item.cache_read ?? 0,
-        write: item.cache_write ?? 0,
-      },
-      tier: item.tier,
-    }))
-  }
-  if (c?.context_over_200k) {
-    result.experimentalOver200K = {
-      cache: {
-        read: c.context_over_200k.cache_read ?? 0,
-        write: c.context_over_200k.cache_write ?? 0,
-      },
-      input: c.context_over_200k.input,
-      output: c.context_over_200k.output,
-    }
-  }
-  return result
 }
 
 // Cloudflare AI Gateway routes OpenAI and Anthropic models through their native
@@ -1456,6 +1445,9 @@ const layer = Layer.effect(
         }
 
         // extend database from config
+        // Models whose config declares a cost object (even an explicit zero)
+        // are decisions — the matcher fill below must not overwrite them.
+        const declaredCosts = new Set<string>()
         for (const [providerID, provider] of configProviders) {
           const existing = database[providerID]
           const parsed: Info = {
@@ -1468,6 +1460,7 @@ const layer = Layer.effect(
           }
 
           for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+            if (model?.cost) declaredCosts.add(`${providerID}\u0000${modelID}`)
             const existingModel = parsed.models[model.id ?? modelID]
             const apiID = model.id ?? existingModel?.api.id ?? modelID
             const apiNpm =
@@ -1523,14 +1516,9 @@ const layer = Layer.effect(
                     ? { field: "reasoning_content" }
                     : false),
               },
-              cost: {
-                input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
-                output: model?.cost?.output ?? existingModel?.cost?.output ?? 0,
-                cache: {
-                  read: model?.cost?.cache_read ?? existingModel?.cost?.cache.read ?? 0,
-                  write: model?.cost?.cache_write ?? existingModel?.cost?.cache.write ?? 0,
-                },
-              },
+              // Config cost wins outright (per-field merges dropped registry
+              // tiers/over-200k pricing); otherwise keep the registry cost.
+              cost: model?.cost ? cost(model.cost) : existingModel?.cost ?? cost(undefined),
               options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
               limit: {
                 context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
@@ -1566,6 +1554,20 @@ const layer = Layer.effect(
             parsed.models[modelID] = next
           }
           database[providerID] = parsed
+        }
+
+        // Auto price match: fill zero-cost models from the registry (canonical
+        // chain, then cross-provider). Config-declared costs win outright
+        // (including an explicit zero — see declaredCosts); a registry zero
+        // without any nonzero match stays 0.
+        for (const [id, provider] of Object.entries(database)) {
+          for (const [key, model] of Object.entries(provider.models)) {
+            if (declaredCosts.has(`${id}\u0000${key}`)) continue
+            if (!Pricing.isZeroRates(model.cost)) continue
+            const match = Pricing.match(modelsDev, { providerID: id, modelID: model.api.id })
+            if (!match) continue
+            provider.models[key] = { ...model, cost: cost(match.cost) }
+          }
         }
 
         // load env (credentials only; activation requires a config declaration)

@@ -801,6 +801,220 @@ it.instance(
   },
 )
 
+it.instance(
+  "zero registry cost is filled from the canonical model match",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
+    expect(model.cost.input).toBe(2)
+    expect(model.cost.output).toBe(6)
+    expect(model.cost.cache.read).toBe(0.25)
+    expect(model.cost.cache.write).toBe(2.5)
+  }),
+  {
+    config: {
+      provider: {
+        "demo-pricing": {
+          name: "Demo Pricing",
+          env: ["DEMO_PRICING_API_KEY"],
+          models: {
+            "demo-zero": { name: "Demo Zero", tool_call: true, limit: { context: 200000, output: 32000 } },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "zero cost for a provider missing from the registry is filled cross-provider",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("demo-xplan")].models["demo-zero"]
+    expect(model.cost.input).toBe(2)
+    expect(model.cost.output).toBe(6)
+    expect(model.cost.cache.read).toBe(0.25)
+    expect(model.cost.cache.write).toBe(2.5)
+  }),
+  {
+    config: {
+      provider: {
+        "demo-xplan": {
+          name: "Demo XPlan",
+          npm: "@ai-sdk/openai-compatible",
+          env: [],
+          models: {
+            "demo-zero": { name: "Demo Zero", tool_call: true, limit: { context: 200000, output: 32000 } },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "config-declared cost wins over the canonical match",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
+    expect(model.cost.input).toBe(5)
+    expect(model.cost.output).toBe(15)
+    expect(model.cost.cache.read).toBe(2.5)
+    expect(model.cost.cache.write).toBe(7.5)
+  }),
+  {
+    config: {
+      provider: {
+        "demo-pricing": {
+          name: "Demo Pricing",
+          env: ["DEMO_PRICING_API_KEY"],
+          models: {
+            "demo-zero": {
+              name: "Demo Zero",
+              tool_call: true,
+              limit: { context: 200000, output: 32000 },
+              cost: { input: 5, output: 15, cache_read: 2.5, cache_write: 7.5 },
+            },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "zero cost fills from the canonical model target across providers",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("xiaomi-token-plan-cn")].models["mimo-v2.6-pro"]
+    expect(model.cost.input).toBe(0.435)
+    expect(model.cost.output).toBe(0.87)
+    expect(model.cost.cache.read).toBe(0.0036)
+    expect(model.cost.cache.write).toBe(0)
+  }),
+  {
+    config: {
+      provider: {
+        "xiaomi-token-plan-cn": {
+          name: "Xiaomi Token Plan CN",
+          npm: "@ai-sdk/openai-compatible",
+          env: [],
+          models: {
+            "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", tool_call: true, limit: { context: 200000, output: 32000 } },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "zero cost for a registry-missing model fills cross-provider from canonical votes",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("bailian-token-plan-personal")].models["qwen3.8-max"]
+    expect(model.cost.input).toBe(2)
+    expect(model.cost.output).toBe(6)
+    expect(model.cost.cache.read).toBe(0.25)
+    expect(model.cost.cache.write).toBe(2.5)
+  }),
+  {
+    config: {
+      provider: {
+        "bailian-token-plan-personal": {
+          name: "Bailian Token Plan Personal",
+          npm: "@ai-sdk/openai-compatible",
+          env: [],
+          models: {
+            "qwen3.8-max": { name: "Qwen3.8 Max", tool_call: true, limit: { context: 200000, output: 32000 } },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "config-declared explicit zero cost is preserved verbatim",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
+    // An explicit zero cost object is a decision, not a missing price: the
+    // matcher must not overwrite it with a registry match.
+    expect(model.cost.input).toBe(0)
+    expect(model.cost.output).toBe(0)
+    expect(model.cost.cache.read).toBe(0)
+    expect(model.cost.cache.write).toBe(0)
+  }),
+  {
+    config: {
+      provider: {
+        "demo-pricing": {
+          name: "Demo Pricing",
+          env: ["DEMO_PRICING_API_KEY"],
+          models: {
+            "demo-zero": {
+              name: "Demo Zero",
+              tool_call: true,
+              limit: { context: 200000, output: 32000 },
+              cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+            },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
+it.instance(
+  "registry tiers survive the config merge when config declares no cost",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-tiered"]
+    expect(model.cost.input).toBe(1)
+    expect(model.cost.output).toBe(2)
+    expect(model.cost.cache.read).toBe(0.1)
+    expect(model.cost.cache.write).toBe(0.2)
+    // context_over_200k is folded into an appended 200k context tier (same
+    // projection as plugin/models-dev.ts), not a separate experimental field.
+    expect(model.cost.tiers).toEqual([
+      {
+        input: 0.5,
+        output: 1,
+        cache: { read: 0.05, write: 0.1 },
+        tier: { type: "context", size: 200000 },
+      },
+      {
+        input: 0.4,
+        output: 0.8,
+        cache: { read: 0.04, write: 0.08 },
+        tier: { type: "context", size: 200000 },
+      },
+    ])
+    expect(model.cost.experimentalOver200K).toBeUndefined()
+  }),
+  {
+    config: {
+      provider: {
+        "demo-pricing": {
+          name: "Demo Pricing",
+          env: ["DEMO_PRICING_API_KEY"],
+          models: {
+            "demo-tiered": { name: "Demo Tiered", tool_call: true, limit: { context: 200000, output: 32000 } },
+          },
+          options: { apiKey: "test" },
+        },
+      },
+    },
+  },
+)
+
 const smallModelProvider = {
   name: "Test Provider",
   npm: "@ai-sdk/openai-compatible",
@@ -1497,11 +1711,17 @@ test("mode options and cost are derived from the base model", () => {
   const pro = Provider.fromModelsDevProvider(provider).models["gpt-5.6-sol-pro"]
   expect(pro.api.id).toEqual("gpt-5.6-sol")
   expect(pro.options).toEqual({ reasoningMode: "pro", serviceTier: "priority" })
-  expect(model.cost.experimentalOver200K).toEqual({
-    input: 5,
-    output: 22.5,
-    cache: { read: 0.5, write: 0 },
-  })
+  expect(model.cost.experimentalOver200K).toBeUndefined()
+  // The base model's context_over_200k arrives folded as a 200k context tier
+  // (same registry projection as everywhere else).
+  expect(model.cost.tiers).toEqual([
+    {
+      input: 5,
+      output: 22.5,
+      cache: { read: 0.5, write: 0 },
+      tier: { type: "context", size: 200_000 },
+    },
+  ])
 })
 
 test("models.dev normalization fills required response fields", () => {

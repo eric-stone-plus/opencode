@@ -3,6 +3,7 @@ import type { ModelV2Info } from "@opencode-ai/sdk/v2/types"
 import { Effect, Stream } from "effect"
 import { EventV2 } from "../event"
 import { ModelsDev } from "../models-dev"
+import { Pricing } from "../pricing"
 import { ProviderV2 } from "../provider"
 
 function released(date: string) {
@@ -160,7 +161,16 @@ export const ModelsDevPlugin = define({
           })
 
           for (const model of Object.values(item.models)) {
-            const baseCost = cost(model.cost)
+            // Auto price match: a zero cost is treated as unpriced and filled
+            // from the registry (canonical chain, then cross-provider). An
+            // explicit zero without any nonzero match stays zero.
+            const declared = cost(model.cost)
+            const match = declared.every(
+              (entry) => entry.input === 0 && entry.output === 0 && entry.cache.read === 0 && entry.cache.write === 0,
+            )
+              ? Pricing.match(data, { providerID: item.id, modelID: model.id })
+              : undefined
+            const baseCost = match ? cost(match.cost) : declared
             catalog.model.update(providerID, model.id, (draft) => applyModel(draft, model, { cost: baseCost }))
             for (const [mode, options] of Object.entries(model.experimental?.modes ?? {})) {
               catalog.model.update(providerID, `${model.id}-${mode}`, (draft) =>
