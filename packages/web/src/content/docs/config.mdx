@@ -556,7 +556,7 @@ You can control how deeply subagents can invoke other subagents using the `subag
 }
 ```
 
-The default is `1`, which allows primary agents to launch subagents but prevents those subagents from launching additional subagents. Set it to `2` to allow one additional level of nested subagents, or `0` to prevent all subagent launches.
+The default is `3`, which allows up to three levels of nested subagents (matching Claude Code). Lower it to `2` for one less level, or set it to `0` to prevent all subagent launches.
 
 ---
 
@@ -880,6 +880,19 @@ The `experimental` key contains options that are under active development.
 {
   "$schema": "https://opencode.ai/config.json",
   "experimental": {}
+}
+```
+
+#### Background subagents
+
+Set `experimental.background_subagents` to let subagents run in the background. This config flag and the `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` environment variable both act as opt-in; background subagents stay off unless one of them is set.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "background_subagents": true
+  }
 }
 ```
 

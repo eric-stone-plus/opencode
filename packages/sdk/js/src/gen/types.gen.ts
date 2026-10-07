@@ -1213,7 +1213,7 @@ export type Config = {
    */
   command?: {
     [key: string]: {
-      template: string
+      template?: string
       description?: string
       agent?: string
       model?: string
@@ -1253,6 +1253,10 @@ export type Config = {
    * Small model to use for tasks like title generation in the format of provider/model
    */
   small_model?: string
+  /**
+   * Maximum subagent nesting depth. Defaults to 3, matching Claude Code's 3 nesting layers.
+   */
+  subagent_depth?: number
   /**
    * Custom username to display in conversations instead of system username
    */
@@ -1369,6 +1373,10 @@ export type Config = {
      * Enable the batch tool
      */
     batch_tool?: boolean
+    /**
+     * Enable background subagents without the OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS env var. Both act as opt-in; background stays off unless one is set.
+     */
+    background_subagents?: boolean
     /**
      * Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)
      */

@@ -36,8 +36,13 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const background = yield* BackgroundJob.Service
     const flags = yield* RuntimeFlags.Service
 
+    const backgroundEnabled = Effect.fn("ExperimentalHttpApi.backgroundEnabled")(function* () {
+      const cfg = yield* config.get()
+      return flags.experimentalBackgroundSubagents || cfg.experimental?.background_subagents === true
+    })
+
     const capabilities = Effect.fn("ExperimentalHttpApi.capabilities")(function* () {
-      return { backgroundSubagents: flags.experimentalBackgroundSubagents }
+      return { backgroundSubagents: yield* backgroundEnabled() }
     })
 
     const getConsole = Effect.fn("ExperimentalHttpApi.console")(function* () {
@@ -159,7 +164,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const sessionBackground = Effect.fn("ExperimentalHttpApi.sessionBackground")(function* (ctx: {
       params: { sessionID: SessionID }
     }) {
-      if (!flags.experimentalBackgroundSubagents) return false
+      if (!(yield* backgroundEnabled())) return false
       const jobs = (yield* background.list()).filter(
         (job) =>
           job.type === "task" &&

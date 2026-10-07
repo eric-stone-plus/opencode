@@ -88,17 +88,18 @@ const layer = Layer.effect(
       }
 
       for (const [name, command] of Object.entries(cfg.command ?? {})) {
+        const existing = commands[name]
         commands[name] = {
           name,
-          agent: command.agent,
-          model: command.model,
-          description: command.description,
+          agent: command.agent ?? existing?.agent,
+          model: command.model ?? existing?.model,
+          description: command.description ?? existing?.description,
           source: "command",
           get template() {
-            return command.template
+            return command.template ?? existing?.template ?? ""
           },
-          subtask: command.subtask,
-          hints: hints(command.template),
+          subtask: command.subtask ?? existing?.subtask,
+          hints: command.template !== undefined ? hints(command.template) : (existing?.hints ?? []),
         }
       }
 

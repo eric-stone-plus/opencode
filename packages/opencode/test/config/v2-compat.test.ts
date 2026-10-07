@@ -144,6 +144,17 @@ describe("ConfigV2Compat.lower", () => {
     expect(result.diagnostics.filter((item) => item.kind === "conflict")).toHaveLength(3)
   })
 
+  test("lowers a model-only commands entry without requiring a template", () => {
+    const result = ConfigV2Compat.lower({
+      commands: { review: { model: "test/pinned-model" } },
+    })
+    const config = ConfigParse.schema(ConfigV1.Info, result.value, source)
+
+    expect(config.command?.review.model).toBe("test/pinned-model")
+    expect(config.command?.review.template).toBeUndefined()
+    expect(result.diagnostics).toEqual([])
+  })
+
   test("does not diagnose ordinary V1 configuration or reject invalid V1 roots early", () => {
     expect(ConfigV2Compat.lower({ snapshot: false, mcp: { existing: { enabled: false } } }).diagnostics).toEqual([])
     expect(ConfigV2Compat.lower({ snapshot: false, snapshots: false }).diagnostics).toEqual([])

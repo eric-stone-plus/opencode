@@ -546,20 +546,120 @@ describe("tool.task", () => {
     }),
   )
 
-  it.instance("prevents subagents from launching subagents by default", () =>
+  it.instance(
+    "prevents subagents from launching subagents when subagent_depth is 1",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+        const nestedAssistant = yield* sessions.updateMessage({
+          ...assistant,
+          id: MessageID.ascending(),
+          parentID: MessageID.ascending(),
+          sessionID: child.id,
+        })
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        let asked = false
+
+        const exit = yield* def
+          .execute(
+            {
+              description: "inspect bug",
+              prompt: "look into the cache key path",
+              subagent_type: "general",
+            },
+            {
+              sessionID: child.id,
+              messageID: nestedAssistant.id,
+              agent: "general",
+              abort: new AbortController().signal,
+              extra: { promptOps: stubOps() },
+              messages: [],
+              metadata: () => Effect.void,
+              ask: () => Effect.sync(() => (asked = true)),
+            },
+          )
+          .pipe(Effect.exit)
+
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(asked).toBe(false)
+        expect(yield* sessions.children(child.id)).toHaveLength(0)
+      }),
+    { config: { subagent_depth: 1 } },
+  )
+
+  it.instance("allows nested subagents up to the default depth of 3", () =>
     Effect.gen(function* () {
       const sessions = yield* Session.Service
       const { chat, assistant } = yield* seed()
-      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
-      const nestedAssistant = yield* sessions.updateMessage({
+      const c1 = yield* sessions.create({ parentID: chat.id, title: "c1" })
+      yield* sessions.updateMessage({
         ...assistant,
         id: MessageID.ascending(),
         parentID: MessageID.ascending(),
-        sessionID: child.id,
+        sessionID: c1.id,
+      })
+      const c2 = yield* sessions.create({ parentID: c1.id, title: "c2" })
+      const c2Assistant = yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: c2.id,
       })
       const tool = yield* TaskTool
       const def = yield* tool.init()
-      let asked = false
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+        },
+        {
+          sessionID: c2.id,
+          messageID: c2Assistant.id,
+          agent: "general",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps() },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect((yield* sessions.get(result.metadata.sessionId)).parentID).toBe(c2.id)
+    }),
+  )
+
+  it.instance("throws when nesting exceeds the default depth of 3", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const c1 = yield* sessions.create({ parentID: chat.id, title: "c1" })
+      yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: c1.id,
+      })
+      const c2 = yield* sessions.create({ parentID: c1.id, title: "c2" })
+      yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: c2.id,
+      })
+      const c3 = yield* sessions.create({ parentID: c2.id, title: "c3" })
+      const c3Assistant = yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: c3.id,
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
 
       const exit = yield* def
         .execute(
@@ -569,21 +669,24 @@ describe("tool.task", () => {
             subagent_type: "general",
           },
           {
-            sessionID: child.id,
-            messageID: nestedAssistant.id,
+            sessionID: c3.id,
+            messageID: c3Assistant.id,
             agent: "general",
             abort: new AbortController().signal,
             extra: { promptOps: stubOps() },
             messages: [],
             metadata: () => Effect.void,
-            ask: () => Effect.sync(() => (asked = true)),
+            ask: () => Effect.void,
           },
         )
         .pipe(Effect.exit)
 
       expect(Exit.isFailure(exit)).toBe(true)
-      expect(asked).toBe(false)
-      expect(yield* sessions.children(child.id)).toHaveLength(0)
+      expect(String(Exit.isFailure(exit) ? Cause.squash(exit.cause) : "")).toContain(
+        "Subagent depth limit reached (3)",
+      )
+      expect(String(Exit.isFailure(exit) ? Cause.squash(exit.cause) : "")).toContain("subagent_depth")
+      expect(yield* sessions.children(c3.id)).toHaveLength(0)
     }),
   )
 
@@ -722,7 +825,54 @@ describe("tool.task", () => {
         .pipe(Effect.exit)
 
       expect(Exit.isFailure(exit)).toBe(true)
+      const message = String(Exit.isFailure(exit) ? Cause.squash(exit.cause) : "")
+      expect(message).toContain("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS")
+      expect(message).toContain("experimental.background_subagents")
     }),
+  )
+
+  it.instance(
+    "honors experimental.background_subagents config without the env var",
+    () =>
+      Effect.gen(function* () {
+        const jobs = yield* BackgroundJob.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+
+        expect(def.jsonSchema).toBeUndefined()
+        expect(def.description).toContain("Background mode")
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+            background: true,
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {
+              promptOps: {
+                ...stubOps(),
+                prompt: () => Effect.never,
+              } satisfies TaskPromptOps,
+            },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        const job = yield* jobs.get(result.metadata.sessionId)
+        expect(result.metadata.background).toBe(true)
+        expect(result.output).toContain(`state="running"`)
+        expect(job?.status).toBe("running")
+      }),
+    { config: { experimental: { background_subagents: true } } },
   )
 
   it.instance("promotes a running foreground task without restarting it", () =>

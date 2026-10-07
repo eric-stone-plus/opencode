@@ -77,7 +77,7 @@ const Agent = Schema.Struct({
   disabled: Schema.optional(Schema.Boolean),
 })
 const Command = Schema.Struct({
-  template: Schema.String,
+  template: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   agent: Schema.optional(Schema.String),
   model: Schema.optional(Selection),

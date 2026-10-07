@@ -82,7 +82,7 @@ export const Info = Schema.Struct({
       "Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.",
   }),
   subagent_depth: Schema.optional(NonNegativeInt).annotate({
-    description: "Maximum subagent nesting depth. Defaults to 1, which prevents subagents from launching subagents.",
+    description: "Maximum subagent nesting depth. Defaults to 3, matching Claude Code's 3 nesting layers.",
   }),
   username: Schema.optional(Schema.String).annotate({
     description: "Custom username to display in conversations instead of system username",
@@ -188,6 +188,10 @@ export const Info = Schema.Struct({
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
       batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
+      background_subagents: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Enable background subagents without the OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS env var. Both act as opt-in; background stays off unless one is set.",
+      }),
       openTelemetry: Schema.optional(Schema.Boolean).annotate({
         description: "Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)",
       }),

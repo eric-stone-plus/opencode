@@ -22,6 +22,7 @@ export interface TaskPromptOps {
 }
 
 const id = "task"
+const DEFAULT_SUBAGENT_DEPTH = 3
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
   "Foreground is the default; use it when you need the result before continuing.",
@@ -95,9 +96,13 @@ export const TaskTool = Tool.define(
     ) {
       const cfg = yield* config.get()
       const runInBackground = params.background === true
-      if (runInBackground && !flags.experimentalBackgroundSubagents) {
+      const backgroundEnabled =
+        flags.experimentalBackgroundSubagents || cfg.experimental?.background_subagents === true
+      if (runInBackground && !backgroundEnabled) {
         return yield* Effect.fail(
-          new Error("Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"),
+          new Error(
+            'Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true or "experimental.background_subagents": true in your config',
+          ),
         )
       }
 
@@ -108,10 +113,10 @@ export const TaskTool = Tool.define(
         depth++
         current = yield* sessions.get(current.parentID)
       }
-      if (depth >= (cfg.subagent_depth ?? 1)) {
+      if (depth >= (cfg.subagent_depth ?? DEFAULT_SUBAGENT_DEPTH)) {
         return yield* Effect.fail(
           new Error(
-            `Subagent depth limit reached (${cfg.subagent_depth ?? 1}). Increase "subagent_depth" to allow nested subagents.`,
+            `Subagent depth limit reached (${cfg.subagent_depth ?? DEFAULT_SUBAGENT_DEPTH}). Increase "subagent_depth" (default ${DEFAULT_SUBAGENT_DEPTH}) in your opencode config to allow nested subagents.`,
           ),
         )
       }
@@ -380,14 +385,18 @@ export const TaskTool = Tool.define(
       )
     })
 
-    return {
-      description: flags.experimentalBackgroundSubagents
-        ? [DESCRIPTION, BACKGROUND_DESCRIPTION].join("\n\n")
-        : DESCRIPTION,
-      parameters: Parameters,
-      jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
-      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
-        run(params, ctx).pipe(Effect.orDie),
-    }
+    return () =>
+      Effect.gen(function* () {
+        const cfg = yield* config.get()
+        const backgroundEnabled =
+          flags.experimentalBackgroundSubagents || cfg.experimental?.background_subagents === true
+        return {
+          description: backgroundEnabled ? [DESCRIPTION, BACKGROUND_DESCRIPTION].join("\n\n") : DESCRIPTION,
+          parameters: Parameters,
+          jsonSchema: backgroundEnabled ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
+          execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
+            run(params, ctx).pipe(Effect.orDie),
+        }
+      })
   }),
 )

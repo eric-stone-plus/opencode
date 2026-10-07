@@ -1903,7 +1903,7 @@ export type Config = {
   server?: ServerConfig
   command?: {
     [key: string]: {
-      template: string
+      template?: string
       description?: string
       agent?: string
       model?: string
@@ -2039,6 +2039,7 @@ export type Config = {
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
+    background_subagents?: boolean
     openTelemetry?: boolean
     primary_tools?: Array<string>
     continue_loop_on_deny?: boolean
@@ -8426,6 +8427,7 @@ export type AppSkillsResponses = {
     description?: string
     location: string
     content: string
+    disableModelInvocation?: boolean
   }>
 }
 
