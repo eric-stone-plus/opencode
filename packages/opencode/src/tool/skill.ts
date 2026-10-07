@@ -2,6 +2,7 @@ import path from "path"
 import { Effect, Schema } from "effect"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Skill } from "../skill"
+import { ConfigMarkdown } from "../config/markdown"
 import * as Tool from "./tool"
 import DESCRIPTION from "./skill.txt"
 
@@ -23,6 +24,8 @@ export const SkillTool = Tool.define(
           const info = yield* skill
             .require(params.name)
             .pipe(Effect.catchTag("Skill.NotFoundError", (error) => Effect.die(new Error(error.message))))
+
+          if (info.disableModelInvocation) return yield* new Skill.ModelInvocationDisabledError({ name: info.name })
 
           yield* ctx.ask({
             permission: "skill",
@@ -46,6 +49,35 @@ export const SkillTool = Tool.define(
               })
             : []
 
+          // The body must be re-read at execute time, not served from the
+          // InstanceState snapshot taken at system-prompt build: plugins
+          // (mpskills-update) refresh vendored SKILL.md files in
+          // `tool.execute.before`, after that snapshot. The description stays
+          // cached — the catalog already shipped in the system prompt. Falls
+          // back to the cached body if the file vanished or no longer parses.
+          // A successful re-read also refreshes the state copy so /commands
+          // (which read `item.content` at template access) serve fresh text.
+          const fresh =
+            info.location === "<built-in>"
+              ? undefined
+              : yield* Effect.tryPromise({
+                  try: () => ConfigMarkdown.parse(info.location),
+                  catch: (error) => error,
+                }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          if (fresh) info.content = fresh.content
+
+          // Stamp the vendored revision so quotes in reports are reproducible:
+          // vendored trees carry a PROVENANCE.md next to the skill folders.
+          const revision = dir
+            ? yield* Effect.tryPromise({
+                try: () => Bun.file(path.join(path.dirname(dir), "PROVENANCE.md")).text(),
+                catch: (error) => error,
+              }).pipe(
+                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.map((text) => text?.match(/^- Revision: `([0-9a-f]+)`/m)?.[1]),
+              )
+            : undefined
+
           // Placed after the loaded body rather than only in the system prompt:
           // several skills instruct the agent to wait for a human, and a distant
           // instruction loses to the one the model just read. Head-truncation of
@@ -59,6 +91,7 @@ export const SkillTool = Tool.define(
               `# Skill: ${info.name}`,
               "",
               info.content.trim(),
+              ...(revision ? ["", `Skill revision: ${revision}`] : []),
               ...(dir
                 ? [
                     "",
@@ -77,6 +110,7 @@ export const SkillTool = Tool.define(
             metadata: {
               name: info.name,
               ...(dir ? { dir } : {}),
+              ...(revision ? { skill_revision: revision } : {}),
             },
           }
         }).pipe(Effect.orDie),

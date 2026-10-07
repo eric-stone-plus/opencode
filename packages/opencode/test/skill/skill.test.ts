@@ -527,6 +527,40 @@ description: A skill in the .opencode/skill directory.
     ),
   )
 
+  it.live("hides disable-model-invocation skills from the model catalog but keeps them for commands", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".opencode", "skill", "user-only", "SKILL.md"),
+              `---
+name: user-only
+description: A skill only the user can invoke.
+disable-model-invocation: true
+---
+
+# User Only
+
+Slash command only.
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const agent = { name: "build", mode: "primary" as const, permission: [], options: {} }
+          expect((yield* skill.available()).find((s) => s.name === "user-only")).toBeUndefined()
+          expect((yield* skill.available(agent)).find((s) => s.name === "user-only")).toBeUndefined()
+          const item = (yield* skill.all()).find((s) => s.name === "user-only")
+          expect(item).toBeDefined()
+          expect(item!.disableModelInvocation).toBe(true)
+          expect(item!.description).toBe("A skill only the user can invoke.")
+          expect((yield* skill.require("user-only")).name).toBe("user-only")
+        }),
+      { git: true },
+    ),
+  )
+
   it.live("properly resolves directories that skills live in", () =>
     provideTmpdirInstance(
       (dir) =>

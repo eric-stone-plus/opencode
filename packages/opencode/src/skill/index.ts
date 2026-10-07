@@ -7,6 +7,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { Global } from "@opencode-ai/core/global"
 import { SkillPlugin } from "@opencode-ai/core/plugin/skill"
+import type { DeepMutable } from "@opencode-ai/core/schema"
 import { Permission } from "@/permission"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@/config/config"
@@ -39,8 +40,9 @@ export const Info = Schema.Struct({
   description: Schema.optional(Schema.String),
   location: Schema.String,
   content: Schema.String,
+  disableModelInvocation: Schema.optional(Schema.Boolean),
 })
-export type Info = Schema.Schema.Type<typeof Info>
+export type Info = DeepMutable<Schema.Schema.Type<typeof Info>>
 
 const Issue = Schema.StructWithRest(
   Schema.Struct({
@@ -50,11 +52,16 @@ const Issue = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.Unknown)],
 )
 
-function isSkillFrontmatter(data: unknown): data is { name: string; description?: string } {
+function isSkillFrontmatter(data: unknown): data is {
+  name: string
+  description?: string
+  "disable-model-invocation"?: boolean
+} {
   return (
     isRecord(data) &&
     typeof data.name === "string" &&
-    (data.description === undefined || typeof data.description === "string")
+    (data.description === undefined || typeof data.description === "string") &&
+    (data["disable-model-invocation"] === undefined || typeof data["disable-model-invocation"] === "boolean")
   )
 }
 
@@ -76,6 +83,17 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Ski
 }) {
   override get message() {
     return `Skill "${this.name}" not found. Available skills: ${this.available.join(", ") || "none"}`
+  }
+}
+
+export class ModelInvocationDisabledError extends Schema.TaggedErrorClass<ModelInvocationDisabledError>()(
+  "Skill.ModelInvocationDisabledError",
+  {
+    name: Schema.String,
+  },
+) {
+  override get message() {
+    return `Skill "${this.name}" is user-invocable only: its frontmatter sets disable-model-invocation, so the model cannot invoke it. Ask the user to run the /${this.name} slash command instead.`
   }
 }
 
@@ -136,6 +154,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
     description: md.data.description,
     location: match,
     content: md.content,
+    disableModelInvocation: md.data["disable-model-invocation"],
   }
 })
 
@@ -309,7 +328,11 @@ const layer = Layer.effect(
 
     const available = Effect.fn("Skill.available")(function* (agent?: Agent.Info) {
       const s = yield* InstanceState.get(state)
-      const list = Object.values(s.skills).toSorted((a, b) => a.name.localeCompare(b.name))
+      // disable-model-invocation skills stay out of the model-facing catalog:
+      // they are user-invocable only (slash commands via Skill.all()).
+      const list = Object.values(s.skills)
+        .filter((skill) => !skill.disableModelInvocation)
+        .toSorted((a, b) => a.name.localeCompare(b.name))
       if (!agent) return list
       return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
     })
