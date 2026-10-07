@@ -140,7 +140,7 @@ a *function*).
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
-| 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts}` | copies, as-is |
+| 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts,open-code-review.ts}` | copies, as-is |
 | 8 | `agent/` goal file, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent). There is no `command/goal.md`: the `/goal` command was removed |
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
@@ -306,6 +306,15 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   `OPENCODE_FORK_REPO` (default `${HOME}/Documents/Development/private/agent-design/projects/opencode`)
   and reuses that checkout's configured `http.proxy` for the fetch, so a
   censored network needs no extra setup beyond the proxy the fork already has.
+* **`plugin/open-code-review.ts`** — shipped as-is from alibaba/open-code-review
+  (single-file dual-form plugin; header carries the upstream SHA). Registers
+  `ocr_review`/`ocr_health` tools + `/ocr-review`/`/ocr-health` commands and
+  spawns `ocr` from PATH, so a target seat must provision the `ocr` CLI
+  (`npm install -g @alibaba-group/open-code-review`, its `~/.opencodereview/`
+  provider block, and the api_key_cmd credential helper) separately — the
+  bundle deliberately ships no ocr config. Its `@opencode-ai/plugin` runtime
+  import is converged by the fork's own config loader (background npm install
+  into the config dir); upstream's README calls that dependency out explicitly.
 * **Egress conditions** — the wrapper assumes mainland-CN reachability
   quirks + a local causeway proxy chain (18880 → 17878). On a box without
   causeway it degrades to direct exec (`command opencode`) after failed probes.
@@ -351,6 +360,7 @@ bootstrap/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── mpskills-update.ts        as-is (self-contained; fetches + vendors on first skill call)
 │   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
+│   ├── open-code-review.ts       ocr tools (ocr_review/ocr_health) + /ocr-review,/ocr-health (2026-10-07)
 ├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
@@ -368,10 +378,13 @@ bootstrap/
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
   against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
   the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
-* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts}` and
-  `skills-extra/` are byte-copies of the machine-A files named above.
+* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts,open-code-review.ts}` and
+  `skills-extra/` are the portable source of truth: install.sh copies them
+  bundle → `~/.config/agent-hooks/`, `~/.config/opencode/plugin/` and
+  `~/.config/opencode/skills/`. Edits land in the bundle first and are
+  redeployed to the seat copies, which must stay byte-identical afterwards
+  (verify.sh WARNs when the installed copies drift from the bundle).
   `autonomy.md` and `AGENTS.goal.md` are byte-copies of
-  `dotfiles/opencode/{autonomy.md,AGENTS.goal.md}` (verify.sh WARNs when the
-  installed copies drift from the bundle).
+  `dotfiles/opencode/{autonomy.md,AGENTS.goal.md}`.
 * No secret values were copied into this bundle (verified: auth.json carries
   placeholders; environment.d templates carry names only).
