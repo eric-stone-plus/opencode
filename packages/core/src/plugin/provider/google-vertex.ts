@@ -1,20 +1,32 @@
-import { Effect } from "effect"
+import { Effect, Option, Schema, Stream } from "effect"
+import path from "node:path"
 import { define } from "@opencode/plugin/effect/plugin"
+import { FSUtil } from "@opencode/util/fs-util"
+import { Global } from "@opencode/util/global"
+import { Bus } from "../../bus.js"
+import { Credential } from "../../credential.js"
 import { Provider } from "../../provider.js"
+import { configuredSettings } from "./configured.js"
 
-function resolveProject(options: Record<string, any>) {
+const ADC_METHOD = "google-adc"
+
+const decodeADCFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ quota_project_id: Schema.optional(Schema.String) })),
+)
+
+function resolveProject(options: Readonly<Record<string, unknown>>) {
   // models.dev advertises GOOGLE_VERTEX_PROJECT for Vertex, while Google SDKs
   // and ADC examples commonly use the broader Google Cloud project aliases.
-  return (
+  const project =
     options.project ??
     process.env.GOOGLE_VERTEX_PROJECT ??
     process.env.GOOGLE_CLOUD_PROJECT ??
     process.env.GCP_PROJECT ??
     process.env.GCLOUD_PROJECT
-  )
+  return typeof project === "string" ? project : undefined
 }
 
-function resolveLocation(options: Record<string, any>) {
+function resolveLocation(options: Readonly<Record<string, unknown>>) {
   return (
     options.location ??
     process.env.GOOGLE_VERTEX_LOCATION ??
@@ -41,6 +53,83 @@ function replaceVertexVars(value: string, project: string | undefined, location:
 export const GoogleVertexPlugin = define({
   id: "opencode.provider.google.vertex",
   effect: Effect.fn(function* (ctx) {
+    const fs = yield* FSUtil.Service
+    const credentials = yield* Credential.Service
+    const bus = yield* Bus.Service
+    const read = (file: string) => fs.readFileStringSafe(file).pipe(Effect.orElseSucceed(() => undefined))
+    // Same lookup as gcloud itself. Only project IDs are read; nothing here contacts Google.
+    const gcloud =
+      process.env.CLOUDSDK_CONFIG ??
+      (process.platform === "win32" && process.env.APPDATA
+        ? path.join(process.env.APPDATA, "gcloud")
+        : path.join(Global.Path.home, ".config", "gcloud"))
+    const active = `config_${(yield* read(path.join(gcloud, "active_config")))?.trim() || "default"}`
+    const configs = (yield* fs
+      .readDirectory(path.join(gcloud, "configurations"))
+      .pipe(Effect.orElseSucceed((): string[] => [])))
+      .filter((name) => name.startsWith("config_"))
+      .toSorted((a, b) => Number(b === active) - Number(a === active) || a.localeCompare(b))
+    const contents = yield* Effect.forEach(configs, (name) => read(path.join(gcloud, "configurations", name)))
+    const adcFile = yield* read(path.join(gcloud, "application_default_credentials.json"))
+    const projects = Array.from(
+      new Set(
+        [
+          resolveProject((yield* configuredSettings(Provider.ID.googleVertex)) ?? {}),
+          ...contents.map((content) => content?.match(/^project\s*=\s*(\S+)/m)?.[1]),
+          Option.getOrUndefined(decodeADCFile(adcFile ?? ""))?.quota_project_id,
+        ].filter((project): project is string => Boolean(project)),
+      ),
+    )
+
+    const load = Effect.fn("GoogleVertexPlugin.load")(function* () {
+      const connection = yield* ctx.integration.connection.active(Provider.ID.googleVertex)
+      // Reads the stored value rather than resolving the connection, so startup never refreshes anything.
+      const stored =
+        connection?.type === "credential" ? yield* credentials.get(Credential.ID.make(connection.id)) : undefined
+      if (stored?.value.type !== "external" || stored.value.methodID !== ADC_METHOD) return {}
+      // `authMode` keeps an ambient GOOGLE_VERTEX_API_KEY from replacing the selected credentials.
+      return { project: stored.value.metadata?.project, authMode: "adc" }
+    })
+    const selected = { settings: yield* load() }
+    const settingsFor = (provider: {
+      readonly id: string
+      readonly integrationID?: string
+      readonly settings?: Readonly<Record<string, unknown>>
+    }) => ({
+      ...provider.settings,
+      ...((provider.integrationID ?? provider.id) === Provider.ID.googleVertex ? selected.settings : {}),
+    })
+
+    yield* ctx.integration.transform((editor) => {
+      editor.method.update({
+        integrationID: Provider.ID.googleVertex,
+        method: {
+          id: ADC_METHOD,
+          type: "external",
+          label: "Google Cloud credentials (gcloud auth or environment)",
+          form: [
+            {
+              key: "project",
+              type: "string",
+              title: "Google Cloud project",
+              description: [
+                projects.length
+                  ? `Found ${projects.length} project${projects.length === 1 ? "" : "s"} in your gcloud configuration on the server.`
+                  : "No projects found in your gcloud configuration on the server.",
+                "Sign in with `gcloud auth application-default login`, GOOGLE_APPLICATION_CREDENTIALS, or the machine's service account.",
+              ].join(" "),
+              required: true,
+              minLength: 1,
+              pattern: "\\S",
+              placeholder: "Project ID",
+              custom: true,
+              default: projects[0],
+              options: projects.map((project) => ({ value: project, label: project })),
+            },
+          ],
+        },
+      })
+    })
     yield* ctx.provider.transform((evt) => {
       for (const item of evt.list()) {
         if (
@@ -51,14 +140,15 @@ export const GoogleVertexPlugin = define({
           )
         )
           continue
-        const project = resolveProject(item.provider.settings ?? {})
-        const location = String(resolveLocation(item.provider.settings ?? {}))
+        const settings = settingsFor(item.provider)
+        const project = resolveProject(settings)
+        const location = String(resolveLocation(settings))
         evt.update(item.provider.id, (provider) => {
           // Vertex authenticates through ADC rather than a key credential, so a
           // resolvable project is what makes the provider usable.
           if (project && provider.activation === "auto") provider.activation = "enabled"
           provider.settings = {
-            ...provider.settings,
+            ...settingsFor(provider),
             ...(project ? { project } : {}),
             location,
             ...(typeof provider.settings?.baseURL === "string"
@@ -78,8 +168,9 @@ export const GoogleVertexPlugin = define({
           )
         )
           continue
-        const project = resolveProject(item.provider.settings ?? {})
-        const location = String(resolveLocation(item.provider.settings ?? {}))
+        const settings = settingsFor(item.provider)
+        const project = resolveProject(settings)
+        const location = String(resolveLocation(settings))
         for (const model of models.list(item.provider.id)) {
           if (typeof model.settings?.baseURL !== "string") continue
           models.update(item.provider.id, model.id, (draft) => {
@@ -91,6 +182,18 @@ export const GoogleVertexPlugin = define({
         }
       }
     })
+    yield* bus.subscribe([Credential.Event.Updated, Credential.Event.Switched]).pipe(
+      Stream.runForEach(() =>
+        Effect.gen(function* () {
+          const next = yield* load()
+          if (JSON.stringify(next) === JSON.stringify(selected.settings)) return
+          selected.settings = next
+          yield* ctx.provider.reload()
+          yield* ctx.model.reload()
+        }),
+      ),
+      Effect.forkScoped({ startImmediately: true }),
+    )
     yield* ctx.aisdk.hook(
       "language",
       Effect.fn(function* (evt) {

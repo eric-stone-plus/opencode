@@ -22,6 +22,8 @@ export type Config = RouteDefaultsInput &
     readonly baseURL?: string
     readonly location?: string
     readonly project?: string
+    /** `adc` ignores the `GOOGLE_VERTEX_API_KEY` fallback and authenticates with Application Default Credentials. */
+    readonly authMode?: "adc"
     readonly providerOptions?: GeminiProviderOptionsInput
   }
 
@@ -34,6 +36,7 @@ export type Settings = ProviderPackage.Settings &
     readonly baseURL?: string
     readonly location?: string
     readonly project?: string
+    readonly authMode?: "adc"
   }
 
 const fromRequest = Effect.fn("GoogleVertex.fromRequest")(function* (request: LLMRequest) {
@@ -79,12 +82,13 @@ const configuredRoute = (input: Config, modelID: string | ModelID) => {
     accessToken: _accessToken,
     apiKey: _apiKey,
     auth: _auth,
+    authMode,
     baseURL,
     location: inputLocation,
     project: inputProject,
     ...rest
   } = input
-  const apiKey = GoogleVertexShared.apiKey(input)
+  const apiKey = authMode === "adc" ? undefined : GoogleVertexShared.apiKey(input)
   const endpointModel = String(modelID).startsWith("endpoints/")
   if (apiKey !== undefined && endpointModel)
     throw new ProviderConfigurationError({
@@ -120,15 +124,17 @@ export const provider = {
 }
 export const model: ProviderPackage.Definition<Settings, GeminiProviderOptionsInput>["model"] = (
   modelID,
-  { accessToken, apiKey, baseURL, body, headers, location, project, ...providerOptions },
+  { accessToken, apiKey, authMode, baseURL, body, headers, location, project, ...providerOptions },
 ) => {
   if (apiKey !== undefined && accessToken !== undefined)
     throw new ProviderConfigurationError({
       provider: id,
       message: "Google Vertex apiKey cannot be combined with accessToken or auth",
     })
+  if (apiKey !== undefined && authMode !== undefined)
+    throw new ProviderConfigurationError({ provider: id, message: "Google Vertex apiKey cannot be combined with authMode" })
   return configure({
-    ...(apiKey === undefined ? { accessToken: accessToken } : { apiKey: apiKey }),
+    ...(apiKey === undefined ? { accessToken: accessToken, authMode } : { apiKey: apiKey }),
     baseURL,
     headers: headers === undefined ? undefined : { ...headers },
     http: body === undefined ? undefined : { body: { ...body } },
