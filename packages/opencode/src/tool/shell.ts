@@ -2,6 +2,7 @@ import { Effect, Fiber, Schedule, Scope, Semaphore, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
+import { Agent } from "@/agent/agent"
 import path from "path"
 import { containsPath, type InstanceContext } from "../project/instance-context"
 import { InstanceState } from "@/effect/instance-state"
@@ -86,6 +87,7 @@ type Scan = {
 type Chunk = {
   text: string
   size: number
+  startsMidLine: boolean
 }
 
 const resolveWasm = (asset: string) => {
@@ -229,38 +231,6 @@ function preview(text: string) {
   return "...\n\n" + text.slice(-MAX_METADATA_LENGTH)
 }
 
-function tail(text: string, maxLines: number, maxBytes: number) {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines && Buffer.byteLength(text, "utf-8") <= maxBytes) {
-    return {
-      text,
-      cut: false,
-    }
-  }
-
-  const out: string[] = []
-  let bytes = 0
-  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) {
-      if (out.length === 0) {
-        const buf = Buffer.from(lines[i], "utf-8")
-        let start = buf.length - maxBytes
-        if (start < 0) start = 0
-        while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++
-        out.unshift(buf.subarray(start).toString("utf-8"))
-      }
-      break
-    }
-    out.unshift(lines[i])
-    bytes += size
-  }
-  return {
-    text: out.join("\n"),
-    cut: true,
-  }
-}
-
 export function timeoutLimits(flags: { bashDefaultTimeoutMs?: number; bashMaxTimeoutMs?: number }) {
   const max = Math.min(
     flags.bashMaxTimeoutMs ?? Math.max(DEFAULT_MAX_TIMEOUT_MS, flags.bashDefaultTimeoutMs ?? 0),
@@ -387,6 +357,7 @@ export const ShellTool = Tool.define(
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
     const events = yield* EventV2Bridge.Service
+    const agents = yield* Agent.Service
     const limitsMs = timeoutLimits(flags)
     const defaultTimeoutMs = limitsMs.default
     const maxTimeoutMs = limitsMs.max
@@ -511,11 +482,22 @@ export const ShellTool = Tool.define(
       ctx: Tool.Context,
     ) {
       const limits = yield* trunc.limits()
-      const keep = limits.maxBytes * 2
+      // Retain the true head and the true tail of the stream so the final window can
+      // show both ends of the output. Each buffer holds up to maxBytes (chunk
+      // granularity can overshoot); once both are full the middle is dropped here and
+      // only ever lives in the spill file the sink streams to.
+      const headKeep = limits.maxBytes
+      const tailKeep = limits.maxBytes
       let full = ""
       let last = ""
-      const list: Chunk[] = []
-      let used = 0
+      const headChunks: Chunk[] = []
+      const tailChunks: Chunk[] = []
+      let headUsed = 0
+      let tailUsed = 0
+      let totalBytes = 0
+      let totalBreaks = 0
+      let dropped = false
+      let prevEndedWithNewline = true
       let file = ""
       let sink: ReturnType<typeof createWriteStream> | undefined
       let cut = false
@@ -579,14 +561,25 @@ export const ShellTool = Tool.define(
           const reader = yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
-              list.push({ text: chunk, size })
-              used += size
-              while (used > keep && list.length > 1) {
-                const item = list.shift()
-                if (!item) break
-                used -= item.size
-                cut = true
+              totalBytes += size
+              totalBreaks += chunk.split("\n").length - 1
+              const aligned = prevEndedWithNewline
+
+              if (headUsed < headKeep) {
+                headChunks.push({ text: chunk, size, startsMidLine: !aligned })
+                headUsed += size
+              } else {
+                tailChunks.push({ text: chunk, size, startsMidLine: !aligned })
+                tailUsed += size
+                while (tailUsed > tailKeep && tailChunks.length > 1) {
+                  const item = tailChunks.shift()
+                  if (!item) break
+                  tailUsed -= item.size
+                  dropped = true
+                  cut = true
+                }
               }
+              prevEndedWithNewline = chunk.endsWith("\n")
 
               last = preview(last + chunk)
 
@@ -595,6 +588,9 @@ export const ShellTool = Tool.define(
               } else {
                 full += chunk
                 if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
+                  // Spill streams the full output here; after abort/timeout the
+                  // reader may never see the rest of the pipe (join is time-boxed),
+                  // so this file can be a prefix of the true output.
                   return trunc.write(full).pipe(
                     Effect.andThen((next) =>
                       Effect.sync(() => {
@@ -657,19 +653,60 @@ export const ShellTool = Tool.define(
         )
       }
       if (aborted) meta.push("User aborted the command")
-      const raw = list.map((item) => item.text).join("")
-      const end = tail(raw, limits.maxLines, limits.maxBytes)
-      if (end.cut) cut = true
-      if (!file && end.cut) {
+      const headText = headChunks.map((item) => item.text).join("")
+      const tailText = tailChunks.map((item) => item.text).join("")
+      // Derived from the retained first tail chunk (not captured at first push):
+      // tail trims can shift that chunk away, leaving one that starts mid-line.
+      const tailStartsMidLine = tailChunks[0]?.startsMidLine ?? false
+      // A dropped middle implies the stream already spilled the full output to `file`
+      // (the sink opens before retention trims can fire), so the end-of-run write below
+      // only ever runs on the complete retained text.
+      const raw = headText + tailText
+      const totalLines = totalBreaks + 1
+      // Fits-check parity with Truncate.output: within both budgets the retained text
+      // is the whole output and is returned verbatim — windowing would still cut
+      // (head/tail only share 70/30 of the budgets) and falsely mark it truncated.
+      const fits = totalLines <= limits.maxLines && totalBytes <= limits.maxBytes
+      const win = fits
+        ? {
+            head: { text: raw, lines: totalLines, bytes: totalBytes },
+            tail: { text: "", lines: 0, bytes: 0 },
+            elidedLines: 0,
+            elidedBytes: 0,
+            cut: false,
+          }
+        : dropped
+          ? Truncate.windowParts(
+              headText,
+              tailText,
+              { lines: totalLines, bytes: totalBytes },
+              limits.maxLines,
+              limits.maxBytes,
+              tailStartsMidLine,
+            )
+          : Truncate.windowText(raw, limits.maxLines, limits.maxBytes)
+      if (win.cut) cut = true
+      // Abort/timeout caveat: the reader join above is time-boxed (2s), so output
+      // still held in a pipe by a detached descendant never reaches `file` via the
+      // sink. The marker then reports the spill as partial (aborted || expired).
+      if (cut && !file) {
         file = yield* trunc.write(raw)
       }
 
-      let output = end.text
-      if (!output) output = "(no output)"
-
-      if (cut && file) {
-        output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
+      let output: string
+      if (!cut) {
+        output = raw
+      } else {
+        const block = Truncate.marker({
+          elidedLines: win.elidedLines,
+          elidedBytes: win.elidedBytes,
+          outputPath: file,
+          agent: yield* agents.get(ctx.agent),
+          partial: aborted || expired,
+        })
+        output = [win.head.text, block, win.tail.text].filter((part) => part.length > 0).join("\n\n")
       }
+      if (!output) output = "(no output)"
 
       if (meta.length > 0) {
         output += "\n\n<shell_metadata>\n" + meta.join("\n") + "\n</shell_metadata>"

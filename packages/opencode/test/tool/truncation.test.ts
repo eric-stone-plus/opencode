@@ -34,7 +34,7 @@ describe("Truncate", () => {
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("truncated...")
+        expect(result.content).toContain("was truncated: elided")
         if (result.truncated) expect(result.outputPath).toBeDefined()
       }),
     )
@@ -57,7 +57,41 @@ describe("Truncate", () => {
         const result = yield* svc.output(lines, { maxLines: 10 })
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("...90 lines truncated...")
+        expect(result.content).toContain("elided 90 lines")
+      }),
+    )
+
+    it.live("keeps head and tail windows with an elision marker between them", () =>
+      Effect.gen(function* () {
+        const svc = yield* Truncate.Service
+        const lines = Array.from({ length: 20 }, (_, i) => `line${String(i).padStart(2, "0")}`).join("\n")
+        const result = yield* svc.output(lines, { maxLines: 10 })
+
+        expect(result.truncated).toBe(true)
+        const content = result.content
+        expect(content).toContain("line00")
+        expect(content).toContain("line06")
+        expect(content).toContain("line17")
+        expect(content).toContain("line19")
+        expect(content).not.toContain("line07")
+        expect(content).not.toContain("line16")
+        expect(content).toContain("elided 10 lines / 71 bytes")
+        expect(content.indexOf("line06")).toBeLessThan(content.indexOf("was truncated"))
+        expect(content.indexOf("was truncated")).toBeLessThan(content.indexOf("line17"))
+      }),
+    )
+
+    it.live("byte-limit windowing keeps head and tail with exact counts", () =>
+      Effect.gen(function* () {
+        const svc = yield* Truncate.Service
+        const line = "a".repeat(30)
+        const content = Array.from({ length: 5 }, () => line).join("\n")
+        const result = yield* svc.output(content, { maxBytes: 100 })
+
+        expect(result.truncated).toBe(true)
+        expect(result.content).toContain(`${line}\n${line}`)
+        expect(result.content.endsWith(line)).toBe(true)
+        expect(result.content).toContain("elided 2 lines / 63 bytes")
       }),
     )
 
@@ -68,21 +102,41 @@ describe("Truncate", () => {
         const result = yield* svc.output(content, { maxBytes: 100 })
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("truncated...")
+        expect(result.content).toContain("elided 1 line / 900 bytes")
+        expect(result.content).toContain("a".repeat(70))
+        expect(result.content.endsWith("a".repeat(30))).toBe(true)
       }),
     )
 
-    it.live("truncates from head by default", () =>
+    it.live("marker states elided counts, spill path, and a re-read recipe", () =>
+      Effect.gen(function* () {
+        const svc = yield* Truncate.Service
+        const lines = Array.from({ length: 20 }, (_, i) => `line${String(i).padStart(2, "0")}`).join("\n")
+        const result = yield* svc.output(lines, { maxLines: 10 })
+
+        expect(result.truncated).toBe(true)
+        const content = result.content
+        expect(content).toContain("elided 10 lines / 71 bytes")
+        expect(content).toContain("offset/limit")
+        expect(content).toContain("Grep")
+        expect(content).toContain("Read")
+        if (!result.truncated) throw new Error("expected truncated")
+        expect(content).toContain(result.outputPath)
+      }),
+    )
+
+    it.live("truncates from head when direction is head", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n")
-        const result = yield* svc.output(lines, { maxLines: 3 })
+        const result = yield* svc.output(lines, { maxLines: 3, direction: "head" })
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("line0")
         expect(result.content).toContain("line1")
         expect(result.content).toContain("line2")
         expect(result.content).not.toContain("line9")
+        expect(result.content).toContain("elided 7 lines / 42 bytes")
       }),
     )
 
@@ -132,7 +186,7 @@ describe("Truncate", () => {
           const content = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
           const result = yield* (yield* Truncate.Service).output(content)
           expect(result.truncated).toBe(true)
-          expect(result.content).toContain("...90 lines truncated...")
+          expect(result.content).toContain("elided 90 lines")
         }),
       )
 
@@ -143,7 +197,7 @@ describe("Truncate", () => {
           const content = "a".repeat(1000)
           const result = yield* (yield* Truncate.Service).output(content)
           expect(result.truncated).toBe(true)
-          expect(result.content).toContain("bytes truncated...")
+          expect(result.content).toContain("bytes")
         }),
       )
 
@@ -168,7 +222,7 @@ describe("Truncate", () => {
         const result = yield* svc.output(content)
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("bytes truncated...")
+        expect(result.content).toMatch(/elided \d+ lines? \/ \d+ bytes/)
         expect(Buffer.byteLength(content, "utf-8")).toBeGreaterThan(Truncate.MAX_BYTES)
       }),
     )

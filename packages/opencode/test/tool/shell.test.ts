@@ -6,6 +6,8 @@ import type * as Scope from "effect/Scope"
 import os from "os"
 import path from "path"
 import { Config } from "@/config/config"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
+import { TestConfig } from "../fixture/config"
 import { Shell } from "@opencode-ai/core/shell"
 import { ShellTool, timeoutLimits, DEFAULT_MAX_TIMEOUT_MS } from "../../src/tool/shell"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -39,21 +41,28 @@ const eventsLayer = Layer.succeed(
   } as unknown as EventV2.Interface),
 )
 
+const shellNodes = [
+  CrossSpawnSpawner.node,
+  FSUtil.node,
+  Plugin.node,
+  Truncate.node,
+  Config.node,
+  Agent.node,
+  RuntimeFlags.node,
+] as const
 const shellLayer = Layer.mergeAll(
   eventsLayer,
-  LayerNode.compile(
-    LayerNode.group([
-      CrossSpawnSpawner.node,
-      FSUtil.node,
-      Plugin.node,
-      Truncate.node,
-      Config.node,
-      Agent.node,
-      RuntimeFlags.node,
-    ]),
-  ),
+  LayerNode.compile(LayerNode.group([...shellNodes])),
   testInstanceStoreLayer,
 )
+const shellLayerWith = (cfg: ConfigV1.Info) =>
+  Layer.mergeAll(
+    eventsLayer,
+    LayerNode.compile(LayerNode.group([...shellNodes]), [
+      [Config.node, TestConfig.layer({ get: () => Effect.succeed(cfg) })],
+    ]),
+    testInstanceStoreLayer,
+  )
 const it = testEffect(shellLayer)
 type ShellTestServices =
   | (typeof shellLayer extends Layer.Layer<infer ROut, infer _E, infer _RIn> ? ROut : never)
@@ -1319,7 +1328,7 @@ describe("tool.shell truncation", () => {
           command: fill("lines", lineCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
+        expect(result.output).toMatch(/output was truncated/)
         expect(result.output).toMatch(/Full output saved to:\s+\S+/)
       }),
     ),
@@ -1334,8 +1343,47 @@ describe("tool.shell truncation", () => {
           command: fill("bytes", byteCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
+        expect(result.output).toMatch(/output was truncated/)
         expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+      }),
+    ),
+  )
+
+  it.live("keeps head and tail of line output with an elision marker", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        // console.log leaves a trailing newline, so the output has lineCount + 1
+        // lines per split semantics and the elided count accounts for it.
+        const lineCount = Truncate.MAX_LINES + 500
+        const result = yield* run({
+          command: fill("lines", lineCount),
+        })
+        mustTruncate(result)
+        expect(result.output).toContain("1\n2\n3\n")
+        expect(result.output).toContain(`${lineCount - 1}\n${lineCount}`)
+        expect(result.output).not.toContain("\n1600\n")
+        expect(result.output).toContain(`elided ${lineCount + 1 - Truncate.MAX_LINES} lines`)
+      }),
+    ),
+  )
+
+  it.live("keeps the true head of output larger than the streaming window", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const lineCount = 30_000
+        const result = yield* run({
+          command: fill("lines", lineCount),
+        })
+        mustTruncate(result)
+        expect(result.output).toContain("1\n2\n3\n")
+        expect(result.output).toContain(`${lineCount - 1}\n${lineCount}`)
+        expect(result.output).toContain(`elided ${lineCount + 1 - Truncate.MAX_LINES} lines`)
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+        const saved = yield* (yield* FSUtil.Service).readFileString(filepath!)
+        expect(saved.trim().split(/\r?\n/).length).toBe(lineCount)
       }),
     ),
   )
@@ -1373,5 +1421,137 @@ describe("tool.shell truncation", () => {
         expect(lines[lineCount - 1]).toBe(String(lineCount))
       }),
     ),
+  )
+
+  // Repro: with max_bytes=20 the three timed writes land as chunks
+  // ["A"*19 + "\n", "B"*20, "BB\n"]. The middle chunk is trimmed out of the tail
+  // window, so the retained tail ("BB\n") starts mid-line — but the flag captured at
+  // first-tail-push (when the trimmed chunk arrived line-aligned) stays false and the
+  // marker undercounts the elided lines by one ("elided 1 line", truth 2).
+  const midlineTailIt = testEffect(shellLayerWith({ tool_output: { max_bytes: 20, max_lines: 1000 } }))
+  midlineTailIt.live(
+    "counts a trimmed mid-line tail as a partial line",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const code =
+            "var w=process.stdout.write.bind(process.stdout),A=String.fromCharCode(65),B=String.fromCharCode(66),N=String.fromCharCode(10);" +
+            "w(A.repeat(19)+N);setTimeout(function(){w(B.repeat(20));setTimeout(function(){w(B.repeat(2)+N)},300)},300)"
+          const result = yield* run({
+            command: `${bin} -e ${evalarg(code)}`,
+          })
+          mustTruncate(result)
+          expect(result.output).toContain("elided 2 lines")
+          expect(result.output).not.toContain("elided 1 line")
+        }),
+      ),
+    30_000,
+  )
+
+  // Repro: 2 lines totaling 51181 bytes (≤ 51200 default max_bytes, ≤ 2000
+  // lines) fit both budgets, but the shell's final assembly windows unconditionally.
+  // windowText gives the head only 70% of the byte budget (35840), byte-cuts the tail
+  // to 15360, and marks the run truncated with an elided line — despite the full
+  // output fitting. Truncate.output has a fits gate for this; shell must match.
+  it.live("passes output within both budgets through unchanged", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const code =
+          "process.stdout.write(String.fromCharCode(97).repeat(25590)+String.fromCharCode(10)+String.fromCharCode(98).repeat(25590))"
+        const result = yield* run({
+          command: `${bin} -e ${evalarg(code)}`,
+        })
+        expect((result.metadata as { truncated?: boolean }).truncated).toBe(false)
+        expect(result.output).toBe("a".repeat(25590) + "\n" + "b".repeat(25590))
+        expect(result.output).not.toContain("was truncated")
+      }),
+    ),
+    30_000,
+  )
+
+  // On abort/timeout the reader join is time-boxed (2s) and a detached descendant
+  // can keep the pipe open past it, so output still in the pipe never reaches the
+  // spill file. The marker must not claim "Full output saved to" in that case.
+  it.live("marks the spill partial when a truncated run times out", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const result = yield* run({
+          command: `${fill("bytes", Truncate.MAX_BYTES + 10000)} && sleep 60`,
+          timeout: 1500,
+        })
+        mustTruncate(result)
+        expect(result.output).toContain("Partial output saved to:")
+        expect(result.output).not.toContain("Full output saved to:")
+        expect(result.output).toContain("exceeding timeout")
+      }),
+    ),
+    30_000,
+  )
+
+  it.live("marks the spill partial when a truncated run is aborted", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const controller = new AbortController()
+        const result = yield* run(
+          {
+            command: `${fill("bytes", Truncate.MAX_BYTES + 10000)} && sleep 60`,
+          },
+          {
+            ...ctx,
+            abort: controller.signal,
+            metadata: (input) =>
+              Effect.sync(() => {
+                const output = (input.metadata as { output?: string })?.output
+                if (output && output.length > 1000 && !controller.signal.aborted) controller.abort()
+              }),
+          },
+        )
+        mustTruncate(result)
+        expect(result.output).toContain("Partial output saved to:")
+        expect(result.output).not.toContain("Full output saved to:")
+        expect(result.output).toContain("User aborted the command")
+      }),
+    ),
+    30_000,
+  )
+
+  // Delegate-recipe parity: the shell marker used to hardcode delegate:false while
+  // Truncate.output derived it from the agent. Both now derive from the same helper.
+  it.live("suggests Task tool when the agent has task permission", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const result = yield* run({
+          command: fill("lines", Truncate.MAX_LINES + 500),
+        })
+        mustTruncate(result)
+        expect(result.output).toContain("Task tool")
+      }),
+    ),
+    30_000,
+  )
+
+  const denyTaskIt = testEffect(
+    shellLayerWith({ tool_output: { max_lines: Truncate.MAX_LINES }, agent: { build: { permission: { task: "deny" } } } }),
+  )
+  denyTaskIt.live(
+    "omits Task tool hint when the agent lacks task permission",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const result = yield* run({
+            command: fill("lines", Truncate.MAX_LINES + 500),
+          })
+          mustTruncate(result)
+          expect(result.output).not.toContain("Task tool")
+          expect(result.output).toContain("offset/limit")
+        }),
+      ),
+    30_000,
   )
 })
