@@ -8,7 +8,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { expect } from "bun:test"
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer } from "effect"
 import path from "path"
-import { fileURLToPath } from "url"
+import { fileURLToPath, pathToFileURL } from "url"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
@@ -641,6 +641,57 @@ it.instance("legacy prompt emits message events without session.next events", ()
     expect(seen).toContain(MessageV2.Event.Updated.type)
     expect(seen).toContain(MessageV2.Event.PartUpdated.type)
     expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
+  }),
+)
+
+it.instance("chat.message hook parts with invalid ids are normalized on admission", () =>
+  Effect.gen(function* () {
+    const { directory: dir } = yield* TestInstance
+    const pluginFile = path.join(dir, "bad-id-hook.ts")
+    yield* writeText(
+      pluginFile,
+      [
+        "export default async () => ({",
+        '  "chat.message": (input, output) => {',
+        "    output.parts.push({",
+        "      id: crypto.randomUUID(),",
+        "      sessionID: input.sessionID,",
+        '      messageID: input.messageID ?? "",',
+        '      type: "text",',
+        '      text: "hook-hint-marker",',
+        "      synthetic: true,",
+        "    })",
+        "  },",
+        "})",
+        "",
+      ].join("\n"),
+    )
+    yield* writeConfig(dir, { plugin: [pathToFileURL(pluginFile).href] })
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Hook ids",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const admitted = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    const hint = admitted.parts.find((part) => part.type === "text" && part.text === "hook-hint-marker")
+    expect(hint).toBeDefined()
+    if (!hint) return
+    expect(hint.id.startsWith("prt")).toBe(true)
+    expect(hint.messageID).toBe(admitted.info.id)
+    expect(() =>
+      (SessionV1.Event.PartUpdated.data as { make: (input: unknown) => unknown }).make({
+        sessionID: chat.id,
+        part: hint,
+        time: Date.now(),
+      }),
+    ).not.toThrow()
   }),
 )
 

@@ -1118,6 +1118,16 @@ const layer = Layer.effect(
         { message: info, parts: resolvedParts },
       )
 
+      // Parts pushed by chat.message hooks bypass `assign` above. A hook id
+      // that is not a PartID/MessageID/SessionID throws SchemaError at
+      // ["part"]["id"] inside the durable-event encode of updatePart and
+      // kills the whole prompt, so normalize what the hook supplied here.
+      for (const part of resolvedParts) {
+        if (!part.id?.startsWith("prt")) part.id = PartID.ascending()
+        if (!part.messageID?.startsWith("msg")) part.messageID = info.id
+        if (!part.sessionID?.startsWith("ses")) part.sessionID = input.sessionID
+      }
+
       const parts = yield* Effect.forEach(resolvedParts, (part) =>
         part.type === "file" && part.mime.startsWith("image/")
           ? image.normalize(part).pipe(
