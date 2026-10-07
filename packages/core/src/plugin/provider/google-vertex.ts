@@ -99,8 +99,7 @@ export const GoogleVertexPlugin = define({
       const stored =
         connection?.type === "credential" ? yield* credentials.get(Credential.ID.make(connection.id)) : undefined
       if (stored?.value.type !== "external" || stored.value.methodID !== ADC_METHOD) return {}
-      // `authMode` keeps an ambient GOOGLE_VERTEX_API_KEY from replacing the selected credentials.
-      return { project: stored.value.metadata?.project, location: stored.value.metadata?.location, authMode: "adc" }
+      return { project: stored.value.metadata?.project, location: stored.value.metadata?.location }
     })
     const selected = { settings: yield* load() }
     const settingsFor = (provider: {
