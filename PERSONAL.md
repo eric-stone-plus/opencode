@@ -11,7 +11,6 @@ Owner always delegates git/build/sync to an agent. Follow this file.
 |------|--------|
 | Fork (only branch) | `origin` → `https://github.com/eric-stone-plus/opencode.git` **`main`** — public fork of `anomalyco/opencode` since 2026-10-08 |
 | Official upstream | `upstream` → `https://github.com/anomalyco/opencode.git` **`dev`** |
-| Pre-public backup (frozen) | `private` → `https://github.com/eric-stone-plus/opencode-private.git` (not auto-synced) |
 | Runtime binary | `~/.opencode/bin/opencode` |
 | User config (not in this repo) | `~/.config/opencode/opencode.jsonc` |
 | TUI keybinds (repo + runtime) | repo `tui.json` → **must** be `~/.config/opencode/tui.json` |
