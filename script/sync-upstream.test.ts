@@ -211,6 +211,10 @@ if [ "$1" = "install" ]; then
   [ "$SYNC_TEST_FAIL" = "install" ] && exit 71
   exit 0
 fi
+if [ "$1" = "test" ]; then
+  printf 'test %s\\n' "$PWD" >> "$SYNC_TEST_TRACE"
+  exit 0
+fi
 printf 'build\\n' >> "$SYNC_TEST_TRACE"
 [ "$SYNC_TEST_FAIL" = "build" ] && exit 72
 mkdir -p "$SYNC_TEST_BINARY_DIR"
@@ -254,7 +258,7 @@ chmod +x "$SYNC_TEST_BINARY_DIR/opencode"
       new Response(proc.stderr).text(),
       proc.exited,
     ])
-    return { code, output, error, trace: await Bun.file(path.join(directory, "trace")).text() }
+    return { code, output, error, directory, trace: await Bun.file(path.join(directory, "trace")).text() }
   }
 
   test("does not push or install a binary when dependencies fail", async () => {
@@ -274,7 +278,7 @@ chmod +x "$SYNC_TEST_BINARY_DIR/opencode"
   test("pushes only after dependency and build validation", async () => {
     const result = await run({})
     expect(result.code).toBe(1)
-    expect(result.trace).toBe("install --frozen-lockfile\nbuild\npush\n")
+    expect(result.trace).toBe(`install --frozen-lockfile\nbuild\ntest ${result.directory}/script\npush\n`)
     expect(result.error).toContain("test stopped before runtime installation")
   })
 

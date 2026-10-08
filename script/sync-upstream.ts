@@ -207,6 +207,12 @@ async function main() {
     const build = await $`bun run script/build.ts --single --skip-install`.cwd(pkg).nothrow()
     if (build.exitCode !== 0) throw new Error(`Build failed (${build.exitCode})`)
     if (!existsSync(built)) throw new Error(`Built binary missing: ${built}`)
+
+    // Scripts under script/ are part of the harness this fork ships; a broken
+    // one (e.g. check-drift or this sync itself) must not ride a push.
+    console.log("running script tests…")
+    const scriptTests = await $`bun test`.cwd(path.join(ROOT, "script")).nothrow()
+    if (scriptTests.exitCode !== 0) throw new Error(`Script tests failed (${scriptTests.exitCode})`)
   }
 
   // A failed install/build must not publish an unverified merge. Also catch
@@ -281,7 +287,7 @@ async function previouslyVendored(destination: string): Promise<Set<string>> {
   const provenance = path.join(destination, "PROVENANCE.md")
   if (!existsSync(provenance)) return new Set()
   const text = await readFile(provenance, "utf8")
-  return new Set([...text.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]))
+  return new Set([...text.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].flatMap((match) => (match[1] ? [match[1]] : [])))
 }
 
 // Goal-mode config distribution. Managed content (AGENTS.goal.md,
