@@ -243,11 +243,34 @@ bash ~/.config/agent-hooks/run-cases.sh                 # bash port (jq)
 bun  ~/.config/agent-hooks/run-cases.ts                 # opencode plugin port
 ```
 
-`run-cases.ts` resolves the plugin at `../opencode/plugin/block-unsafe-kill.ts`
-relative to itself (correct in the *installed* layout). From this bundle copy
-pass the path explicitly (absolute: the argument is resolved as an import
-specifier, a bare relative path fails):
-`bun bootstrap/agent-hooks/run-cases.ts "$PWD/bootstrap/plugin/block-unsafe-kill.ts"`.
+`run-cases.ts` resolves the plugin next to itself, trying the *installed*
+layout (`../opencode/plugin/block-unsafe-kill.ts`) and the bundle layout
+(`../plugin/block-unsafe-kill.ts`), so it runs unchanged from both:
+
+```sh
+bash bootstrap/agent-hooks/run-cases.sh
+bun  bootstrap/agent-hooks/run-cases.ts
+```
+
+An explicit absolute path still works as the first argument (resolved as an
+import specifier, so it must be absolute).
+
+### Repo ↔ seat drift
+
+From the fork checkout, `bun run check-drift` compares every file this repo
+deploys (dotfiles managed files, `tui.json`, agent-hooks, plugins, the shell
+block, the `environment.d` DB pin, the `install-local-tools` set, vendored
+skills, skills-extra, and the `bootstrap/config/opencode.jsonc` snapshot)
+against the live seat, checks the bundle↔dotfiles goal-file mirrors, and exits
+1 on drift. `bootstrap/verify.sh` is the seat-side counterpart.
+
+The config snapshot is what install.sh converges the live config **from**, so
+refresh it whenever the live config changes — a stale snapshot would otherwise
+overwrite the live file on the next install:
+
+```sh
+cp ~/.config/opencode/opencode.jsonc bootstrap/config/opencode.jsonc
+```
 
 Wired surfaces (all currently hardcode `/home/eric`; install.sh rewrites to the
 target home): `~/.claude/settings.json:20`, `~/.zcode/settings.json:8`,
@@ -360,9 +383,11 @@ bootstrap/
 ## 7. Provenance
 
 * `config/opencode.jsonc` is a byte-copy of machine A's live
-  `~/.config/opencode/opencode.jsonc` at cut time. The repo-root
-  `opencode.jsonc` was being refreshed in parallel to match it — compare before
-  trusting either: `diff ../../opencode.jsonc config/opencode.jsonc`.
+  `~/.config/opencode/opencode.jsonc` at cut time (refreshed 2026-10-08 to the
+  deepseek default track). The repo-root `opencode.jsonc` is refreshed from the
+  live file too — compare before trusting either:
+  `diff ../../opencode.jsonc config/opencode.jsonc`. `bun run check-drift`
+  flags the snapshot as drift when the live config moves past it.
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
   against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
   the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
