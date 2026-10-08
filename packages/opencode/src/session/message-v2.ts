@@ -183,6 +183,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return false
   }
 
+  // xAI rejects any other image format (e.g. GIF) with invalid_image, failing the whole request.
+  const rejectedByProvider = (attachment: { mime: string }) =>
+    model.api.npm === "@ai-sdk/xai" &&
+    attachment.mime.startsWith("image/") &&
+    !["image/png", "image/jpeg", "image/webp"].includes(attachment.mime)
+
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
     if (typeof output === "string") {
@@ -339,9 +345,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const baseOutputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
-            const stored = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
-            // Media the model cannot read at all (e.g. text-only GLM behind @ai-sdk/anthropic)
-            // becomes a text placeholder instead of being sent in the tool result.
+            // Upstream drops media the provider rejects outright (xAI GIFs);
+            // the fork turns media the model cannot read at all into a text
+            // placeholder. Chain both: reject-drop first, placeholder second.
+            const stored =
+              part.state.time.compacted || options?.stripMedia
+                ? []
+                : (part.state.attachments ?? []).filter((a) => !rejectedByProvider(a))
             const unreadable = stored.filter((a) => isMedia(a.mime) && !supportsMediaInput(a))
             const attachments = stored.filter((a) => !unreadable.includes(a))
             const outputText = [

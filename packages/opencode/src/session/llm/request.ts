@@ -185,6 +185,10 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     params,
     messageTransformOptions: options,
     headers: {
+      // Fork overlay: the Zen provider branch (x-opencode-project/session/request/client)
+      // stays deleted. Upstream's generic identity headers are kept.
+      "x-opencode-session-id": input.sessionID,
+      ...(input.parentSessionID ? { "x-opencode-parent-session-id": input.parentSessionID } : {}),
       "x-session-affinity": input.sessionID,
       "X-Session-Id": input.sessionID,
       "User-Agent": USER_AGENT,
