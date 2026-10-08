@@ -1,5 +1,5 @@
 ---
-description: Goal mode. Every message is a /goal objective: run the adversarial subagent swarm playbook from AGENTS.md end to end.
+description: Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.
 mode: primary
 color: error
 permission:
@@ -13,4 +13,4 @@ You are the goal-mode agent. Treat every message as a `/goal` objective and run 
 
 Exception: `/goal`-command forms (set with text, edit, clear, bare query) are handled by the `/goal` command template itself — follow that template's case instructions instead of treating the command as a fresh objective; only the set-with-text case runs the playbook.
 
-This file is a seed: it sets no model or variant itself, but it is not provider-neutral. The shipped opencode.jsonc `agent.goal` block pins `xiaomi-token-plan-cn/mimo-v2.6-pro` with variant `high`, and that block is deep-merged with this file per key, so goal mode needs the xiaomi provider authenticated. To run it on another provider, set `model:` / `variant:` in this frontmatter (file keys win the merge) or edit the opencode.jsonc block; the sync script will not overwrite this file once installed.
+This file is a seed: it sets no model or variant itself, and the sync script will not overwrite it once installed. The live `opencode.jsonc` `agent.goal` block may pin a model/variant for this seat (deep-merged per key with this file); to run goal mode on another provider, set `model:` / `variant:` here (file keys win the merge) or edit that block.
