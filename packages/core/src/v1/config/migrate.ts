@@ -60,7 +60,7 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
       buffer: info.compaction.reserved,
     },
     skills: info.skills && [...(info.skills.paths ?? []), ...(info.skills.urls ?? [])],
-    commands: info.command,
+    commands: info.command && commands(info.command),
     instructions: info.instructions,
     references: info.references ?? info.reference,
     plugins: info.plugin?.map((plugin) =>
@@ -69,6 +69,14 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
     experimental: info.experimental?.policies && { policies: info.experimental.policies },
     providers: providers(info.provider),
   }
+}
+
+// v2 requires a command template, v1 allowed commands without one; an empty
+// template keeps the command (and its other fields) valid instead of dropping it.
+function commands(info: NonNullable<typeof ConfigV1.Info.Type.command>) {
+  return Object.fromEntries(
+    Object.entries(info).map(([name, command]) => [name, { ...command, template: command.template ?? "" }]),
+  )
 }
 
 function permissions(info?: ConfigPermissionV1.Info, tools?: Readonly<Record<string, boolean>>) {
