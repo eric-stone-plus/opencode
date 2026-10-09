@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store"
+import { createStore, produce, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import { batch, createEffect, createMemo } from "solid-js"
 import { useSync } from "./sync"
@@ -132,9 +132,56 @@ export function configuredModel(input: { arg?: string; config?: string }) {
   return { ...parseModel(value), source: input.arg ? ("--model" as const) : ("config" as const) }
 }
 
-// Variants are stored per model. A stored variant the newly chosen model does
-// not offer is dropped (unset, i.e. default) rather than kept as a dangling
-// selection; the model dialog then offers the variant picker again.
+// Variants are stored per session and model, like the model choice itself: a
+// variant picked in one session must not leak into another. The draft composer
+// (home, before the first prompt creates a session) has its own bucket that is
+// handed to the session it creates. A stored variant the newly chosen model
+// does not offer is dropped (unset, i.e. default) rather than kept as a
+// dangling selection; the model dialog then offers the variant picker again.
+export type VariantStore = Record<string, Record<string, string | undefined>>
+
+// The on-disk store predates session scoping: a flat `provider/model -> variant`
+// map. It migrates into the draft bucket, which is the composer it came from.
+// Bucket contents merge so the result does not depend on JSON key order (a
+// file can contain both shapes after a mixed-version run); keys that could
+// reach Object.prototype are ignored.
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
+export function normalizeVariantStore(value: unknown): VariantStore {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const result: VariantStore = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (UNSAFE_KEYS.has(key)) continue
+    if (typeof entry === "string") {
+      result[DRAFT_MODEL_SCOPE] = { ...(result[DRAFT_MODEL_SCOPE] ?? {}), [key]: entry }
+      continue
+    }
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    const variants = Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>).filter(([, item]) => typeof item === "string"),
+    ) as Record<string, string>
+    if (Object.keys(variants).length > 0) result[key] = { ...(result[key] ?? {}), ...variants }
+  }
+  return result
+}
+
+export function readVariant(store: VariantStore, scope: string, model: ModelRef | undefined) {
+  if (!model) return undefined
+  return store[scope]?.[`${model.providerID}/${model.modelID}`]
+}
+
+// Hands the draft bucket to the session and clears the draft. Returns a new
+// store because Solid merges plain objects written into a store path: writing
+// the draft node into the session key directly would alias the two buckets,
+// and writing `{}` would not replace an existing one.
+export function adoptVariant(store: VariantStore, sessionID: string): VariantStore {
+  return {
+    ...store,
+    [sessionID]: { ...(store[DRAFT_MODEL_SCOPE] ?? {}) },
+    [DRAFT_MODEL_SCOPE]: {},
+  }
+}
+
 export function variantAfterModelChange(selected: string | undefined, variants: string[]) {
   if (!selected || selected === "default" || variants.includes(selected)) return selected
   return undefined
@@ -231,7 +278,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           providerID: string
           modelID: string
         }[]
-        variant: Record<string, string | undefined>
+        variant: VariantStore
       }>({
         ready: false,
         model: {},
@@ -265,13 +312,27 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (Array.isArray(value.recent)) setModelStore("recent", value.recent)
           if (Array.isArray(value.favorite)) setModelStore("favorite", value.favorite)
           if (typeof value.variant === "object" && value.variant !== null)
-            setModelStore("variant", value.variant as Record<string, string | undefined>)
+            setModelStore("variant", normalizeVariantStore(value.variant))
         })
         .catch(() => {})
         .finally(() => {
           setModelStore("ready", true)
           if (state.pending) save()
         })
+
+      // Session buckets are only useful while the session exists; without this
+      // the store grows with every session ever opened or created.
+      event.on("session.deleted", (evt) => {
+        const sessionID = evt.properties.info.id
+        if (modelStore.variant[sessionID] === undefined && modelStore.model[sessionID] === undefined) return
+        setModelStore(
+          produce((draft) => {
+            delete draft.variant[sessionID]
+            delete draft.model[sessionID]
+          }),
+        )
+        save()
+      })
 
       const configured = createMemo(() => configuredModel({ arg: args.model, config: sync.data.config.model }))
 
@@ -334,9 +395,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         batch(() => {
           setModelStore("model", scope(), { providerID: model.providerID, modelID: model.modelID })
           const key = `${model.providerID}/${model.modelID}`
-          const next = variantAfterModelChange(modelStore.variant[key], variantsOf(model))
-          if (next === modelStore.variant[key]) return
-          setModelStore("variant", key, next)
+          const previous = modelStore.variant[scope()]?.[key]
+          const next = variantAfterModelChange(previous, variantsOf(model))
+          if (next === previous) return
+          setModelStore(
+            produce((draft) => {
+              draft.variant[scope()] ??= {}
+              draft.variant[scope()]![key] = next
+            }),
+          )
           save()
         })
       }
@@ -357,7 +424,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           batch(() => {
             setModelStore("model", sessionID, modelStore.model[DRAFT_MODEL_SCOPE] ?? null)
             setModelStore("model", DRAFT_MODEL_SCOPE, undefined)
+            setModelStore("variant", reconcile(adoptVariant(modelStore.variant, sessionID)))
           })
+          save()
         },
         recent() {
           return modelStore.recent
@@ -465,10 +534,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         },
         variant: {
           selected() {
-            const m = currentModel()
-            if (!m) return undefined
-            const key = `${m.providerID}/${m.modelID}`
-            return modelStore.variant[key]
+            return readVariant(modelStore.variant, scope(), currentModel())
           },
           current() {
             const m = currentModel()
@@ -510,7 +576,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const m = currentModel()
             if (!m) return
             const key = `${m.providerID}/${m.modelID}`
-            setModelStore("variant", key, value ?? "default")
+            setModelStore(
+              produce((draft) => {
+                draft.variant[scope()] ??= {}
+                draft.variant[scope()]![key] = value ?? "default"
+              }),
+            )
             save()
           },
           cycle() {

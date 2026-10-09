@@ -319,6 +319,43 @@ describe("SessionReminders.apply", () => {
   )
 
   it.live(
+    "ignored text parts are not seeded as the goal",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const fsys = yield* FSUtil.Service
+        const { id } = yield* session.create({})
+        const msg = yield* session.updateMessage({
+          id: MessageID.ascending(),
+          role: "user" as const,
+          sessionID: id,
+          agent: "goal",
+          model,
+          time: { created: Date.now() },
+        })
+        yield* session.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: id,
+          type: "text",
+          text: "audience only",
+          ignored: true,
+        })
+        yield* session.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: id,
+          type: "text",
+          text: "ship the acceptance report",
+        })
+        yield* apply(id, "goal")
+        const goalPath = Session.goal(yield* session.get(id), yield* InstanceState.context)
+        expect(yield* fsys.readFileStringSafe(goalPath)).toBe("ship the acceptance report")
+      }),
+    ),
+  )
+
+  it.live(
     "a command message does not seed the goal",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

@@ -147,7 +147,11 @@ function formatEditorContext(selection: EditorSelection) {
   return `<system-reminder>${ranges.join("\n")} This may or may not be relevant to the current task.</system-reminder>\n`
 }
 
-let stashed: { prompt: PromptInfo; cursor: number } | undefined
+// Drafts survive a route change (session switch, session.new) but belong to
+// exactly one composer: the scope is the session id, or undefined for the
+// draft composer on home. They are memory-only by design — the prompt history
+// file is the durable record.
+const drafts = new Map<string | undefined, { prompt: PromptInfo; cursor: number }>()
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -644,24 +648,56 @@ export function Prompt(props: PromptProps) {
     },
   }
 
-  onMount(() => {
-    const saved = stashed
-    stashed = undefined
-    if (store.prompt.input) return
-    if (saved && saved.prompt.input) {
-      input.setText(saved.prompt.input)
-      setStore("prompt", saved.prompt)
-      restoreExtmarksFromParts(saved.prompt.parts)
-      input.cursorOffset = saved.cursor
+  function saveDraft(sessionID: string | undefined) {
+    if (!store.prompt.input) {
+      drafts.delete(sessionID)
+      return
     }
+    // Deep-copy the unwrapped store: ref.reset() merges into the live store
+    // node, so keeping the node here would let the next reset blank the draft
+    // we just saved (in-place session switches).
+    drafts.set(sessionID, { prompt: structuredClone(unwrap(store.prompt)), cursor: input.cursorOffset })
+  }
+
+  function restoreDraft(sessionID: string | undefined, opts?: { preserveSeed?: boolean }) {
+    const saved = drafts.get(sessionID)
+    // A fresh mount can already be seeded through props.ref (fork prompt,
+    // --prompt): keep that content instead of clobbering it with the empty
+    // composer. The old module-level `stashed` had the same guard. The seed
+    // can be parts-only (a forked message whose text was synthetic).
+    if (opts?.preserveSeed && (store.prompt.input || store.prompt.parts.length > 0)) return
+    drafts.delete(sessionID)
+    ref.reset()
+    if (!saved?.prompt.input) return
+    ref.set(saved.prompt)
+    input.cursorOffset = saved.cursor
+  }
+
+  let draftSessionID = props.sessionID
+  onMount(() => restoreDraft(draftSessionID, { preserveSeed: true }))
+
+  // Deleted sessions never come back: drop their drafts so the map does not
+  // hold composer content for the process lifetime.
+  event.on("session.deleted", (evt) => {
+    drafts.delete(evt.properties.info.id)
   })
+
+  createEffect(
+    on(
+      () => props.sessionID,
+      (sessionID) => {
+        saveDraft(draftSessionID)
+        draftSessionID = sessionID
+        restoreDraft(sessionID)
+      },
+      { defer: true },
+    ),
+  )
 
   onCleanup(() => {
     disposed = true
     revision++
-    if (store.prompt.input) {
-      stashed = { prompt: unwrap(store.prompt), cursor: input.cursorOffset }
-    }
+    saveDraft(draftSessionID)
     setInputTarget(undefined)
     props.ref?.(undefined)
   })

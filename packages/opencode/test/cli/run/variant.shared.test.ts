@@ -169,6 +169,7 @@ describe("run variant shared", () => {
         recent: [{ providerID: "anthropic", modelID: "sonnet" }],
         variant: {
           "openai/gpt-4.1": "low",
+          ses_other: { "openai/gpt-4.1": "max" },
         },
       })
 
@@ -179,8 +180,11 @@ describe("run variant shared", () => {
       expect(yield* fs.readJson(file)).toEqual({
         recent: [{ providerID: "anthropic", modelID: "sonnet" }],
         variant: {
-          "openai/gpt-4.1": "low",
-          "openai/gpt-5": "high",
+          "": {
+            "openai/gpt-4.1": "low",
+            "openai/gpt-5": "high",
+          },
+          ses_other: { "openai/gpt-4.1": "max" },
         },
       })
 
@@ -189,7 +193,34 @@ describe("run variant shared", () => {
       expect(yield* fs.readJson(file)).toEqual({
         recent: [{ providerID: "anthropic", modelID: "sonnet" }],
         variant: {
-          "openai/gpt-4.1": "low",
+          "": { "openai/gpt-4.1": "low" },
+          ses_other: { "openai/gpt-4.1": "max" },
+        },
+      })
+    }),
+  )
+
+  it.live("merges flat entries into an existing draft bucket regardless of key order", () =>
+    Effect.gen(function* () {
+      const filesys = yield* FileSystem.FileSystem
+      const fs = yield* FSUtil.Service
+      const root = yield* filesys.makeTempDirectoryScoped()
+      const file = path.join(root, "model.json")
+
+      yield* fs.writeJson(file, {
+        variant: {
+          "openai/gpt-5": "low",
+          "": { "openai/gpt-4.1": "mid" },
+        },
+      })
+
+      const svc = createVariantRuntime(remappedFs(root))
+
+      yield* Effect.promise(() => svc.saveVariant(model, "high"))
+      expect(yield* Effect.promise(() => svc.resolveSavedVariant(model))).toBe("high")
+      expect(yield* fs.readJson(file)).toEqual({
+        variant: {
+          "": { "openai/gpt-4.1": "mid", "openai/gpt-5": "high" },
         },
       })
     }),
@@ -210,7 +241,9 @@ describe("run variant shared", () => {
       expect(yield* Effect.promise(() => svc.resolveSavedVariant(model))).toBe("high")
       expect(yield* fs.readJson(file)).toEqual({
         variant: {
-          "openai/gpt-5": "high",
+          "": {
+            "openai/gpt-5": "high",
+          },
         },
       })
     }),

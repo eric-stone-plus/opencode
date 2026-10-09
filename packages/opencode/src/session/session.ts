@@ -3,6 +3,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
+import fs from "fs/promises"
 import path from "path"
 import { BackgroundJob } from "@/background/job"
 import { Decimal } from "decimal.js"
@@ -342,6 +343,22 @@ export function goal(input: { slug: string; time: { created: number } }, instanc
   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
 }
 
+// Goals are session-scoped state like the plan file: removing the session
+// removes its goal. Best-effort and instance-guarded — a session from another
+// project must not touch this instance's worktree. A session from another
+// worktree of the same project (same project id) keeps its file: the goal path
+// is derived from the worktree of the instance that removes it.
+const removeGoalFile = (session: Info) =>
+  Effect.gen(function* () {
+    const ctx = yield* InstanceState.context
+    if (ctx.project.id !== session.projectID) return
+    const target = goal(session, ctx)
+    yield* Effect.tryPromise(() => fs.rm(target, { force: true })).pipe(
+      Effect.tapError((error) => Effect.logDebug("failed to remove session goal file", { target, error })),
+      Effect.ignore,
+    )
+  })
+
 export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?: ProviderMetadata }) => {
   const finite = (value: number) => (Number.isFinite(value) ? value : 0)
   const safe = (value: number) => Math.max(0, finite(value))
@@ -620,7 +637,10 @@ const layer: Layer.Layer<
           Effect.catchCause(() => Effect.succeed(false)),
         )
 
-        if (hasInstance) yield* cancelBackgroundJobs(background, sessionID)
+        if (hasInstance) {
+          yield* cancelBackgroundJobs(background, sessionID)
+          yield* removeGoalFile(session)
+        }
         const kids = yield* children(sessionID)
         for (const child of kids) {
           yield* remove(child.id)

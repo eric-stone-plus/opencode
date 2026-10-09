@@ -18,8 +18,14 @@ import type { RunInput, RunProvider } from "./types"
 
 const MODEL_FILE = path.join(Global.Path.state, "model.json")
 
+// The scope key of the composer default, shared with the TUI's
+// DRAFT_MODEL_SCOPE (packages/tui/src/context/local.tsx). Variants persist per
+// session; this bucket is the one `opencode run`'s single composer uses and
+// the one a newly created session inherits.
+const DRAFT_SCOPE = ""
+
 type ModelState = Record<string, unknown> & {
-  variant?: Record<string, string | undefined>
+  variant?: Record<string, Record<string, string | undefined>>
 }
 type VariantService = {
   readonly resolveSavedVariant: (model: RunInput["model"]) => Effect.Effect<string | undefined>
@@ -118,22 +124,46 @@ function state(value: unknown): ModelState {
     return {}
   }
 
-  const variant = isRecord(value.variant)
-    ? Object.fromEntries(
-        Object.entries(value.variant).flatMap(([key, item]) => {
-          if (typeof item !== "string") {
-            return []
-          }
-
-          return [[key, item] as const]
-        }),
-      )
-    : undefined
-
   return {
     ...value,
-    variant,
+    variant: normalizeVariant(value.variant),
   }
+}
+
+// The on-disk store predates session scoping: a flat `provider/model -> variant`
+// map migrates into the draft bucket, which is the composer it came from.
+// Bucket contents merge so the result does not depend on JSON key order (a
+// file can contain both shapes after a mixed-version run); non-string leaves
+// are dropped so a malformed entry cannot survive a rewrite. Keys that could
+// reach Object.prototype are ignored.
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
+function normalizeVariant(value: unknown): Record<string, Record<string, string>> | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  const result: Record<string, Record<string, string>> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_KEYS.has(key)) {
+      continue
+    }
+    if (typeof entry === "string") {
+      result[DRAFT_SCOPE] = { ...(result[DRAFT_SCOPE] ?? {}), [key]: entry }
+      continue
+    }
+    if (!isRecord(entry)) {
+      continue
+    }
+    const bucket = Object.fromEntries(Object.entries(entry).filter(([, item]) => typeof item === "string")) as Record<
+      string,
+      string
+    >
+    if (Object.keys(bucket).length > 0) {
+      result[key] = { ...(result[key] ?? {}), ...bucket }
+    }
+  }
+  return result
 }
 
 function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
@@ -155,7 +185,7 @@ function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
             return undefined
           }
 
-          return (yield* read()).variant?.[variantKey(model)]
+          return (yield* read()).variant?.[DRAFT_SCOPE]?.[variantKey(model)]
         })
 
         const saveVariant = Effect.fn("RunVariant.saveVariant")(function* (
@@ -167,16 +197,21 @@ function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {
           }
 
           const current = yield* read()
-          const next = {
-            ...current.variant,
-          }
+          const next = { ...current.variant }
+          const bucket = { ...(next[DRAFT_SCOPE] ?? {}) }
           const key = variantKey(model)
           if (variant) {
-            next[key] = variant
+            bucket[key] = variant
           }
 
           if (!variant) {
-            delete next[key]
+            delete bucket[key]
+          }
+
+          if (Object.keys(bucket).length > 0) {
+            next[DRAFT_SCOPE] = bucket
+          } else {
+            delete next[DRAFT_SCOPE]
           }
 
           yield* file

@@ -242,20 +242,35 @@ const layer = Layer.effect(
     const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
       yield* fs.ensureDir(dir)
       const gitignore = path.join(dir, ".gitignore")
-      const hasIgnore = yield* fs.existsSafe(gitignore)
-      if (!hasIgnore) {
-        yield* fs
-          .writeFileString(
-            gitignore,
-            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore"].join("\n"),
-          )
-          .pipe(
-            Effect.catchIf(
-              (e) => e.reason._tag === "PermissionDenied",
-              () => Effect.void,
-            ),
-          )
-      }
+      const entries = [
+        "node_modules",
+        "package.json",
+        "package-lock.json",
+        "bun.lock",
+        ".gitignore",
+        "goals",
+        "plans",
+      ]
+      const existing = (yield* fs.isFile(gitignore))
+        ? yield* fs.readFileStringSafe(gitignore).pipe(Effect.orElseSucceed(() => undefined))
+        : undefined
+      // A path that exists but is not a readable file (directory, unreadable
+      // file) must not be rewritten; leave it exactly as it is.
+      if (existing === undefined && (yield* fs.existsSafe(gitignore))) return
+      const lines = existing?.split("\n").map((line) => line.trim()) ?? []
+      const missing = entries.filter((entry) => !lines.includes(entry))
+      if (missing.length === 0) return
+      // Files created before an entry was added must gain it too: goal and plan
+      // files are runtime state, and a stale .gitignore would let them show up
+      // in snapshots and session diffs. Existing lines are never touched. This
+      // is best-effort: a failed update must not fail config loading.
+      const content =
+        existing === undefined || existing.trim() === ""
+          ? entries.join("\n")
+          : `${existing.replace(/\n+$/, "")}\n${missing.join("\n")}\n`
+      yield* fs
+        .writeFileString(gitignore, content)
+        .pipe(Effect.catch((error) => Effect.logDebug("failed to update generated .gitignore", { gitignore, error })))
     })
 
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(

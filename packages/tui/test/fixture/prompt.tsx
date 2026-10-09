@@ -19,6 +19,7 @@ import { ThemeProvider } from "../../src/context/theme"
 import { TuiConfigProvider } from "../../src/config"
 import { OpencodeKeymapProvider, registerOpencodeKeymap } from "../../src/keymap"
 import { Prompt, type PromptRef } from "../../src/component/prompt"
+import type { PromptInfo } from "../../src/prompt/history"
 import { PromptHistoryProvider } from "../../src/prompt/history"
 import { FrecencyProvider } from "../../src/prompt/frecency"
 import { PromptStashProvider, usePromptStash } from "../../src/prompt/stash"
@@ -45,6 +46,7 @@ export function pendingResponse() {
 export async function mountPrompt(
   state: string,
   handle: (request: Request) => Promise<Response> | Response | undefined,
+  options?: { seed?: PromptInfo },
 ) {
   await Bun.write(path.join(state, "kv.json"), "{}")
   const events = createEventSource()
@@ -72,6 +74,7 @@ export async function mountPrompt(
   let local!: ReturnType<typeof useLocal>
   const [visible, setVisible] = createSignal(true)
   const [disabled, setDisabled] = createSignal(false)
+  let seeded = false
 
   function Composer() {
     route = useRoute()
@@ -84,7 +87,15 @@ export async function mountPrompt(
         <Prompt
           sessionID={route.data.type === "session" ? route.data.sessionID : undefined}
           disabled={disabled()}
-          ref={(value) => (prompt = value)}
+          ref={(value) => {
+            prompt = value
+            // Mimic home.tsx/route seeding: r.set() runs from the ref callback
+            // during render, before the draft restore on mount.
+            if (value && options?.seed && !seeded) {
+              seeded = true
+              value.set(options.seed)
+            }
+          }}
         />
       </Show>
     )

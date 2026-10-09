@@ -1,14 +1,19 @@
 import { describe, expect, test } from "bun:test"
+import { createStore, produce, reconcile } from "solid-js/store"
 import {
+  adoptVariant,
   configuredModel,
   DRAFT_MODEL_SCOPE,
   effectiveVariant,
   modelScope,
+  normalizeVariantStore,
   parseModel,
+  readVariant,
   recentModels,
   resolveModel,
   resolveVariant,
   variantAfterModelChange,
+  type VariantStore,
 } from "../../src/context/local"
 
 test("parses model IDs containing slashes", () => {
@@ -261,5 +266,100 @@ describe("session-scoped model", () => {
     expect(variantAfterModelChange("high", ["high", "low"])).toBe("high")
     expect(variantAfterModelChange("default", ["high"])).toBe("default")
     expect(variantAfterModelChange(undefined, [])).toBeUndefined()
+  })
+})
+
+describe("session-scoped variant store", () => {
+  const glm = { providerID: "zai", modelID: "glm-5.3" }
+
+  test("variants do not leak across scopes", () => {
+    const store = { ses_a: { "zai/glm-5.3": "max" } }
+    expect(readVariant(store, "ses_a", glm)).toBe("max")
+    expect(readVariant(store, "ses_b", glm)).toBeUndefined()
+    expect(readVariant(store, DRAFT_MODEL_SCOPE, glm)).toBeUndefined()
+  })
+
+  test("legacy flat variant maps migrate into the draft scope", () => {
+    expect(normalizeVariantStore({ "zai/glm-5.3": "max", "zai/glm-5.3-flash": "high" })).toEqual({
+      [DRAFT_MODEL_SCOPE]: { "zai/glm-5.3": "max", "zai/glm-5.3-flash": "high" },
+    })
+  })
+
+  test("nested maps are preserved and junk is dropped", () => {
+    expect(
+      normalizeVariantStore({
+        ses_a: { "zai/glm-5.3": "high", bad: 7 },
+        broken: 3,
+        nil: null,
+        empty: {},
+      }),
+    ).toEqual({ ses_a: { "zai/glm-5.3": "high" } })
+  })
+
+  test("a mixed map keeps both the legacy entries and the scoped buckets", () => {
+    expect(
+      normalizeVariantStore({
+        "zai/glm-5.3": "max",
+        ses_a: { "zai/glm-5.3": "high" },
+      }),
+    ).toEqual({
+      [DRAFT_MODEL_SCOPE]: { "zai/glm-5.3": "max" },
+      ses_a: { "zai/glm-5.3": "high" },
+    })
+  })
+
+  test("migration merges a legacy flat entry into an existing draft bucket", () => {
+    expect(
+      normalizeVariantStore({
+        "zai/glm-5.3": "max",
+        [DRAFT_MODEL_SCOPE]: { "zai/glm-5.3-flash": "low" },
+      }),
+    ).toEqual({
+      [DRAFT_MODEL_SCOPE]: { "zai/glm-5.3": "max", "zai/glm-5.3-flash": "low" },
+    })
+  })
+
+  test("array buckets and unsafe keys are dropped", () => {
+    const parsed = JSON.parse('{"__proto__": {"polluted": "yes"}, "ses_b": {"zai/glm-5.3": "high"}}')
+    const normalized = normalizeVariantStore(parsed)
+    expect(normalized).toEqual({ ses_b: { "zai/glm-5.3": "high" } })
+    expect((normalized as Record<string, unknown>)["polluted"]).toBeUndefined()
+    expect(normalizeVariantStore({ ses_a: ["not", "a", "bucket"] })).toEqual({})
+  })
+
+  test("adopt copies the draft bucket and clears it without aliasing", () => {
+    const store = {
+      ses_a: { "zai/glm-5.3": "max" },
+      [DRAFT_MODEL_SCOPE]: { "zai/glm-5.3": "low" },
+    }
+    const next = adoptVariant(store, "ses_b")
+    expect(next).toEqual({
+      ses_a: { "zai/glm-5.3": "max" },
+      ses_b: { "zai/glm-5.3": "low" },
+      [DRAFT_MODEL_SCOPE]: {},
+    })
+    expect(next[DRAFT_MODEL_SCOPE]).not.toBe(store[DRAFT_MODEL_SCOPE])
+    expect(next.ses_b).not.toBe(store[DRAFT_MODEL_SCOPE])
+    next.ses_b["zai/glm-5.3"] = "high"
+    expect(next[DRAFT_MODEL_SCOPE]).toEqual({})
+  })
+
+  test("a reconciled adopt keeps the session and draft buckets independent", () => {
+    const [store, setStore] = createStore<{ variant: VariantStore }>({ variant: {} })
+    setStore("variant", DRAFT_MODEL_SCOPE, { "zai/glm-5.3": "low" })
+    setStore("variant", "ses_a", { "zai/glm-5.3": "max" })
+    setStore("variant", reconcile(adoptVariant(store.variant, "ses_b")))
+    expect(store.variant[DRAFT_MODEL_SCOPE]).toEqual({})
+    expect(store.variant["ses_b"]).toEqual({ "zai/glm-5.3": "low" })
+
+    // A later pick inside the session must not surface in the draft bucket.
+    setStore(
+      produce((draft) => {
+        draft.variant["ses_b"]!["zai/glm-5.3"] = "high"
+      }),
+    )
+    expect(store.variant[DRAFT_MODEL_SCOPE]).toEqual({})
+    expect(store.variant["ses_a"]).toEqual({ "zai/glm-5.3": "max" })
+    expect(store.variant["ses_b"]).toEqual({ "zai/glm-5.3": "high" })
   })
 })

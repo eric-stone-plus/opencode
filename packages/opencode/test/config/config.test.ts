@@ -1132,7 +1132,49 @@ it.effect("creates a missing OPENCODE_CONFIG_DIR", () =>
 
     yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
 
-    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toContain("node_modules")
+    const gitignore = yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))
+    expect(gitignore).toContain("node_modules")
+    // Session goal files are runtime state, not user content: the generated
+    // .gitignore must keep them out of a committed .opencode/ directory.
+    expect(gitignore).toContain("goals")
+    expect(gitignore).toContain("plans")
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("merges missing entries into an existing .gitignore", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), "custom-entry\nnode_modules\n")
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    const gitignore = yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))
+    expect(gitignore).toBe(
+      [
+        "custom-entry",
+        "node_modules",
+        "package.json",
+        "package-lock.json",
+        "bun.lock",
+        ".gitignore",
+        "goals",
+        "plans",
+        "",
+      ].join("\n"),
+    )
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("leaves a .gitignore that is a directory untouched", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    yield* FSUtil.use.ensureDir(path.join(configDir, ".gitignore"))
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.isDir(path.join(configDir, ".gitignore"))).toBe(true)
   }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
 )
 

@@ -1,4 +1,6 @@
 import { describe, expect } from "bun:test"
+import fs from "fs/promises"
+import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
@@ -16,6 +18,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceStore } from "@/project/instance-store"
 import { InstanceBootstrap } from "@/project/bootstrap"
+import { InstanceState } from "@/effect/instance-state"
 
 const it = testEffect(
   AppNodeBuilder.build(
@@ -217,6 +220,23 @@ describe("Session", () => {
 
       const getExit = yield* session.get(info.id).pipe(Effect.exit)
       expect(Exit.isFailure(getExit)).toBe(true)
+    }),
+  )
+
+  it.instance("remove deletes the session's goal file", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const ctx = yield* InstanceState.context
+      const info = yield* Effect.acquireRelease(session.create({ title: "with-goal" }), (created) =>
+        session.remove(created.id).pipe(Effect.ignore),
+      )
+      const goalPath = SessionNs.goal(info, ctx)
+      yield* Effect.promise(() => fs.mkdir(path.dirname(goalPath), { recursive: true }))
+      yield* Effect.promise(() => fs.writeFile(goalPath, "objective"))
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(true)
+
+      yield* session.remove(info.id)
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(false)
     }),
   )
 

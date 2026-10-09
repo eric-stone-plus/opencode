@@ -124,7 +124,9 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const goalExists = yield* fsys.existsSafe(goalPath)
   if (!goalExists && input.agent.name === "goal") {
     const objective = userMessage.parts
-      .flatMap((part) => (part.type === "text" && !part.synthetic && !part.metadata?.command ? [part.text] : []))
+      .flatMap((part) =>
+        part.type === "text" && !part.synthetic && !part.ignored && !part.metadata?.command ? [part.text] : [],
+      )
       .join("\n")
       .trim()
     if (objective) {
