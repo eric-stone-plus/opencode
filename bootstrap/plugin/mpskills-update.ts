@@ -1,6 +1,6 @@
 import path from "node:path"
 import { homedir } from "node:os"
-import { open, rm, stat } from "node:fs/promises"
+import { open, rm, stat, type FileHandle } from "node:fs/promises"
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 
 // Refresh the mattpocock skills only when the skill tool is about to load one
@@ -98,14 +98,23 @@ function markChecked(home: string, ok: boolean) {
 // resource, and two seats sharing the checkout must serialize even with
 // different HOME directories. The owner token inside the file means a holder
 // whose lock was stale-broken by a peer never deletes the peer's lock when it
-// finally finishes. Breaking a stale lock is still check-then-act (the double
-// read narrows the window; it is not atomic), but a live holder is bounded by
-// per-command timeouts well under STALE_LOCK_MS, so only a pathologically
-// stalled machine can lose its lock mid-refresh. A second, per-HOME lock
-// guards the upstream checkout and the install target, which are keyed by HOME
-// rather than REPO. If the git dir cannot be resolved there is no lock that
-// actually guards REPO, so the refresh is skipped (and backed off) rather than
-// run under a per-HOME lock that would not serialize the seats.
+// finally finishes. A stale lock is only broken when its recorded pid is dead,
+// and the break runs under a single-breaker marker (exclusive create) whose
+// own owner must be dead before a peer may evict it, so a live holder is never
+// evicted no matter how long its git operation runs and at most one breaker
+// ever removes a given stale lock. Pid liveness is local to the PID namespace
+// (single-host deployment of this fork); seats sharing a checkout across
+// machines or containers are not supported by this lock. A dead owner's pid
+// reused by an unrelated live process keeps the stale lock unbreakable until
+// that process exits — the refresh then skips rather than risk a double run;
+// a live-but-permanently-stuck breaker (SIGSTOP) blocks breaking the same way.
+// A stall inside a breaker's final marker-readback→rm gap can still pair two
+// breakers; only a kernel lock would close that residue.
+// A second, per-HOME lock guards the upstream checkout and the install target,
+// which are keyed by HOME rather than REPO. If the git dir cannot be resolved
+// there is no lock that actually guards REPO, so the refresh is skipped (and
+// backed off) rather than run under a per-HOME lock that would not serialize
+// the seats.
 async function withLock(sh: PluginInput["$"], home: string, fn: () => Promise<void>) {
   const repoLock = await lockPathFor(sh)
   if (!repoLock) {
@@ -148,32 +157,115 @@ async function acquireLock(lockPath: string): Promise<string | undefined> {
     if (handle) {
       try {
         await handle.writeFile(token)
-        await handle.close()
-        return token
+        // The lock is ours while our inode is the one at the path: a peer that
+        // broke an empty lock past the stale window and re-acquired shows its
+        // own inode there, and our token lives only in the unlinked file. A
+        // transient read error must not make an owned lock look stolen and
+        // wedge every later refresh on this live pid.
+        return (await ownsPath(handle, lockPath)) ? token : undefined
       } catch (error) {
-        // A failed token write would leave an empty, mtime-fresh lock that
-        // blocks peers for the full stale window; remove it before rethrowing.
-        await handle.close().catch(() => {})
-        await rm(lockPath, { force: true }).catch(() => {})
+        // A failed token write can leave an empty lock that a peer already
+        // broke and re-acquired past the stale window; remove the path only
+        // while it is still the inode this handle created, so a peer's fresh
+        // lock is not deleted except for a stall inside this compare→rm gap —
+        // the same irreducible residue as the breaker's readback→rm gap.
+        if (await ownsPath(handle, lockPath)) await rm(lockPath, { force: true }).catch(() => undefined)
         throw error
       }
     }
-    if (!(await staleLock(lockPath))) return undefined
-    // Check-then-act is racy: another process may break the same stale lock
-    // between the observation and the rm. Only break it when a second read
-    // still shows the same stale token/mtime.
-    const before = await Bun.file(lockPath).text().catch(() => undefined)
-    if (!(await staleLock(lockPath))) continue
-    if ((await Bun.file(lockPath).text().catch(() => undefined)) !== before) continue
-    await rm(lockPath, { force: true })
+    if (!(await breakableLock(lockPath))) return undefined
+    const breakerPath = `${lockPath}.breaker`
+    const breakerToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const breaker = await open(breakerPath, "wx").catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "EEXIST") return undefined
+      throw err
+    })
+    if (!breaker) {
+      // A crashed breaker must not wedge breaking forever: clean a marker only
+      // when its owner is gone, then retry. A marker whose pid is still alive
+      // belongs to a suspended or slow breaker and is left alone — evicting it
+      // would let a second breaker race the first one's pending rm.
+      const marker = await stat(breakerPath).catch(() => undefined)
+      if (marker && Date.now() - marker.mtimeMs > STALE_LOCK_MS) {
+        const owner = await Bun.file(breakerPath).text().catch(() => undefined)
+        // Evict only a marker whose owner was actually read and is gone: an
+        // unreadable marker is a live breaker's whose read failed, and the
+        // marker must still be the inode seen above before it is removed.
+        const pid = owner === undefined ? undefined : Number(owner.split("-")[0])
+        if (pid !== undefined && !pidAlive(pid)) {
+          const atPath = await stat(breakerPath).catch(() => undefined)
+          if (atPath && atPath.dev === marker.dev && atPath.ino === marker.ino) {
+            await rm(breakerPath, { force: true }).catch(() => undefined)
+            continue
+          }
+        }
+      }
+      return undefined
+    }
+    try {
+      await breaker.writeFile(breakerToken)
+    } catch {
+      // The marker may be empty or partially written, so a peer can evict it.
+      // Remove it only while it is still the inode this breaker created; a
+      // successor's marker is never deleted, and the successor bails via its
+      // own marker readback before touching the lock.
+      if (await ownsPath(breaker, breakerPath)) await rm(breakerPath, { force: true }).catch(() => undefined)
+      return undefined
+    }
+    await breaker.close().catch(() => {})
+    try {
+      // Only one breaker runs at a time, and the path stays occupied until the
+      // rm below — so a lock that is still breakable here can only be the one
+      // observed, never a fresh acquirer's.
+      if (!(await breakableLock(lockPath))) continue
+      // A peer may have evicted this breaker's marker while it looked stale;
+      // only the marker's owner may break the lock, so bail when ours was
+      // stolen. A stall inside this final readback→rm gap is irreducible
+      // without a kernel lock.
+      if ((await Bun.file(breakerPath).text().catch(() => undefined)) !== breakerToken) continue
+      await rm(lockPath, { force: true })
+    } finally {
+      // The marker is removed only while this breaker still owns it: a breaker
+      // suspended past the stale window must not delete a successor's marker.
+      const marker = await Bun.file(breakerPath).text().catch(() => undefined)
+      if (marker === breakerToken) await rm(breakerPath, { force: true }).catch(() => {})
+    }
   }
   return undefined
 }
 
-function staleLock(lockPath: string) {
-  return stat(lockPath)
-    .then((info) => Date.now() - info.mtimeMs > STALE_LOCK_MS)
-    .catch(() => false)
+// The inode this handle created still sits at target while dev+ino match, so
+// the path is ours whatever a transient read error says. A peer that broke and
+// recreated the file shows a different inode. Always closes the handle.
+async function ownsPath(handle: FileHandle, target: string) {
+  const mine = await handle.stat().catch(() => undefined)
+  await handle.close().catch(() => undefined)
+  const atPath = await stat(target).catch(() => undefined)
+  return mine !== undefined && atPath !== undefined && mine.dev === atPath.dev && mine.ino === atPath.ino
+}
+
+// A lock is breakable only when it is older than the stale window AND its
+// recorded pid is gone: a live holder is never evicted, no matter how long its
+// git operation runs. Unparseable content after the stale window counts as
+// dead — that is the empty lock a crashed writer can leave behind.
+async function breakableLock(lockPath: string) {
+  const info = await stat(lockPath).catch(() => undefined)
+  if (!info || Date.now() - info.mtimeMs <= STALE_LOCK_MS) return false
+  const token = await Bun.file(lockPath).text().catch(() => undefined)
+  if (token === undefined) return false
+  const pid = Number(token.split("-")[0])
+  return !pidAlive(pid)
+}
+
+function pidAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means the pid exists but belongs to another user: still alive.
+    return (error as NodeJS.ErrnoException).code === "EPERM"
+  }
 }
 
 async function releaseLock(lockPath: string, token: string) {

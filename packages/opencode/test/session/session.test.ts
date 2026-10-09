@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { $ } from "bun"
 import fs from "fs/promises"
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
@@ -238,6 +239,76 @@ describe("Session", () => {
       yield* session.remove(info.id)
       expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(false)
     }),
+  )
+
+  it.instance(
+    "remove deletes a goal file seeded from another worktree of the same project",
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const ctx = yield* InstanceState.context
+      const worktree = `${ctx.worktree}-wt`
+      yield* Effect.addFinalizer(() => Effect.promise(() => fs.rm(worktree, { recursive: true, force: true })))
+
+      const created = yield* provideInstance(worktree)(
+        Effect.gen(function* () {
+          const inner = yield* SessionNs.Service
+          const info = yield* inner.create({ title: "cross-worktree" })
+          const innerCtx = yield* InstanceState.context
+          return { info, innerCtx }
+        }),
+      )
+      expect(created.info.projectID).toBe(ctx.project.id)
+
+      const goalPath = SessionNs.goal(created.info, created.innerCtx)
+      yield* Effect.promise(() => fs.mkdir(path.dirname(goalPath), { recursive: true }))
+      yield* Effect.promise(() => fs.writeFile(goalPath, "objective"))
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(true)
+
+      yield* session.remove(created.info.id)
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(false)
+    }),
+    {
+      git: true,
+      init: (dir) =>
+        Effect.promise(async () => {
+          await $`git worktree add ${dir + "-wt"} HEAD`.cwd(dir).quiet()
+        }),
+    },
+  )
+
+  it.instance(
+    "remove deletes a goal file seeded from a NESTED worktree of the same project",
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const ctx = yield* InstanceState.context
+      const worktree = path.join(ctx.worktree, "nested-wt")
+      yield* Effect.addFinalizer(() => Effect.promise(() => fs.rm(worktree, { recursive: true, force: true })))
+
+      const created = yield* provideInstance(worktree)(
+        Effect.gen(function* () {
+          const inner = yield* SessionNs.Service
+          const info = yield* inner.create({ title: "cross-worktree" })
+          const innerCtx = yield* InstanceState.context
+          return { info, innerCtx }
+        }),
+      )
+      expect(created.info.projectID).toBe(ctx.project.id)
+
+      const goalPath = SessionNs.goal(created.info, created.innerCtx)
+      yield* Effect.promise(() => fs.mkdir(path.dirname(goalPath), { recursive: true }))
+      yield* Effect.promise(() => fs.writeFile(goalPath, "objective"))
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(true)
+
+      yield* session.remove(created.info.id)
+      expect(yield* Effect.promise(() => Bun.file(goalPath).exists())).toBe(false)
+    }),
+    {
+      git: true,
+      init: (dir) =>
+        Effect.promise(async () => {
+          await $`git worktree add ${path.join(dir, "nested-wt")} HEAD`.cwd(dir).quiet()
+        }),
+    },
   )
 
   it.instance("persists metadata and copies it on fork by default", () =>

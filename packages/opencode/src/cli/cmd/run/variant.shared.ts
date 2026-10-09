@@ -12,20 +12,15 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Context, Effect, Layer } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import { Global } from "@opencode-ai/core/global"
+import { DRAFT_SCOPE, normalizeVariantStore, type VariantStore } from "@opencode-ai/core/variant"
 import { isRecord } from "@/util/record"
 import { createSession, sessionVariant, type RunSession, type SessionMessages } from "./session.shared"
 import type { RunInput, RunProvider } from "./types"
 
 const MODEL_FILE = path.join(Global.Path.state, "model.json")
 
-// The scope key of the composer default, shared with the TUI's
-// DRAFT_MODEL_SCOPE (packages/tui/src/context/local.tsx). Variants persist per
-// session; this bucket is the one `opencode run`'s single composer uses and
-// the one a newly created session inherits.
-const DRAFT_SCOPE = ""
-
 type ModelState = Record<string, unknown> & {
-  variant?: Record<string, Record<string, string | undefined>>
+  variant?: VariantStore
 }
 type VariantService = {
   readonly resolveSavedVariant: (model: RunInput["model"]) => Effect.Effect<string | undefined>
@@ -126,44 +121,8 @@ function state(value: unknown): ModelState {
 
   return {
     ...value,
-    variant: normalizeVariant(value.variant),
+    variant: normalizeVariantStore(value.variant),
   }
-}
-
-// The on-disk store predates session scoping: a flat `provider/model -> variant`
-// map migrates into the draft bucket, which is the composer it came from.
-// Bucket contents merge so the result does not depend on JSON key order (a
-// file can contain both shapes after a mixed-version run); non-string leaves
-// are dropped so a malformed entry cannot survive a rewrite. Keys that could
-// reach Object.prototype are ignored.
-const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
-function normalizeVariant(value: unknown): Record<string, Record<string, string>> | undefined {
-  if (!isRecord(value)) {
-    return undefined
-  }
-
-  const result: Record<string, Record<string, string>> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (UNSAFE_KEYS.has(key)) {
-      continue
-    }
-    if (typeof entry === "string") {
-      result[DRAFT_SCOPE] = { ...(result[DRAFT_SCOPE] ?? {}), [key]: entry }
-      continue
-    }
-    if (!isRecord(entry)) {
-      continue
-    }
-    const bucket = Object.fromEntries(Object.entries(entry).filter(([, item]) => typeof item === "string")) as Record<
-      string,
-      string
-    >
-    if (Object.keys(bucket).length > 0) {
-      result[key] = { ...(result[key] ?? {}), ...bucket }
-    }
-  }
-  return result
 }
 
 function createLayer(fs = AppNodeBuilder.build(FSUtil.node)) {

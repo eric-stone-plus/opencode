@@ -13,6 +13,7 @@ import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute, type Route } from "./route"
 import { usePermission } from "./permission"
+import { DRAFT_SCOPE, normalizeVariantStore, type VariantStore } from "@opencode-ai/core/variant"
 
 export type LocalTheme = {
   secondary: RGBA
@@ -99,10 +100,8 @@ export type ModelRef = { providerID: string; modelID: string }
 // to the session it creates.
 export type ModelChoice = ModelRef | null | undefined
 
-export const DRAFT_MODEL_SCOPE = ""
-
 export function modelScope(route: Route) {
-  return route.type === "session" ? route.sessionID : DRAFT_MODEL_SCOPE
+  return route.type === "session" ? route.sessionID : DRAFT_SCOPE
 }
 
 // Precedence: the session's explicit choice > the agent's pinned model > the
@@ -138,33 +137,7 @@ export function configuredModel(input: { arg?: string; config?: string }) {
 // handed to the session it creates. A stored variant the newly chosen model
 // does not offer is dropped (unset, i.e. default) rather than kept as a
 // dangling selection; the model dialog then offers the variant picker again.
-export type VariantStore = Record<string, Record<string, string | undefined>>
-
-// The on-disk store predates session scoping: a flat `provider/model -> variant`
-// map. It migrates into the draft bucket, which is the composer it came from.
-// Bucket contents merge so the result does not depend on JSON key order (a
-// file can contain both shapes after a mixed-version run); keys that could
-// reach Object.prototype are ignored.
-const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
-export function normalizeVariantStore(value: unknown): VariantStore {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const result: VariantStore = {}
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (UNSAFE_KEYS.has(key)) continue
-    if (typeof entry === "string") {
-      result[DRAFT_MODEL_SCOPE] = { ...(result[DRAFT_MODEL_SCOPE] ?? {}), [key]: entry }
-      continue
-    }
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
-    const variants = Object.fromEntries(
-      Object.entries(entry as Record<string, unknown>).filter(([, item]) => typeof item === "string"),
-    ) as Record<string, string>
-    if (Object.keys(variants).length > 0) result[key] = { ...(result[key] ?? {}), ...variants }
-  }
-  return result
-}
-
+// The store shape and its migration live in core, shared with `opencode run`.
 export function readVariant(store: VariantStore, scope: string, model: ModelRef | undefined) {
   if (!model) return undefined
   return store[scope]?.[`${model.providerID}/${model.modelID}`]
@@ -177,8 +150,8 @@ export function readVariant(store: VariantStore, scope: string, model: ModelRef 
 export function adoptVariant(store: VariantStore, sessionID: string): VariantStore {
   return {
     ...store,
-    [sessionID]: { ...(store[DRAFT_MODEL_SCOPE] ?? {}) },
-    [DRAFT_MODEL_SCOPE]: {},
+    [sessionID]: { ...(store[DRAFT_SCOPE] ?? {}) },
+    [DRAFT_SCOPE]: {},
   }
 }
 
@@ -422,8 +395,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         // just created, so the next new session starts from defaults/pins.
         adopt(sessionID: string) {
           batch(() => {
-            setModelStore("model", sessionID, modelStore.model[DRAFT_MODEL_SCOPE] ?? null)
-            setModelStore("model", DRAFT_MODEL_SCOPE, undefined)
+            setModelStore("model", sessionID, modelStore.model[DRAFT_SCOPE] ?? null)
+            setModelStore("model", DRAFT_SCOPE, undefined)
             setModelStore("variant", reconcile(adoptVariant(modelStore.variant, sessionID)))
           })
           save()

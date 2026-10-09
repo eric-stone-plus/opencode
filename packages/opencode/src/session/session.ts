@@ -3,6 +3,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import fs from "fs/promises"
 import path from "path"
 import { BackgroundJob } from "@/background/job"
@@ -336,28 +337,15 @@ export function plan(input: { slug: string; time: { created: number } }, instanc
   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
 }
 
-export function goal(input: { slug: string; time: { created: number } }, instance: InstanceContext) {
+export function goal(
+  input: { slug: string; time: { created: number } },
+  instance: { worktree: string; project: { vcs?: unknown } },
+) {
   const base = instance.project.vcs
     ? path.join(instance.worktree, ".opencode", "goals")
     : path.join(Global.Path.data, "goals")
   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
 }
-
-// Goals are session-scoped state like the plan file: removing the session
-// removes its goal. Best-effort and instance-guarded — a session from another
-// project must not touch this instance's worktree. A session from another
-// worktree of the same project (same project id) keeps its file: the goal path
-// is derived from the worktree of the instance that removes it.
-const removeGoalFile = (session: Info) =>
-  Effect.gen(function* () {
-    const ctx = yield* InstanceState.context
-    if (ctx.project.id !== session.projectID) return
-    const target = goal(session, ctx)
-    yield* Effect.tryPromise(() => fs.rm(target, { force: true })).pipe(
-      Effect.tapError((error) => Effect.logDebug("failed to remove session goal file", { target, error })),
-      Effect.ignore,
-    )
-  })
 
 export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?: ProviderMetadata }) => {
   const finite = (value: number) => (Number.isFinite(value) ? value : 0)
@@ -510,7 +498,7 @@ export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" 
 const layer: Layer.Layer<
   Service,
   never,
-  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service
+  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service | ProjectV2.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -519,6 +507,7 @@ const layer: Layer.Layer<
     const background = yield* BackgroundJob.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const project = yield* ProjectV2.Service
 
     const createNext = Effect.fn("Session.createNext")(function* (input: {
       id?: SessionID
@@ -626,6 +615,42 @@ const layer: Layer.Layer<
         .pipe(Effect.orDie)
       return rows.map(fromRow)
     })
+
+    // Goals are session-scoped state like the plan file: removing the session
+    // removes its goal. Best-effort and instance-guarded — a session from
+    // another project must not touch this instance's worktree. A session from
+    // another worktree of the same project (same project id) is resolved
+    // through its own directory, so the file seeded there is removed as well;
+    // the project id must still match, and an unresolvable directory falls
+    // back to this instance's worktree only. A session used from more than two
+    // worktrees can still leave an orphan in a third one: only the removing
+    // instance and session.directory are covered, and interruption of the
+    // resolve is swallowed so cleanup keeps running.
+    const removeGoalFile = (session: Info) =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceState.context
+        if (ctx.project.id !== session.projectID) return
+        const targets = new Set<string>([goal(session, ctx)])
+        // The resolve is skipped only when the session's directory IS this
+        // instance's worktree root. Subdirectories and nested repositories
+        // (e.g. a worktree created inside this one) still resolve, because
+        // repo discovery from there can land on a different worktree root.
+        const resolved =
+          session.directory === ctx.worktree
+            ? undefined
+            : yield* project
+                .resolve(AbsolutePath.make(session.directory))
+                .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        if (resolved && resolved.id === session.projectID) {
+          targets.add(goal(session, { worktree: resolved.directory, project: { vcs: resolved.vcs } }))
+        }
+        for (const target of targets) {
+          yield* Effect.tryPromise(() => fs.rm(target, { force: true })).pipe(
+            Effect.tapError((error) => Effect.logDebug("failed to remove session goal file", { target, error })),
+            Effect.ignore,
+          )
+        }
+      })
 
     const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
       const session = yield* get(sessionID)
@@ -1037,7 +1062,7 @@ function listByProject(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node],
+  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node, ProjectV2.node],
 })
 
 export * as Session from "./session"

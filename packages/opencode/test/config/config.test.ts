@@ -1141,18 +1141,20 @@ it.effect("creates a missing OPENCODE_CONFIG_DIR", () =>
   }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
 )
 
-it.effect("merges missing entries into an existing .gitignore", () =>
+it.effect("merges missing entries into a pristine generated .gitignore", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped()
     const configDir = path.join(dir, "configdir")
-    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), "custom-entry\nnode_modules\n")
+    yield* FSUtil.use.writeWithDirs(
+      path.join(configDir, ".gitignore"),
+      "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\n",
+    )
 
     yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
 
     const gitignore = yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))
     expect(gitignore).toBe(
       [
-        "custom-entry",
         "node_modules",
         "package.json",
         "package-lock.json",
@@ -1163,6 +1165,128 @@ it.effect("merges missing entries into an existing .gitignore", () =>
         "",
       ].join("\n"),
     )
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("leaves a curated .gitignore untouched", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const curated = "custom-entry\n!package.json\nnode_modules\n"
+    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), curated)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toBe(curated)
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("does not resurrect entries removed from a generated .gitignore", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const curated = "node_modules\npackage-lock.json\nbun.lock\n.gitignore\n"
+    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), curated)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toBe(curated)
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("does not migrate a duplicated generated .gitignore", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const curated = "node_modules\nnode_modules\npackage.json\npackage-lock.json\nbun.lock\n"
+    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), curated)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toBe(curated)
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("does not migrate a complete generated .gitignore with a duplicate line", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const curated = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\nnode_modules\n"
+    yield* FSUtil.use.writeWithDirs(path.join(configDir, ".gitignore"), curated)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toBe(curated)
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("preserves the mode of a migrated .gitignore", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const file = path.join(configDir, ".gitignore")
+    yield* FSUtil.use.writeWithDirs(
+      file,
+      "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\n",
+    )
+    yield* FSUtil.use.chmod(file, 0o600)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    const info = yield* FSUtil.use.stat(file)
+    expect(info.mode & 0o777).toBe(0o600)
+    expect(yield* FSUtil.use.readFileString(file)).toContain("goals")
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("writes through a symlinked .gitignore", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const link = path.join(configDir, ".gitignore")
+    const target = path.join(dir, "real-gitignore")
+    yield* FSUtil.use.ensureDir(configDir)
+    yield* FSUtil.use.writeFileString(target, "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\n")
+    yield* FSUtil.use.symlink(target, link)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(target)).toContain("goals")
+    expect(yield* FSUtil.use.readLink(link)).toBe(target)
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("follows a broken symlink chain to its final target", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const link = path.join(configDir, ".gitignore")
+    const middle = path.join(configDir, "middle")
+    const target = path.join(configDir, "final-gitignore")
+    yield* FSUtil.use.ensureDir(configDir)
+    yield* FSUtil.use.symlink("middle", link)
+    yield* FSUtil.use.symlink("final-gitignore", middle)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readFileString(target)).toContain("goals")
+    expect(yield* FSUtil.use.readLink(link)).toBe("middle")
+    expect(yield* FSUtil.use.readLink(middle)).toBe("final-gitignore")
+  }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+)
+
+it.effect("leaves a cyclic symlink .gitignore untouched", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const configDir = path.join(dir, "configdir")
+    const link = path.join(configDir, ".gitignore")
+    yield* FSUtil.use.ensureDir(configDir)
+    yield* FSUtil.use.symlink(".gitignore", link)
+
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
+
+    expect(yield* FSUtil.use.readLink(link)).toBe(".gitignore")
+    expect(yield* FSUtil.use.isFile(link)).toBe(false)
   }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
 )
 

@@ -251,6 +251,17 @@ const layer = Layer.effect(
         "goals",
         "plans",
       ]
+      // The entry sets earlier versions of this file generated. Only a file
+      // whose non-empty lines are exactly one of these (each once, any order)
+      // is ours to update: a curated file (custom lines, negations, duplicates,
+      // an empty file, or a deliberate opt-out via deleted entries) is left
+      // untouched, so migration never resurrects entries the user removed on
+      // purpose. When entries gains a member, add the set it had before the
+      // addition here so files written by the previous version still gain it.
+      const shipped = [
+        new Set(["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore"]),
+        new Set(["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore", "goals", "plans"]),
+      ]
       const existing = (yield* fs.isFile(gitignore))
         ? yield* fs.readFileStringSafe(gitignore).pipe(Effect.orElseSucceed(() => undefined))
         : undefined
@@ -258,19 +269,59 @@ const layer = Layer.effect(
       // file) must not be rewritten; leave it exactly as it is.
       if (existing === undefined && (yield* fs.existsSafe(gitignore))) return
       const lines = existing?.split("\n").map((line) => line.trim()) ?? []
+      const nonEmpty = lines.filter((line) => line !== "")
+      const present = new Set(nonEmpty)
+      const pristine = shipped.some(
+        (shape) => nonEmpty.length === shape.size && present.size === shape.size && [...present].every((line) => shape.has(line)),
+      )
+      if (existing !== undefined && !pristine) return
       const missing = entries.filter((entry) => !lines.includes(entry))
       if (missing.length === 0) return
       // Files created before an entry was added must gain it too: goal and plan
       // files are runtime state, and a stale .gitignore would let them show up
       // in snapshots and session diffs. Existing lines are never touched. This
-      // is best-effort: a failed update must not fail config loading.
+      // is best-effort: a failed update must not fail config loading, and the
+      // temp-file rename keeps a crash from truncating the file. A symlinked
+      // .gitignore keeps being written through to its target, as before —
+      // including a broken link chain, whose final target is created; a cyclic
+      // chain has no usable target and is left alone, as the ELOOP write did.
       const content =
-        existing === undefined || existing.trim() === ""
-          ? entries.join("\n")
-          : `${existing.replace(/\n+$/, "")}\n${missing.join("\n")}\n`
-      yield* fs
-        .writeFileString(gitignore, content)
-        .pipe(Effect.catch((error) => Effect.logDebug("failed to update generated .gitignore", { gitignore, error })))
+        existing === undefined ? entries.join("\n") : `${existing.replace(/\n+$/, "")}\n${missing.join("\n")}\n`
+      const target =
+        existing !== undefined
+          ? yield* fs.realPath(gitignore).pipe(Effect.orElseSucceed(() => gitignore))
+          : yield* Effect.gen(function* () {
+              // A broken symlink may point at another symlink: walk the chain
+              // to its final target so the write creates that file instead of
+              // replacing an intermediate link.
+              let current = gitignore
+              const seen = new Set<string>()
+              for (let hop = 0; hop < 32; hop++) {
+                seen.add(current)
+                const next = yield* fs.readLink(current).pipe(Effect.orElseSucceed(() => undefined))
+                if (next === undefined) return current
+                current = path.resolve(path.dirname(current), next)
+                if (seen.has(current)) return undefined
+              }
+              return undefined
+            })
+      if (target === undefined) return
+      const mode =
+        existing === undefined
+          ? undefined
+          : (yield* fs.stat(target).pipe(Effect.orElseSucceed(() => undefined)))?.mode
+      const temporary = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+      yield* Effect.gen(function* () {
+        yield* fs.writeFileString(temporary, content)
+        if (mode !== undefined) yield* fs.chmod(temporary, mode).pipe(Effect.ignore)
+        yield* fs.rename(temporary, target)
+      }).pipe(
+        // Cleanup runs on every exit, interruption included: a crash between
+        // write and rename must not leave the temp file in the directory this
+        // ignore is meant to cover.
+        Effect.ensuring(fs.remove(temporary).pipe(Effect.ignore)),
+        Effect.catch((error) => Effect.logDebug("failed to update generated .gitignore", { gitignore, error })),
+      )
     })
 
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(
