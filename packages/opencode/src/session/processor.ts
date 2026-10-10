@@ -396,7 +396,12 @@ const layer = Layer.effect(
             const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
               Effect.provideService(Database.Service, database),
             )
-            const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            // Only tool parts count toward the repeat window: step-start/text/
+            // reasoning parts interleaved between calls must not punch holes in
+            // the slice — with them in the window `every()` below failed and
+            // sequential identical repeats slipped through undetected.
+            const toolParts = parts.filter((part) => part.type === "tool" && part.state.status !== "pending")
+            const recentParts = toolParts.slice(-DOOM_LOOP_THRESHOLD)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||

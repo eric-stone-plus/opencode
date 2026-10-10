@@ -27,6 +27,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Pricing } from "@opencode-ai/core/pricing"
 import { LLMEvent } from "@opencode-ai/llm"
+import { Permission } from "@/permission"
 
 const summary = Layer.succeed(
   SessionSummary.Service,
@@ -1650,6 +1651,99 @@ itStopped.live("session.processor stops an unattended agent that keeps repeating
 
         expect(result).toBe("stop")
         expect(JSON.stringify(handle.message.error)).toContain("doom loop")
+      }),
+    { config: cfg },
+  ),
+)
+
+// Interactive doom-loop detection: identical tool calls interleaved with
+// step-start/text parts must still trigger the doom_loop ask. The old window
+// `parts.slice(-3)` counted those interleaved parts, so `every()` failed and
+// sequential repeats slipped through.
+const doomAsks: string[] = []
+const recordingPermission = Layer.succeed(
+  Permission.Service,
+  Permission.Service.of({
+    ask: (input) =>
+      Effect.sync(() => {
+        if (input.permission === "doom_loop") doomAsks.push(String(input.patterns?.[0] ?? ""))
+      }),
+    reply: () => Effect.void,
+    list: () => Effect.succeed([]),
+  }),
+)
+
+const interactiveDoomLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.make(
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.textStart({ id: "text-0" }),
+        LLMEvent.textDelta({ id: "text-0", text: "looking" }),
+        LLMEvent.textEnd({ id: "text-0" }),
+        LLMEvent.toolCall({ id: "call-0", name: "repeat", input: { path: "a" }, providerExecuted: true }),
+        LLMEvent.toolResult({
+          id: "call-0",
+          name: "repeat",
+          result: { type: "text", value: "same" },
+          providerExecuted: true,
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.stepStart({ index: 1 }),
+        LLMEvent.textStart({ id: "text-1" }),
+        LLMEvent.textDelta({ id: "text-1", text: "looking again" }),
+        LLMEvent.textEnd({ id: "text-1" }),
+        LLMEvent.toolCall({ id: "call-1", name: "repeat", input: { path: "a" }, providerExecuted: true }),
+        LLMEvent.toolResult({
+          id: "call-1",
+          name: "repeat",
+          result: { type: "text", value: "same" },
+          providerExecuted: true,
+        }),
+        LLMEvent.stepFinish({ index: 1, reason: "tool-calls" }),
+        LLMEvent.stepStart({ index: 2 }),
+        LLMEvent.textStart({ id: "text-2" }),
+        LLMEvent.textDelta({ id: "text-2", text: "looking a third time" }),
+        LLMEvent.textEnd({ id: "text-2" }),
+        LLMEvent.toolCall({ id: "call-2", name: "repeat", input: { path: "a" }, providerExecuted: true }),
+        LLMEvent.toolResult({
+          id: "call-2",
+          name: "repeat",
+          result: { type: "text", value: "same" },
+          providerExecuted: true,
+        }),
+        LLMEvent.stepFinish({ index: 2, reason: "stop" }),
+        LLMEvent.finish({ reason: "stop" }),
+      ),
+  }),
+)
+const interactiveDoomEnv = LayerNode.compile(root, [
+  ...replacements,
+  [LLM.node, interactiveDoomLLM],
+  [Permission.node, recordingPermission],
+])
+const itInteractiveDoom = testEffect(interactiveDoomEnv)
+
+itInteractiveDoom.live("session.processor asks doom_loop for identical calls interleaved with step starts", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        doomAsks.length = 0
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+
+        const result = yield* handle.process(
+          streamInput(chat, parent, mdl, { agent: agent(), tools: { repeat: repeatTool } }),
+        )
+
+        expect(result).toBe("continue")
+        expect(handle.message.error).toBeUndefined()
+        expect(doomAsks).toEqual(["repeat"])
       }),
     { config: cfg },
   ),

@@ -29,7 +29,7 @@ export const GrepTool = Tool.define(
         Effect.gen(function* () {
           const empty = {
             title: params.pattern,
-            metadata: { matches: 0, truncated: false },
+            metadata: { matches: 0 },
             output: "No files found",
           }
           if (!params.pattern) {
@@ -103,9 +103,12 @@ export const GrepTool = Tool.define(
 
           return {
             title: params.pattern,
+            // Never set `truncated` here: the tool wrap skips Truncate.output
+            // whenever the key is present, even as `truncated: false`, so adding
+            // it would opt grep out of windowing/spill. The match-count cap is
+            // reported in the output prose above instead.
             metadata: {
               matches: total,
-              truncated,
             },
             output: output.join("\n"),
           }

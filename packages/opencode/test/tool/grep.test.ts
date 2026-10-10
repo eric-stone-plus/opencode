@@ -220,4 +220,29 @@ describe("tool.grep", () => {
       expect(requests.find((req) => req.permission === "external_directory")).toBeUndefined()
     }),
   )
+
+  it.instance("oversized output is windowed and spilled by the tool wrap", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      // 60 matching lines of ~2.4KB each: ~120KB of output — over the 50KB
+      // Truncate budget and under the 100-match cap, so a truncated flag here
+      // can only mean OUTPUT truncation, never the match-count cap.
+      const line = `filler ${"x".repeat(2400)}`
+      yield* Effect.promise(() =>
+        Bun.write(path.join(test.directory, "big.txt"), `${Array(60).fill(line).join("\n")}\n`),
+      )
+      const info = yield* GrepTool
+      const grep = yield* info.init()
+      const result = yield* grep.execute({ pattern: "filler", path: test.directory }, ctx)
+
+      expect(result.metadata.matches).toBe(60)
+      // L0 contract: grep must not pre-set metadata.truncated (that opts out of
+      // the wrap). The wrap owns output truncation and attaches the spill path.
+      const meta = result.metadata as typeof result.metadata & { truncated?: boolean; outputPath?: string }
+      expect(meta.truncated).toBe(true)
+      expect(meta.outputPath).toBeString()
+      expect(Buffer.byteLength(result.output, "utf-8")).toBeLessThan(60 * 1024)
+      expect(result.output).toContain("output was truncated")
+    }),
+  )
 })

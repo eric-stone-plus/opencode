@@ -64,9 +64,12 @@ export const GlobTool = Tool.define(
 
           return {
             title: path.relative(ins.worktree, search),
+            // Never set `truncated` here: the tool wrap skips Truncate.output
+            // whenever the key is present, even as `truncated: false`, so adding
+            // it would opt glob out of windowing/spill. The match-count cap is
+            // reported in the output prose above instead.
             metadata: {
               count: files.length,
-              truncated,
             },
             output: output.join("\n"),
           }
