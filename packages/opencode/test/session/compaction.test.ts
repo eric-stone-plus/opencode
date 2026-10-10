@@ -63,6 +63,7 @@ function createModel(opts: {
   input?: number
   cost?: Provider.Model["cost"]
   npm?: string
+  options?: Record<string, unknown>
 }): Provider.Model {
   return {
     id: "test-model",
@@ -83,7 +84,7 @@ function createModel(opts: {
       output: { text: true, image: false, audio: false, video: false },
     },
     api: { id: "test-model", npm: opts.npm ?? "@ai-sdk/anthropic" },
-    options: {},
+    options: opts.options ?? {},
   } as Provider.Model
 }
 
@@ -418,6 +419,80 @@ describe("session.compaction.isOverflow", () => {
           cache: { read: 230_000, write: 678 },
         }
         expect(yield* compact.isOverflow({ tokens, model })).toBe(true)
+      }),
+    ),
+  )
+
+  it.live(
+    "honors per-model workingContextCap above the 256k default",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        // deepseek-flash shaped: 1M advertised context, calibrated 606784 input budget.
+        const model = createModel({
+          context: 1_000_000,
+          input: 606_784,
+          output: 393_216,
+          options: { workingContextCap: 606_784 },
+        })
+        const within = {
+          input: 6,
+          output: 827,
+          reasoning: 0,
+          cache: { read: 300_000, write: 678 },
+        }
+        // 300k would overflow the default 256k clamp (usable 236k) but must
+        // fit the per-model cap: usable = 606_784 - 20_000 = 586_784.
+        expect(yield* compact.isOverflow({ tokens: within, model })).toBe(false)
+        const over = { ...within, cache: { read: 590_000, write: 678 } }
+        expect(yield* compact.isOverflow({ tokens: over, model })).toBe(true)
+      }),
+    ),
+  )
+
+  it.live(
+    "never lets workingContextCap exceed the model's real input budget",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        const model = createModel({
+          context: 1_000_000,
+          input: 606_784,
+          output: 393_216,
+          options: { workingContextCap: 2_000_000 },
+        })
+        // window stays min(context, input) = 606_784 → usable 586_784.
+        const tokens = { input: 6, output: 827, reasoning: 0, cache: { read: 590_000, write: 678 } }
+        expect(yield* compact.isOverflow({ tokens, model })).toBe(true)
+      }),
+    ),
+  )
+
+  it.live(
+    "ignores non-numeric or tiny workingContextCap values and keeps the 256k clamp",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        // Garbage caps: non-number, boolean (Number(true) === 1), a value at
+        // the compaction reserve floor, and NaN-shaped strings. Each must
+        // fall back to the default clamp instead of collapsing usable() to 0.
+        for (const workingContextCap of ["huge", true, 1, 20_000, Number.NaN]) {
+          const model = createModel({
+            context: 1_000_000,
+            input: 606_784,
+            output: 393_216,
+            options: { workingContextCap },
+          })
+          const tokens = {
+            input: 6,
+            output: 827,
+            reasoning: 0,
+            cache: { read: 240_000, write: 678 },
+          }
+          // 241k overflows the clamped usable (256k − 20k = 236k) but would
+          // fit a real 606_784 cap — a garbage cap value must not change that.
+          expect(yield* compact.isOverflow({ tokens, model })).toBe(true)
+        }
       }),
     ),
   )

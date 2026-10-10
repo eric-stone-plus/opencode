@@ -14,6 +14,20 @@ function workingWindow(model: Provider.Model) {
   if (context === 0) return 0
   const input = model.limit.input
   const window = input && input > 0 ? Math.min(context, input) : context
+  // Per-model opt-out of the conservative default clamp via
+  // `model.options.workingContextCap` (merged from config model blocks;
+  // stripped again in ProviderTransform.providerOptions so it never rides
+  // the request body). Never above the model's real input budget: Math.min
+  // with `window` keeps a typo-sized cap honest. Only safe integers strictly
+  // above the compaction reserve count — booleans coerce via Number(), and a
+  // cap at/below the reserve collapses usable() to 0, which would compact on
+  // every step. Anything else keeps the default clamp. Note the reserve can
+  // be raised above COMPACTION_BUFFER via `compaction.reserved`; a cap below
+  // that configured reserve is still a config error.
+  const override = model.options?.workingContextCap
+  if (typeof override === "number" && Number.isSafeInteger(override) && override > COMPACTION_BUFFER) {
+    return Math.min(window, override)
+  }
   return Math.min(window, WORKING_CONTEXT_CAP)
 }
 

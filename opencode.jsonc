@@ -29,7 +29,12 @@
           },
           "options": {
             "effort": "max",
-            "maxOutputTokens": 65536
+            "maxOutputTokens": 65536,
+            // Per-model compaction adaptation (2026-10-10): raise the
+            // conservative 256k WORKING_CONTEXT_CAP clamp (overflow.ts) to the
+            // hand-calibrated limit.input of this block. Same pattern pinned on
+            // the zhipuai/mimo/deepseek blocks.
+            "workingContextCap": 852544
           }
         }
       }
@@ -117,7 +122,8 @@
             // (8192-budget run: 7818 reasoning + 374 text = 8192,
             // finish=length); 131072 accepted for glm-5.3 AND flash
             // (262144 → 400 "限制数值范围[1,131072]").
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 868928
           }
         },
         "glm-5.3-flash": {
@@ -125,7 +131,8 @@
           "reasoning": true,
           "limit": {
             "context": 1000000,
-            // Same as glm-5.3: keeps the 236k compaction watermark.
+            // Same as glm-5.3. The old 236k compaction watermark is
+            // superseded by the workingContextCap pin below (2026-10-10).
             "input": 868928,
             "output": 131072
           },
@@ -135,7 +142,8 @@
           },
           "options": {
             // Raised with glm-5.3 2026-09-29 (flash validated to 131072).
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 868928
           }
         }
       }
@@ -156,9 +164,10 @@
     //
     // Long-task tuning:
     // - limit.input is load-bearing (overflow.ts:29): with it the usable
-    //   window is WORKING_CONTEXT_CAP(256k) − 20k = 236k per compaction
-    //   cycle; without it the full maxOutputTokens is deducted and the
-    //   cycle lands at 190464. 917504 = context − output.
+    //   window is the workingContextCap pin below minus the 20k reserve
+    //   (917504 − 20k = 897504 per compaction cycle; the pre-2026-10-10
+    //   256k clamp yielded 236k). Without it the full maxOutputTokens is
+    //   deducted and the cycle lands at 190464. 917504 = context − output.
     // - maxOutputTokens is the FULL 131072 on purpose (glm blocks raised
     //   to match 2026-09-29 — same shared-budget semantics measured on
     //   the zhipu endpoint; bailian left at 65536, endpoint untested):
@@ -199,7 +208,8 @@
             "output": ["text"]
           },
           "options": {
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 917504
           }
         },
         "mimo-v2.6-flash": {
@@ -215,7 +225,8 @@
             "output": ["text"]
           },
           "options": {
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 917504
           }
         }
       }
@@ -276,7 +287,8 @@
           "options": {
             "reasoningEffort": "max",
             "top_p": 0.95,
-            "maxOutputTokens": 393216
+            "maxOutputTokens": 393216,
+            "workingContextCap": 606784
           }
         }
       }

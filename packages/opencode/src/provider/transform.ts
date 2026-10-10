@@ -1333,7 +1333,15 @@ export function options(input: {
   }
 
   if (input.providerOptions?.setCacheKey !== false) {
-    if (input.model.api.npm === "@ai-sdk/deepinfra" || input.model.api.npm === "@ai-sdk/cerebras") {
+    if (
+      input.model.api.npm === "@ai-sdk/deepinfra" ||
+      input.model.api.npm === "@ai-sdk/cerebras" ||
+      // DeepSeek documents `prompt_cache_key` as the prefix-cache affinity
+      // hint on its OpenAI-compatible API (distinct from OpenAI's camelCase
+      // promptCacheKey). Scoped to the deepseek provider id: cache-key
+      // semantics of other openai-compatible endpoints are unverified.
+      (input.model.providerID === "deepseek" && input.model.api.npm === "@ai-sdk/openai-compatible")
+    ) {
       result["prompt_cache_key"] = input.sessionID
     } else if (
       input.model.api.npm === "@ai-sdk/openai" ||
@@ -1425,15 +1433,20 @@ const SLUG_OVERRIDES: Record<string, string> = {
 }
 
 export function providerOptions(model: Provider.Model, options: { [x: string]: any }) {
+  // Harness-only knobs that ride `model.options` for config convenience must
+  // never reach the wire: the openai-compatible SDK spreads unrecognized
+  // providerOptions keys straight into the JSON body. workingContextCap is
+  // consumed by session/overflow.ts only — strip before normalization copies.
+  const { workingContextCap: _workingContextCap, ...wireOptions } = options
   const usesOpenAIReasoningGate =
     model.api.npm === "@ai-sdk/openai" ||
     model.api.npm === "@ai-sdk/azure" ||
     model.api.npm === "@ai-sdk/amazon-bedrock/mantle"
   const normalized =
     usesOpenAIReasoningGate &&
-    (model.capabilities.reasoning || options.reasoningEffort !== undefined || options.reasoningSummary !== undefined)
-      ? { ...options, forceReasoning: true }
-      : anthropicBlockBinding(model, options)
+    (model.capabilities.reasoning || wireOptions.reasoningEffort !== undefined || wireOptions.reasoningSummary !== undefined)
+      ? { ...wireOptions, forceReasoning: true }
+      : anthropicBlockBinding(model, wireOptions)
 
   if (model.api.npm === "@ai-sdk/gateway") {
     // Gateway providerOptions are split across two namespaces:

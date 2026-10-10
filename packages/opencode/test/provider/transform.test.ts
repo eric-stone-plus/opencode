@@ -88,6 +88,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
       },
     }
     const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
+
     expect(result.promptCacheKey).toBe(sessionID)
   })
 
@@ -115,6 +116,67 @@ describe("ProviderTransform.options - setCacheKey", () => {
       providerOptions: {},
     })
     expect(result.promptCacheKey).toBeUndefined()
+  })
+
+  test("should set prompt_cache_key for the deepseek provider on the OpenAI-compatible SDK", () => {
+    const result = ProviderTransform.options({
+      model: {
+        ...mockModel,
+        providerID: "deepseek",
+        api: { id: "deepseek-flash", url: "https://api.deepseek.com", npm: "@ai-sdk/openai-compatible" },
+      },
+      sessionID,
+      providerOptions: {},
+    })
+    // DeepSeek's documented cache-affinity field, distinct from the
+    // OpenAI SDK's promptCacheKey camelCase spelling.
+    expect(result.prompt_cache_key).toBe(sessionID)
+  })
+
+  test("should not set prompt_cache_key for deepseek when explicitly disabled", () => {
+    const result = ProviderTransform.options({
+      model: {
+        ...mockModel,
+        providerID: "deepseek",
+        api: { id: "deepseek-flash", url: "https://api.deepseek.com", npm: "@ai-sdk/openai-compatible" },
+      },
+      sessionID,
+      providerOptions: { setCacheKey: false },
+    })
+    expect(result.prompt_cache_key).toBeUndefined()
+  })
+
+  test("should not set prompt_cache_key for other OpenAI-compatible providers", () => {
+    const result = ProviderTransform.options({
+      model: {
+        ...mockModel,
+        providerID: "xiaomi-token-plan-cn",
+        api: { id: "mimo-v2.6-pro", url: "https://token-plan-cn.xiaomimimo.com/v1", npm: "@ai-sdk/openai-compatible" },
+      },
+      sessionID,
+      providerOptions: {},
+    })
+    // MiMo/GLM cache-key semantics are unverified — stay conservative.
+    expect(result.prompt_cache_key).toBeUndefined()
+  })
+
+  test("should never leak the harness-only workingContextCap into providerOptions", () => {
+    const model = {
+      ...mockModel,
+      providerID: "deepseek",
+      api: { id: "deepseek-flash", url: "https://api.deepseek.com", npm: "@ai-sdk/openai-compatible" },
+    }
+    const result = ProviderTransform.providerOptions(model, {
+      workingContextCap: 606_784,
+      maxOutputTokens: 393_216,
+    })
+    // openai-compatible spreads unknown keys into the request body, so the
+    // compaction knob must be stripped while real wire options survive.
+    // (sdkKey has no openai-compatible case — options ride the providerID key.)
+    const wire = result.openaiCompatible ?? result.deepseek ?? result
+    expect(wire.workingContextCap).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain("workingContextCap")
+    expect(wire.maxOutputTokens).toBe(393_216)
   })
 
   test("should not set promptCacheKey for openai when explicitly disabled", () => {
