@@ -79,7 +79,9 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
     proc.kill(opts.kill ?? "SIGTERM")
 
     const ms = opts.timeout ?? 5_000
-    if (ms <= 0) return
+    // NaN passes `ms <= 0` (the comparison is false) and would reach
+    // setTimeout, which coerces it to 1 ms and warns on fd 2.
+    if (!Number.isFinite(ms) || ms <= 0) return
     timer = setTimeout(() => proc.kill("SIGKILL"), ms)
   }
 

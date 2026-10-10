@@ -219,6 +219,11 @@ export const TuiThreadCommand = cmd({
       client.on<{ name: string; message: string; stack?: string }>("process.warning", (warning) => {
         console.warn(`${warning.name}: ${warning.message}`)
       })
+      // Worker console.* output is forwarded the same way (the worker shares
+      // this terminal's fd 2); land it in the console overlay.
+      client.on<{ level: "log" | "info" | "warn" | "error" | "debug"; text: string }>("console.forward", (entry) => {
+        console[entry.level](entry.text)
+      })
       const reload = () => {
         client.call("reload", undefined).catch(() => {})
       }

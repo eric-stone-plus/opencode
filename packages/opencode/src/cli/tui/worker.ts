@@ -33,6 +33,31 @@ process.on("warning", (warning) => {
   })
 })
 
+// Tool execution and plugin hooks run in this worker and their console.*
+// calls share the main thread's fd 2 — one stray log (e.g. a plugin's
+// tool.execute.before error path) garbles the alt-screen TUI exactly like a
+// runtime warning. Forward worker console output over RPC so the main thread
+// can land it in the console overlay instead of the terminal.
+const formatConsoleArg = (arg: unknown): string => {
+  if (typeof arg === "string") return arg
+  if (arg instanceof Error) return arg.stack ?? `${arg.name}: ${arg.message}`
+  try {
+    return JSON.stringify(arg) ?? String(arg)
+  } catch {
+    return String(arg)
+  }
+}
+const forwardConsole =
+  (level: "log" | "info" | "warn" | "error" | "debug") =>
+  (...args: unknown[]) => {
+    Rpc.emit("console.forward", { level, text: args.map(formatConsoleArg).join(" ") })
+  }
+console.log = forwardConsole("log")
+console.info = forwardConsole("info")
+console.warn = forwardConsole("warn")
+console.error = forwardConsole("error")
+console.debug = forwardConsole("debug")
+
 // Subscribe to global events and forward them via RPC
 GlobalBus.on("event", (event) => {
   Rpc.emit("global.event", event)
