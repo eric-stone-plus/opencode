@@ -377,10 +377,25 @@ export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?
 
   const total = input.usage.totalTokens
 
+  // Completion may EXCLUDE the separately reported reasoning (copilot-style
+  // wires document total_tokens = prompt + text + reasoning) or INCLUDE it
+  // (OpenAI/DeepSeek: total = prompt + completion). Identify the exclusive
+  // shape from total when present — it then matches input+output+reasoning
+  // more closely than input+output — and fall back to reasoning > completion,
+  // which is impossible under the inclusive shape. Only subtract reasoning
+  // from completion on the inclusive shape so it is not billed twice at the
+  // output rate; on the exclusive shape the completion count is already the
+  // visible text.
+  const exclusiveShape =
+    total != null && reasoningTokens > 0
+      ? Math.abs(total - (inputTokens + outputTokens + reasoningTokens)) <
+        Math.abs(total - (inputTokens + outputTokens))
+      : reasoningTokens > outputTokens
+
   const tokens = {
     total,
     input: adjustedInputTokens,
-    output: safe(outputTokens - reasoningTokens),
+    output: exclusiveShape ? outputTokens : safe(outputTokens - reasoningTokens),
     reasoning: reasoningTokens,
     cache: {
       write: cacheWriteInputTokens,

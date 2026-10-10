@@ -52,13 +52,25 @@ function usage(value: unknown) {
     cachedInputTokens?: number
     inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number }
     outputTokenDetails?: { reasoningTokens?: number }
+    // asLanguageModelUsage preserves the wire usage object here (openai-compatible
+    // sets it to the full chat-completion usage).
+    raw?: { prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number }
   }
+  // DeepSeek reports cache hits as top-level `prompt_cache_hit_tokens` and may
+  // omit `prompt_tokens_details.cached_tokens`; the openai-compatible converter
+  // then yields cacheReadTokens=0, silently billing cache hits at the full input
+  // rate. The wire value is authoritative when present (DeepSeek docs: it is
+  // required and `cached_tokens` is its optional alias). Verified passthrough:
+  // @ai-sdk/openai-compatible's converter sets `raw: usage` (the full wire
+  // usage) and `asLanguageModelUsage` forwards `usage.raw` unchanged.
+  const wireCacheRead =
+    typeof item.raw?.prompt_cache_hit_tokens === "number" ? item.raw.prompt_cache_hit_tokens : undefined
   const entries = Object.entries({
     inputTokens: item.inputTokens,
     outputTokens: item.outputTokens,
     totalTokens: item.totalTokens,
     reasoningTokens: item.outputTokenDetails?.reasoningTokens ?? item.reasoningTokens,
-    cacheReadInputTokens: item.inputTokenDetails?.cacheReadTokens ?? item.cachedInputTokens,
+    cacheReadInputTokens: wireCacheRead ?? item.inputTokenDetails?.cacheReadTokens ?? item.cachedInputTokens,
     cacheWriteInputTokens: item.inputTokenDetails?.cacheWriteTokens,
   }).filter((entry) => entry[1] !== undefined)
   return entries.length === 0 ? undefined : Object.fromEntries(entries)

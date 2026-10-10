@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { usageSection } from "../../src/component/dialog-usage"
+import { usageSection, USAGE_ESTIMATE_NOTE } from "../../src/component/dialog-usage"
 
 const totals = {
   input: 1200,
@@ -25,7 +25,7 @@ describe("dialog usage section", () => {
     expect(section.rows).toContainEqual({ label: "Cost", value: "$0.01" })
     expect(section.footnotes).toEqual([
       "Source: Totals from session aggregates.",
-      "Note: providers that declare no price are matched to canonical registry list prices; cost is estimated.",
+      USAGE_ESTIMATE_NOTE,
     ])
   })
 
@@ -41,7 +41,7 @@ describe("dialog usage section", () => {
     expect(section.footnotes).toEqual([
       "Source: Totals aggregated from 5 loaded messages.",
       "Note: usage is incomplete and may under-count.",
-      "Note: providers that declare no price are matched to canonical registry list prices; cost is estimated.",
+      USAGE_ESTIMATE_NOTE,
     ])
   })
 
@@ -57,7 +57,7 @@ describe("dialog usage section", () => {
     expect(section.rows).toContainEqual({ label: "Cost", value: "$0.01" })
     expect(section.footnotes).toEqual([
       "Source: Totals from session aggregates.",
-      "Note: providers that declare no price are matched to canonical registry list prices; cost is estimated.",
+      USAGE_ESTIMATE_NOTE,
     ])
   })
 

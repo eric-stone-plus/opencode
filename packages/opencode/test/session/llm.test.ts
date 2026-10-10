@@ -305,6 +305,35 @@ describe("session.llm.ai-sdk adapter", () => {
     ])
   })
 
+  test("maps deepseek wire cache hits when cached_tokens is omitted", async () => {
+    // openai-compatible converter yields cacheReadTokens = cached_tokens ?? 0;
+    // DeepSeek may omit cached_tokens while prompt_cache_hit_tokens (required)
+    // stays populated. The raw wire usage must win in that case.
+    const events = await adapt([
+      uncheckedAdapterEvent({ type: "start" }),
+      uncheckedAdapterEvent({ type: "start-step", request: {}, warnings: [] }),
+      uncheckedAdapterEvent({
+        type: "finish-step",
+        response: { id: "response-1", timestamp: new Date(0), modelId: "deepseek-flash" },
+        finishReason: "stop",
+        rawFinishReason: "stop",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 50,
+          totalTokens: 1_000_050,
+          inputTokenDetails: { noCacheTokens: 100_000, cacheReadTokens: 0, cacheWriteTokens: undefined },
+          raw: {
+            prompt_tokens: 1_000_000,
+            prompt_cache_hit_tokens: 900_000,
+            prompt_cache_miss_tokens: 100_000,
+          },
+        },
+      }),
+    ])
+    const finish = events.find((event) => event.type === "step-finish")
+    expect(finish).toMatchObject({ type: "step-finish", usage: { cacheReadInputTokens: 900_000 } })
+  })
+
   test("creates stable block ids when AI SDK omits them", async () => {
     const events = await adapt([
       uncheckedAdapterEvent({ type: "text-delta", text: "implicit text" }),

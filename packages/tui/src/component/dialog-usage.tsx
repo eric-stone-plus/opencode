@@ -14,6 +14,11 @@ export const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
 })
 
+// Single source of truth for the cost-estimate caveat (asserted by the dialog
+// tests). Registry-matched list prices are estimates, not billed amounts.
+export const USAGE_ESTIMATE_NOTE =
+  "Note: zero-priced and unpriced providers (flat-rate/subscription plans) are estimated at canonical registry list prices; they are not billed per token."
+
 // Mirrors the per-session message window hydration keeps (context/sync.tsx):
 // counts derived from the loaded list can under-count once it is at the cap.
 const MESSAGE_CAP = 100
@@ -63,7 +68,7 @@ export function usageSection(input: {
       ...(input.totals.source === "messages" || input.loadedMessages >= MESSAGE_CAP
         ? ["Note: usage is incomplete and may under-count."]
         : []),
-      "Note: providers that declare no price are matched to canonical registry list prices; cost is estimated.",
+      USAGE_ESTIMATE_NOTE,
     ],
   }
 }
@@ -96,14 +101,42 @@ export function DialogUsage() {
 
   const aggregated = createMemo(() => {
     const totals = assistants().reduce(
-      (acc, message) => ({
-        input: acc.input + message.tokens.input,
-        output: acc.output + message.tokens.output,
-        reasoning: acc.reasoning + message.tokens.reasoning,
-        cacheRead: acc.cacheRead + message.tokens.cache.read,
-        cacheWrite: acc.cacheWrite + message.tokens.cache.write,
-        cost: acc.cost + message.cost,
-      }),
+      (acc, message) => {
+        // Sum step-finish part tokens. `message.tokens` records the LAST step
+        // only (context-display semantics) and under-counts multi-step turns,
+        // while `message.cost` already accumulates every step — mixing the two
+        // skewed cost/token figures. Fall back to message.tokens only when no
+        // step-finish parts are loaded for the message.
+        let input = 0
+        let output = 0
+        let reasoning = 0
+        let cacheRead = 0
+        let cacheWrite = 0
+        const steps = (sync.data.part[message.id] ?? []).filter((part) => part.type === "step-finish")
+        if (steps.length > 0) {
+          for (const step of steps) {
+            input += step.tokens.input
+            output += step.tokens.output
+            reasoning += step.tokens.reasoning
+            cacheRead += step.tokens.cache.read
+            cacheWrite += step.tokens.cache.write
+          }
+        } else {
+          input = message.tokens.input
+          output = message.tokens.output
+          reasoning = message.tokens.reasoning
+          cacheRead = message.tokens.cache.read
+          cacheWrite = message.tokens.cache.write
+        }
+        return {
+          input: acc.input + input,
+          output: acc.output + output,
+          reasoning: acc.reasoning + reasoning,
+          cacheRead: acc.cacheRead + cacheRead,
+          cacheWrite: acc.cacheWrite + cacheWrite,
+          cost: acc.cost + message.cost,
+        }
+      },
       { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
     )
     return {

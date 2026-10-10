@@ -7,6 +7,12 @@
   // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back. Other
   // provider blocks are unchanged.
   "model": "deepseek/deepseek-flash",
+  // Cost display (2026-10-10): flat-rate/subscription model rows (all-zero
+  // cost in the registry) are auto-matched to canonical PAYG list prices so
+  // /usage can show a labeled estimate ("not billed per token"). DeepSeek is
+  // true PAYG (declared rates). To pin literal $0 on a model block, declare
+  // `cost: { "input": 0, "output": 0 }` — config-declared costs win outright
+  // over the registry cascade.
   "provider": {
     "bailian-token-plan-personal": {
       "npm": "@ai-sdk/anthropic",

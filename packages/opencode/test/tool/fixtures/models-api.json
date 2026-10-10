@@ -169598,9 +169598,10 @@
           "output": 384000
         },
         "cost": {
-          "input": 0.14,
-          "output": 0.28,
-          "cache_read": 0.0028
+          "input": 0.15,
+          "output": 0.6,
+          "reasoning": 0.6,
+          "cache_read": 0.003
         }
       },
       "deepseek-v4-pro": {
@@ -169638,9 +169639,10 @@
           "output": 384000
         },
         "cost": {
-          "input": 0.435,
-          "output": 0.87,
-          "cache_read": 0.003625
+          "input": 0.66,
+          "output": 1.98,
+          "reasoning": 1.98,
+          "cache_read": 0.022
         }
       },
       "deepseek-reasoner": {

@@ -279,9 +279,22 @@ export default function Share(props: {
 
       if (msg.role === "assistant") {
         result.cost += msg.cost
-        result.tokens.input += msg.tokens.input
-        result.tokens.output += msg.tokens.output
-        result.tokens.reasoning += msg.tokens.reasoning
+        // Sum step-finish part tokens: msg.tokens records the LAST step only
+        // (context-display semantics) and under-counts multi-step turns, while
+        // msg.cost already accumulates every step. Fall back to msg.tokens only
+        // when no step-finish parts are present.
+        const steps = msg.parts.filter((part) => part.type === "step-finish")
+        if (steps.length > 0) {
+          for (const step of steps) {
+            result.tokens.input += step.tokens.input
+            result.tokens.output += step.tokens.output
+            result.tokens.reasoning += step.tokens.reasoning
+          }
+        } else {
+          result.tokens.input += msg.tokens.input
+          result.tokens.output += msg.tokens.output
+          result.tokens.reasoning += msg.tokens.reasoning
+        }
 
         result.models[`${msg.providerID} ${msg.modelID}`] = [msg.providerID, msg.modelID]
 

@@ -74,6 +74,13 @@ const cases: ReadonlyArray<{ name: string; cost: Pricing.Rates; usage: UsageInpu
     cost: { input: 2, output: 6, cache: { read: 0.25, write: 2.5 } },
     usage: {},
   },
+  {
+    // Copilot-style wire: completion tokens EXCLUDE reasoning which is reported
+    // separately (reasoning > completion). Token mapping must not underflow.
+    name: "completion excludes reasoning",
+    cost: { input: 2, output: 6, cache: { read: 0.25, write: 2.5 } },
+    usage: { inputTokens: 1_000, outputTokens: 5, reasoningTokens: 134, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+  },
 ]
 
 describe("Session.getUsage vs Pricing.costOf parity", () => {
@@ -87,4 +94,36 @@ describe("Session.getUsage vs Pricing.costOf parity", () => {
       expect(Math.abs(result.cost - expected)).toBe(0)
     })
   }
+})
+
+describe("Session.getUsage reasoning-shape handling", () => {
+  test("keeps visible completion when reasoning exceeds it (exclusive shape)", () => {
+    const usage = new Usage({ inputTokens: 1_000, outputTokens: 5, reasoningTokens: 134 })
+    const result = getUsage({ model: model({ input: 2, output: 6, cache: {} }), usage })
+    expect(result.tokens.output).toBe(5)
+    expect(result.tokens.reasoning).toBe(134)
+  })
+
+  test("still subtracts reasoning from inclusive completion", () => {
+    const usage = new Usage({ inputTokens: 1_000, outputTokens: 20, reasoningTokens: 5 })
+    const result = getUsage({ model: model({ input: 2, output: 6, cache: {} }), usage })
+    expect(result.tokens.output).toBe(15)
+    expect(result.tokens.reasoning).toBe(5)
+  })
+
+  test("recognizes the exclusive shape from total when reasoning is smaller than completion", () => {
+    // Copilot fixture shape: total = prompt + text + reasoning (3767 + 78 + 70),
+    // so completion 78 is the visible text and must not lose the 70 reasoning.
+    const usage = new Usage({ inputTokens: 3_767, outputTokens: 78, reasoningTokens: 70, totalTokens: 3_915 })
+    const result = getUsage({ model: model({ input: 2, output: 6, cache: {} }), usage })
+    expect(result.tokens.output).toBe(78)
+    expect(result.tokens.reasoning).toBe(70)
+  })
+
+  test("keeps the inclusive reading when total matches input+output", () => {
+    const usage = new Usage({ inputTokens: 1_000, outputTokens: 20, reasoningTokens: 5, totalTokens: 1_020 })
+    const result = getUsage({ model: model({ input: 2, output: 6, cache: {} }), usage })
+    expect(result.tokens.output).toBe(15)
+    expect(result.tokens.reasoning).toBe(5)
+  })
 })
