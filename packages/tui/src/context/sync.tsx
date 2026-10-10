@@ -473,19 +473,24 @@ export const {
         }
 
         case "message.part.delta": {
+          // Only text fields are streamable. Applying an unvalidated field name
+          // would let a hostile or buggy sender clobber part.id (breaking the
+          // sorted-by-id lookup) or stringify part.state.
+          if (event.properties.field !== "text") break
           const parts = store.part[event.properties.messageID]
           if (!parts) break
           const result = search(parts, event.properties.partID, (part) => part.id)
           if (!result.found) break
+          const part = parts[result.index]
+          if (part.type !== "text" && part.type !== "reasoning") break
           touchPart(event.properties.sessionID, event.properties.partID)
           setStore(
             "part",
             event.properties.messageID,
             produce((draft) => {
-              const part = draft[result.index]
-              const field = event.properties.field as keyof typeof part
-              const existing = part[field] as string | undefined
-              ;(part[field] as string) = (existing ?? "") + event.properties.delta
+              const target = draft[result.index]
+              if (target.type !== "text" && target.type !== "reasoning") return
+              target.text = (target.text ?? "") + event.properties.delta
             }),
           )
           break

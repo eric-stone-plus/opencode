@@ -146,7 +146,28 @@ const layer = Layer.effect(
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }
-                const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
+                // Parse the raw LLM args through the Zod object before handing
+                // them to the plugin: the Schema.declare parameters guard only
+                // checks well-formedness and passes the input through untouched,
+                // so `.default()` values (e.g. timeout_seconds) would otherwise
+                // arrive as undefined and poison downstream math. On invalid
+                // input, surface the same rewrite-the-input prose the builtin
+                // wrap() InvalidArgumentsError carries (its message is written
+                // to be fed back to the model) without failing the effect:
+                // Def.execute's error channel is `never`.
+                let parsed: unknown = args
+                if (zodParams) {
+                  const result = zodParams.safeParse(args)
+                  if (!result.success) {
+                    return {
+                      title: "",
+                      output: new Tool.InvalidArgumentsError({ tool: id, detail: String(result.error) }).message,
+                      metadata: { truncated: false },
+                    }
+                  }
+                  parsed = result.data
+                }
+                const result = yield* Effect.promise(() => def.execute(parsed as any, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
                 const attachments = typeof result === "string" ? undefined : result.attachments

@@ -350,6 +350,61 @@ describe("tool.registry", () => {
     }),
   )
 
+  // #NaN-timeout regression: `fromPlugin` used to guard Zod args with
+  // Schema.declare (a pure boolean safeParse check) and hand the raw LLM args
+  // to `def.execute` unchanged — Zod `.default()` values never materialized, so
+  // e.g. `timeout_seconds` arrived as undefined and a downstream
+  // `setTimeout(fn, timeout * 1000)` warned `TimeoutNaNWarning` straight onto
+  // the alt-screen TUI over shared fd 2.
+  it.instance("applies Zod defaults to plugin tool args before execute", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const customTools = path.join(test.directory, ".opencode", "tools")
+      const pluginTool = pathToFileURL(path.resolve(import.meta.dir, "../../../plugin/src/tool.ts")).href
+      yield* Effect.promise(() => fs.mkdir(customTools, { recursive: true }))
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(customTools, "defaults.ts"),
+          [
+            `import { tool } from ${JSON.stringify(pluginTool)}`,
+            "export default tool({",
+            "  description: 'defaults echo',",
+            "  args: { timeout_seconds: tool.schema.number().min(1).max(1800).default(300) },",
+            "  execute: async (args) => JSON.stringify(args),",
+            "})",
+            "",
+          ].join("\n"),
+        ),
+      )
+
+      const registry = yield* ToolRegistry.Service
+      const loaded = (yield* registry.all()).find((tool) => tool.id === "defaults")
+      if (!loaded) throw new Error("custom defaults tool was not loaded")
+      const agents = yield* Agent.Service
+      const ctx = {
+        sessionID: SessionID.make("ses_test"),
+        messageID: MessageID.make("msg_test"),
+        agent: (yield* agents.defaultInfo()).name,
+        abort: new AbortController().signal,
+        messages: [],
+        metadata: () => Effect.void,
+        ask: () => Effect.void,
+      } satisfies Tool.Context
+
+      const omitted = yield* loaded.execute({}, ctx)
+      expect(JSON.parse(omitted.output)).toEqual({ timeout_seconds: 300 })
+
+      const explicit = yield* loaded.execute({ timeout_seconds: 42 }, ctx)
+      expect(JSON.parse(explicit.output)).toEqual({ timeout_seconds: 42 })
+
+      // Invalid args surface the rewrite-the-input prose as tool output (same
+      // text the builtin InvalidArgumentsError carries to the model).
+      const invalid = yield* loaded.execute({ timeout_seconds: "nope" } as never, ctx)
+      expect(invalid.output).toContain("The defaults tool was called with invalid arguments")
+      expect(invalid.output).toContain("Please rewrite the input so it satisfies the expected schema")
+    }),
+  )
+
   it.instance(
     "preserves Zod arg descriptions from older config-scoped plugin packages",
     () =>

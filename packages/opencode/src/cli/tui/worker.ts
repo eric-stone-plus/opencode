@@ -20,6 +20,19 @@ const onUncaughtException = (_error: Error) => {}
 process.on("unhandledRejection", onUnhandledRejection)
 process.on("uncaughtException", onUncaughtException)
 
+// Runtime warnings (e.g. TimeoutNaNWarning from setTimeout(NaN)) print straight
+// to fd 2, which the main thread's alt-screen TUI shares — one warning garbles
+// the lower half of the screen. Registering any listener suppresses Bun's
+// default printer, so forward them over RPC where the main thread can route
+// them into the console overlay instead.
+process.on("warning", (warning) => {
+  Rpc.emit("process.warning", {
+    name: warning.name,
+    message: warning.message,
+    stack: warning.stack,
+  })
+})
+
 // Subscribe to global events and forward them via RPC
 GlobalBus.on("event", (event) => {
   Rpc.emit("global.event", event)

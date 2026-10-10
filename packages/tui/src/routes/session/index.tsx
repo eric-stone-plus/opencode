@@ -1530,7 +1530,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               </Show>
               <Show when={props.last ? sync.data.goal[props.message.sessionID]?.text.trim() : undefined}>
                 {(text) => (
-                  <span style={{ fg: theme.textMuted }}> · ⎇ {Locale.truncate(text(), 24)}</span>
+                  <span style={{ fg: theme.textMuted }}> · ⎇ {Locale.truncate(text().split("\n", 1)[0] ?? "", 24)}</span>
                 )}
               </Show>
               <Show when={props.message.error?.name === "MessageAbortedError"}>
@@ -2222,7 +2222,9 @@ function Task(props: ToolProps) {
   createEffect(() => {
     const id = sessionID()
     if (!id || !isRunning()) return
-    if (untrack(() => sync.data.message[id]?.length)) return
+    // Reactive on purpose: if the cache-bound store later evicts this child's
+    // messages, the live line must be able to re-hydrate (untrack hid that).
+    if (sync.data.message[id]?.length) return
     void sync.session.sync(id)
   })
 

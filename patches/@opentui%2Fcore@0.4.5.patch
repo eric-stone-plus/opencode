@@ -1,8 +1,21 @@
+diff --git a/node_modules/@opentui/core/.bun-tag-6f5632d0d0c0ce4a b/.bun-tag-6f5632d0d0c0ce4a
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/chunk-bun-tkm837n2.js b/chunk-bun-tkm837n2.js
-index e5e5874f758a2e8c622ca8e9301f20c60c245546..deb32a4d85e97eca1248fa483c1ec229ed755673 100644
+index e5e5874f758a2e8c622ca8e9301f20c60c245546..086dfda5297fcdef0908af519177e28c688c5b87 100644
 --- a/chunk-bun-tkm837n2.js
 +++ b/chunk-bun-tkm837n2.js
-@@ -3400,9 +3400,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3155,6 +3155,9 @@ class CodeRenderable extends TextBufferRenderable {
+       this._highlightsDirty = true;
+       this._highlightSnapshotId++;
+       if (this._streaming && this._filetype && !this._drawUnstyledText) {
++        this.textBuffer.setText(value);
++        this.setRenderedLineSources(undefined);
++        this.updateTextInfo();
+         this.requestRender();
+         return;
+       }
+@@ -3400,9 +3403,9 @@ class CodeRenderable extends TextBufferRenderable {
          this.requestRender();
          return;
        }
@@ -13,7 +26,7 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..deb32a4d85e97eca1248fa483c1ec229
        this.textBuffer.setText(content);
        this.setRenderedLineSources(undefined);
        this._shouldRenderTextBuffer = true;
-@@ -9651,7 +9651,7 @@ Captured external output:
+@@ -9651,7 +9654,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -22,7 +35,7 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..deb32a4d85e97eca1248fa483c1ec229
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -9665,7 +9665,7 @@ Captured external output:
+@@ -9665,7 +9668,7 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -32,10 +45,20 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..deb32a4d85e97eca1248fa483c1ec229
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
 diff --git a/chunk-node-51kpf0mz.js b/chunk-node-51kpf0mz.js
-index 4a2cb78c73179cc55c06dad549345a3145680120..df82261e7eb812ca605ff22240cd48e4b22cbe60 100644
+index 4a2cb78c73179cc55c06dad549345a3145680120..8c71a4a5aba6ee6e3998fdd129a54310d93542e3 100644
 --- a/chunk-node-51kpf0mz.js
 +++ b/chunk-node-51kpf0mz.js
-@@ -3399,9 +3399,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3154,6 +3154,9 @@ class CodeRenderable extends TextBufferRenderable {
+       this._highlightsDirty = true;
+       this._highlightSnapshotId++;
+       if (this._streaming && this._filetype && !this._drawUnstyledText) {
++        this.textBuffer.setText(value);
++        this.setRenderedLineSources(undefined);
++        this.updateTextInfo();
+         this.requestRender();
+         return;
+       }
+@@ -3399,9 +3402,9 @@ class CodeRenderable extends TextBufferRenderable {
          this.requestRender();
          return;
        }
@@ -46,7 +69,7 @@ index 4a2cb78c73179cc55c06dad549345a3145680120..df82261e7eb812ca605ff22240cd48e4
        this.textBuffer.setText(content);
        this.setRenderedLineSources(undefined);
        this._shouldRenderTextBuffer = true;
-@@ -9650,7 +9650,7 @@ Captured external output:
+@@ -9650,7 +9653,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -55,7 +78,7 @@ index 4a2cb78c73179cc55c06dad549345a3145680120..df82261e7eb812ca605ff22240cd48e4
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -9664,7 +9664,7 @@ Captured external output:
+@@ -9664,7 +9667,7 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;

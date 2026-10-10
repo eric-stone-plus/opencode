@@ -236,6 +236,16 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
         Effect.sync(() => process.on("SIGHUP", onSighup)),
         () => Effect.sync(() => process.off("SIGHUP", onSighup)),
       )
+      // Runtime warnings (e.g. TimeoutNaNWarning) print straight to fd 2 and
+      // garble the alt-screen TUI. Registering a listener suppresses Bun's
+      // default printer; route them into the console overlay instead.
+      const onWarning = (warning: Error) => {
+        console.warn(`${warning.name}: ${warning.message}`)
+      }
+      yield* Effect.acquireRelease(
+        Effect.sync(() => process.on("warning", onWarning)),
+        () => Effect.sync(() => process.off("warning", onWarning)),
+      )
       renderer.once("destroy", () => Deferred.doneUnsafe(shutdown, Effect.void))
       const pluginRuntime = createPluginRuntime()
 

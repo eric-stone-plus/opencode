@@ -213,6 +213,12 @@ export const TuiThreadCommand = cmd({
         ),
       })
       const client = Rpc.client<typeof rpc>(worker)
+      // Worker-thread runtime warnings are forwarded over RPC (the worker's own
+      // fd-2 print would garble the alt-screen TUI). Land them in the console
+      // overlay via console.warn instead.
+      client.on<{ name: string; message: string; stack?: string }>("process.warning", (warning) => {
+        console.warn(`${warning.name}: ${warning.message}`)
+      })
       const reload = () => {
         client.call("reload", undefined).catch(() => {})
       }
