@@ -1,5 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { topVariant } from "@opencode-ai/core/variant"
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import os from "os"
@@ -738,12 +739,11 @@ const layer = Layer.effect(
 
       const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
-      const full =
-        input.variant || (ag.variant && same)
-          ? yield* provider
-              .getModel(model.providerID, model.modelID)
-              .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
-          : undefined
+      // Always resolve the full model: the ladder top is the default when
+      // nothing else selects a variant.
+      const full = yield* provider
+        .getModel(model.providerID, model.modelID)
+        .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
       // An explicit variant the resolved model does not define (e.g. "max"
       // carried over from another model) would be silently ignored at request
       // time; drop it so the stored message reflects what actually runs.
@@ -757,11 +757,22 @@ const layer = Layer.effect(
           modelID: model.modelID,
         })
       const explicit = unknown ? undefined : input.variant
+      // "default" is the unset sentinel (variant.set(undefined) persists it) —
+      // unless the model defines a real "default" tier (groq qwen3-32b's
+      // "none"|"default" axis), in which case the explicit pick is honored.
+      // With no pick the default is the ladder top (2026-10-10): effort must
+      // never fall to the provider's "default" by omission. An explicit pick
+      // (including a dropped unknown one) still blocks the agent fallback,
+      // matching prior behavior.
+      const top = topVariant(Object.keys(full?.variants ?? {}))
+      const sentinel = input.variant === "default" && !full?.variants?.["default"]
       const variant = input.variant
-        ? explicit
+        ? explicit === undefined || sentinel
+          ? top
+          : explicit
         : ag.variant && same && full?.variants?.[ag.variant]
           ? ag.variant
-          : undefined
+          : top
 
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),

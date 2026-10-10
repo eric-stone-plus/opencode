@@ -132,12 +132,19 @@ describe("run variant shared", () => {
     expect(resolveVariant("max", "high", "low", ["low", "high"])).toBe("max")
     expect(resolveVariant(undefined, "high", "low", ["low", "high"])).toBe("high")
     expect(resolveVariant(undefined, "missing", "low", ["low", "high"])).toBe("low")
+    // Nothing pinned -> ladder top as the default (never the provider default).
+    expect(resolveVariant(undefined, undefined, undefined, ["low", "high"])).toBe("high")
+    expect(resolveVariant(undefined, "missing", "missing", ["low", "high"])).toBe("high")
+    expect(resolveVariant(undefined, undefined, undefined, [])).toBeUndefined()
   })
 
   test("cycles through variants and back to default", () => {
     expect(cycleVariant(undefined, ["low", "high"])).toBe("low")
     expect(cycleVariant("low", ["low", "high"])).toBe("high")
-    expect(cycleVariant("high", ["low", "high"])).toBeUndefined()
+    // Wrap returns to the first step — there is no "default" stop (an unset
+    // variant resolves to the ladder top since 2026-10-10).
+    expect(cycleVariant("high", ["low", "high"])).toBe("low")
+    expect(cycleVariant("stale", ["low", "high"])).toBe("low")
     expect(cycleVariant(undefined, [])).toBeUndefined()
   })
 

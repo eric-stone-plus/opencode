@@ -61,9 +61,9 @@ describe("resolveVariant", () => {
     ).toBe("max")
   })
 
-  test("S2: user switched model away from agent model -> no variant", () => {
+  test("S2: user switched model away from agent model -> ladder top default", () => {
     expect(resolveVariant({ selected: undefined, variants, model: flash, agentModel: glm, agentVariant: "max" })).toBe(
-      undefined,
+      "max",
     )
   })
 
@@ -87,10 +87,10 @@ describe("resolveVariant", () => {
     ).toBe("high")
   })
 
-  test("S7: agent without variant config keeps store-only behavior", () => {
+  test("S7: agent without variant config falls to the ladder top default", () => {
     expect(
       resolveVariant({ selected: undefined, variants, model: glm, agentModel: glm, agentVariant: undefined }),
-    ).toBe(undefined)
+    ).toBe("max")
     expect(resolveVariant({ selected: "high", variants, model: glm, agentModel: glm, agentVariant: undefined })).toBe(
       "high",
     )
@@ -115,19 +115,19 @@ describe("resolveVariant", () => {
         agentModel: build,
         agentVariant: "low",
       }),
-    ).toBe(undefined)
+    ).toBe("high")
   })
 
-  test("agent variant missing from the model's variant list is not shown (server checks variants[ag.variant])", () => {
+  test("agent variant missing from the model's variant list falls to the ladder top (server checks variants[ag.variant])", () => {
     expect(
       resolveVariant({ selected: undefined, variants: ["high"], model: glm, agentModel: glm, agentVariant: "max" }),
-    ).toBe(undefined)
+    ).toBe("high")
   })
 
-  test("agent without a model never triggers the fallback (server: same requires ag.model)", () => {
+  test("agent without a model never triggers the agent fallback (server: same requires ag.model) -> ladder top", () => {
     expect(
       resolveVariant({ selected: undefined, variants, model: glm, agentModel: undefined, agentVariant: "max" }),
-    ).toBe(undefined)
+    ).toBe("max")
   })
 })
 
@@ -184,7 +184,7 @@ describe("effectiveVariant (display-only model pin fallback)", () => {
     ).toBe("max")
   })
 
-  test("a pin outside the model's variant list is not shown", () => {
+  test("a pin outside the model's variant list falls to the ladder top", () => {
     expect(
       effectiveVariant({
         selected: undefined,
@@ -194,10 +194,10 @@ describe("effectiveVariant (display-only model pin fallback)", () => {
         agentVariant: undefined,
         pinned: "max",
       }),
-    ).toBe(undefined)
+    ).toBe("high")
   })
 
-  test("no pin and no resolution -> nothing shown", () => {
+  test("no pin and no resolution -> ladder top shown (never the provider default)", () => {
     expect(
       effectiveVariant({
         selected: undefined,
@@ -207,7 +207,7 @@ describe("effectiveVariant (display-only model pin fallback)", () => {
         agentVariant: undefined,
         pinned: undefined,
       }),
-    ).toBe(undefined)
+    ).toBe("max")
   })
 })
 

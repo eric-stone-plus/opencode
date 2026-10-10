@@ -3008,8 +3008,11 @@ noLLMServer.instance(
         parts: [{ type: "text", text: "unknown variant" }],
       })
       if (dropped.info.role !== "user") throw new Error("expected user message")
-      expect(dropped.info.model.variant).toBeUndefined()
-      expect((yield* sessions.get(session.id)).model?.variant).toBe("default")
+      // The dropped pick falls to the ladder top (2026-10-10: effort never
+      // defaults); "max" is not a test-model variant, so its computed
+      // {low, medium, high} ladder resolves to "high".
+      expect(dropped.info.model.variant).toBe("high")
+      expect((yield* sessions.get(session.id)).model?.variant).toBe("high")
 
       yield* sessions.remove(session.id)
     }),
@@ -3024,6 +3027,57 @@ noLLMServer.instance(
             "test-model": {
               ...cfg.provider.test.models["test-model"],
               variants: { low: {}, high: {} },
+            },
+          },
+        },
+      },
+      agent: { build: { model: "test/test-model" } },
+    },
+  },
+)
+
+noLLMServer.instance(
+  "keeps a model's real 'default' variant tier; unset resolves to the ladder top",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({})
+
+      // "default" is the unset sentinel, but groq-style ladders declare a real
+      // "default" tier — an explicit pick of it must survive.
+      const picked = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        variant: "default",
+        noReply: true,
+        parts: [{ type: "text", text: "real default tier" }],
+      })
+      if (picked.info.role !== "user") throw new Error("expected user message")
+      expect(picked.info.model.variant).toBe("default")
+
+      const unset = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "no pick" }],
+      })
+      if (unset.info.role !== "user") throw new Error("expected user message")
+      expect(unset.info.model.variant).toBe("high")
+
+      yield* sessions.remove(session.id)
+    }),
+  {
+    config: {
+      ...cfg,
+      provider: {
+        ...cfg.provider,
+        test: {
+          ...cfg.provider.test,
+          models: {
+            "test-model": {
+              ...cfg.provider.test.models["test-model"],
+              variants: { default: {}, high: {} },
             },
           },
         },

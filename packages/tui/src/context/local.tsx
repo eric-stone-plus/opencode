@@ -13,7 +13,7 @@ import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute, type Route } from "./route"
 import { usePermission } from "./permission"
-import { DRAFT_SCOPE, normalizeVariantStore, type VariantStore } from "@opencode-ai/core/variant"
+import { DRAFT_SCOPE, cycleVariant, normalizeVariantStore, topVariant, type VariantStore } from "@opencode-ai/core/variant"
 
 export type LocalTheme = {
   secondary: RGBA
@@ -53,7 +53,7 @@ export function recentModels(
 // the explicit pick wins, otherwise the agent default applies only when the request model is the
 // agent's own model and the variant exists on that model. "default" is the unset sentinel that
 // variant.set(undefined) persists, so it is treated as no selection.
-export function resolveVariant(input: {
+function resolveExplicitVariant(input: {
   selected: string | undefined
   variants: string[]
   model: { providerID: string; modelID: string }
@@ -69,6 +69,18 @@ export function resolveVariant(input: {
   return undefined
 }
 
+export function resolveVariant(input: {
+  selected: string | undefined
+  variants: string[]
+  model: { providerID: string; modelID: string }
+  agentModel: { providerID: string; modelID: string } | undefined
+  agentVariant: string | undefined
+}) {
+  // Default = ladder top (2026-10-10): effort must never fall to the
+  // provider's "default" by omission. Explicit and agent picks above still win.
+  return resolveExplicitVariant(input) ?? topVariant(input.variants)
+}
+
 // Display-only companion to resolveVariant: when no explicit or agent variant
 // resolves, a model-level `options.reasoningEffort` pin still reaches every
 // request (the server merges model options over the variant), so the footer
@@ -82,10 +94,10 @@ export function effectiveVariant(input: {
   agentVariant: string | undefined
   pinned: string | undefined
 }) {
-  const resolved = resolveVariant(input)
+  const resolved = resolveExplicitVariant(input)
   if (resolved) return resolved
   if (input.pinned && input.variants.includes(input.pinned)) return input.pinned
-  return undefined
+  return topVariant(input.variants)
 }
 
 export type ModelRef = { providerID: string; modelID: string }
@@ -560,17 +572,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           cycle() {
             const variants = this.list()
             if (variants.length === 0) return
-            const current = this.current()
-            if (!current) {
-              this.set(variants[0])
-              return
-            }
-            const index = variants.indexOf(current)
-            if (index === -1 || index === variants.length - 1) {
-              this.set(undefined)
-              return
-            }
-            this.set(variants[index + 1])
+            // Shared ladder walk: wraps to the first step — there is no
+            // "default" stop (unset resolves to the ladder top).
+            const next = cycleVariant(this.current(), variants)
+            if (next !== undefined) this.set(next)
           },
         },
       }

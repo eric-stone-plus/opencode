@@ -12,7 +12,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Context, Effect, Layer } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import { Global } from "@opencode-ai/core/global"
-import { DRAFT_SCOPE, normalizeVariantStore, type VariantStore } from "@opencode-ai/core/variant"
+import { DRAFT_SCOPE, normalizeVariantStore, topVariant, type VariantStore } from "@opencode-ai/core/variant"
 import { isRecord } from "@/util/record"
 import { createSession, sessionVariant, type RunSession, type SessionMessages } from "./session.shared"
 import type { RunInput, RunProvider } from "./types"
@@ -59,22 +59,7 @@ export function formatModelLabel(
   return `${names.model} · ${names.provider}${label}`
 }
 
-export function cycleVariant(current: string | undefined, variants: string[]): string | undefined {
-  if (variants.length === 0) {
-    return undefined
-  }
-
-  if (!current) {
-    return variants[0]
-  }
-
-  const idx = variants.indexOf(current)
-  if (idx === -1 || idx === variants.length - 1) {
-    return undefined
-  }
-
-  return variants[idx + 1]
-}
+export { cycleVariant } from "@opencode-ai/core/variant"
 
 export function pickVariant(model: RunInput["model"], input: RunSession | SessionMessages): string | undefined {
   return sessionVariant(Array.isArray(input) ? createSession(input) : input, model)
@@ -93,8 +78,10 @@ function fitVariant(value: string | undefined, variants: string[]): string | und
 }
 
 // Picks the active variant. CLI flag wins, then saved preference, then session
-// history. fitVariant() checks saved and session values against the available
-// variants list -- if the provider doesn't offer a variant, it drops.
+// history, then the ladder top as the default (effort must never fall to the
+// provider's "default" by omission). fitVariant() checks saved and session
+// values against the available variants list -- if the provider doesn't offer
+// a variant, it drops.
 export function resolveVariant(
   input: string | undefined,
   session: string | undefined,
@@ -111,7 +98,7 @@ export function resolveVariant(
     return current
   }
 
-  return fallback
+  return fallback ?? topVariant(variants)
 }
 
 function state(value: unknown): ModelState {

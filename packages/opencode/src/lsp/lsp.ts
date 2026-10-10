@@ -185,11 +185,16 @@ const layer = Layer.effect(
                 delete servers[name]
                 continue
               }
+              const extensions = item.extensions ?? existing?.extensions ?? []
+              if (extensions.length === 0)
+                yield* Effect.logWarning("custom LSP entry has no extensions; it will attach to every file read", {
+                  "lsp.server": name,
+                })
               servers[name] = {
                 ...existing,
                 id: name,
                 root: existing?.root ?? (async (_file, ctx) => ctx.directory),
-                extensions: item.extensions ?? existing?.extensions ?? [],
+                extensions,
                 spawn: async (root) => ({
                   process: lspspawn(item.command[0], item.command.slice(1), {
                     cwd: root,

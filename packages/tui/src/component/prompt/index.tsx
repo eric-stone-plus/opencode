@@ -15,6 +15,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { useLocal } from "../../context/local"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { topVariant } from "@opencode-ai/core/variant"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
@@ -349,7 +350,14 @@ export function Prompt(props: PromptProps) {
       if (msg.agent && isPrimaryAgent && !args.agent) local.agent.set(msg.agent)
       if (msg.model && !local.model.known(sessionID)) {
         local.model.set(msg.model)
-        local.model.variant.set(msg.model.variant)
+        // Session restore must not launder the resolved ladder-top default
+        // into an explicit user pick: store the unset sentinel when the
+        // session ran the top (or nothing), so agent variant pins still apply
+        // and the default keeps tracking the ladder. Anything else is a real
+        // pick and is restored verbatim.
+        const variants = local.model.variant.list()
+        const top = variants.length > 0 ? topVariant(variants) : undefined
+        local.model.variant.set(!msg.model.variant || msg.model.variant === top ? undefined : msg.model.variant)
       }
       return
     }
