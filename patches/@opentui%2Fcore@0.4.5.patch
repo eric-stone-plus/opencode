@@ -2,20 +2,59 @@ diff --git a/node_modules/@opentui/core/.bun-tag-6f5632d0d0c0ce4a b/.bun-tag-6f5
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/chunk-bun-tkm837n2.js b/chunk-bun-tkm837n2.js
-index e5e5874f758a2e8c622ca8e9301f20c60c245546..086dfda5297fcdef0908af519177e28c688c5b87 100644
+index e5e5874..be1382e 100644
 --- a/chunk-bun-tkm837n2.js
 +++ b/chunk-bun-tkm837n2.js
-@@ -3155,6 +3155,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3110,6 +3110,7 @@ class CodeRenderable extends TextBufferRenderable {
+   _initialStyledText;
+   _hadInitialContent = false;
+   _lastHighlights = [];
++  _lastHighlightContent = "";
+   _baseHighlight;
+   _onHighlight;
+   _onChunks;
+@@ -3155,6 +3156,18 @@ class CodeRenderable extends TextBufferRenderable {
        this._highlightsDirty = true;
        this._highlightSnapshotId++;
        if (this._streaming && this._filetype && !this._drawUnstyledText) {
-+        this.textBuffer.setText(value);
-+        this.setRenderedLineSources(undefined);
++        if (value.startsWith(this._lastHighlightContent) && (this._lastHighlights.length > 0 || this._onChunks || this._baseHighlight)) {
++          const chunks = treeSitterToTextChunks(value, this._lastHighlights, this._syntaxStyle, {
++            enabled: this._conceal,
++            baseHighlight: this._baseHighlight
++          });
++          this.textBuffer.setStyledText(new StyledText(chunks));
++          this.setRenderedLineSources(this._onChunks ? undefined : this.getConcealLinesSourceMap(value, this._lastHighlights));
++        } else {
++          this.textBuffer.setText(value);
++          this.setRenderedLineSources(undefined);
++        }
 +        this.updateTextInfo();
          this.requestRender();
          return;
        }
-@@ -3400,9 +3403,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3247,6 +3260,7 @@ class CodeRenderable extends TextBufferRenderable {
+       this._streaming = value;
+       this._hadInitialContent = false;
+       this._lastHighlights = [];
++      this._lastHighlightContent = "";
+       this._highlightsDirty = true;
+     }
+   }
+@@ -3359,10 +3373,9 @@ class CodeRenderable extends TextBufferRenderable {
+       }
+       if (this.isDestroyed)
+         return;
+-      if (highlights.length > 0) {
+-        if (this._streaming) {
+-          this._lastHighlights = highlights;
+-        }
++      if (this._streaming) {
++        this._lastHighlights = highlights;
++        this._lastHighlightContent = content;
+       }
+       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
+         const context = {
+@@ -3400,9 +3413,9 @@ class CodeRenderable extends TextBufferRenderable {
          this.requestRender();
          return;
        }
@@ -26,7 +65,7 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..086dfda5297fcdef0908af519177e28c
        this.textBuffer.setText(content);
        this.setRenderedLineSources(undefined);
        this._shouldRenderTextBuffer = true;
-@@ -9651,7 +9654,7 @@ Captured external output:
+@@ -9651,7 +9664,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -35,7 +74,7 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..086dfda5297fcdef0908af519177e28c
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -9665,7 +9668,7 @@ Captured external output:
+@@ -9665,7 +9678,7 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -45,20 +84,59 @@ index e5e5874f758a2e8c622ca8e9301f20c60c245546..086dfda5297fcdef0908af519177e28c
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
 diff --git a/chunk-node-51kpf0mz.js b/chunk-node-51kpf0mz.js
-index 4a2cb78c73179cc55c06dad549345a3145680120..8c71a4a5aba6ee6e3998fdd129a54310d93542e3 100644
+index 4a2cb78..49db4dd 100644
 --- a/chunk-node-51kpf0mz.js
 +++ b/chunk-node-51kpf0mz.js
-@@ -3154,6 +3154,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3109,6 +3109,7 @@ class CodeRenderable extends TextBufferRenderable {
+   _initialStyledText;
+   _hadInitialContent = false;
+   _lastHighlights = [];
++  _lastHighlightContent = "";
+   _baseHighlight;
+   _onHighlight;
+   _onChunks;
+@@ -3154,6 +3155,18 @@ class CodeRenderable extends TextBufferRenderable {
        this._highlightsDirty = true;
        this._highlightSnapshotId++;
        if (this._streaming && this._filetype && !this._drawUnstyledText) {
-+        this.textBuffer.setText(value);
-+        this.setRenderedLineSources(undefined);
++        if (value.startsWith(this._lastHighlightContent) && (this._lastHighlights.length > 0 || this._onChunks || this._baseHighlight)) {
++          const chunks = treeSitterToTextChunks(value, this._lastHighlights, this._syntaxStyle, {
++            enabled: this._conceal,
++            baseHighlight: this._baseHighlight
++          });
++          this.textBuffer.setStyledText(new StyledText(chunks));
++          this.setRenderedLineSources(this._onChunks ? undefined : this.getConcealLinesSourceMap(value, this._lastHighlights));
++        } else {
++          this.textBuffer.setText(value);
++          this.setRenderedLineSources(undefined);
++        }
 +        this.updateTextInfo();
          this.requestRender();
          return;
        }
-@@ -3399,9 +3402,9 @@ class CodeRenderable extends TextBufferRenderable {
+@@ -3246,6 +3259,7 @@ class CodeRenderable extends TextBufferRenderable {
+       this._streaming = value;
+       this._hadInitialContent = false;
+       this._lastHighlights = [];
++      this._lastHighlightContent = "";
+       this._highlightsDirty = true;
+     }
+   }
+@@ -3358,10 +3372,9 @@ class CodeRenderable extends TextBufferRenderable {
+       }
+       if (this.isDestroyed)
+         return;
+-      if (highlights.length > 0) {
+-        if (this._streaming) {
+-          this._lastHighlights = highlights;
+-        }
++      if (this._streaming) {
++        this._lastHighlights = highlights;
++        this._lastHighlightContent = content;
+       }
+       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
+         const context = {
+@@ -3399,9 +3412,9 @@ class CodeRenderable extends TextBufferRenderable {
          this.requestRender();
          return;
        }
@@ -69,7 +147,7 @@ index 4a2cb78c73179cc55c06dad549345a3145680120..8c71a4a5aba6ee6e3998fdd129a54310
        this.textBuffer.setText(content);
        this.setRenderedLineSources(undefined);
        this._shouldRenderTextBuffer = true;
-@@ -9650,7 +9653,7 @@ Captured external output:
+@@ -9650,7 +9663,7 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -78,7 +156,7 @@ index 4a2cb78c73179cc55c06dad549345a3145680120..8c71a4a5aba6ee6e3998fdd129a54310
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -9664,7 +9667,7 @@ Captured external output:
+@@ -9664,7 +9677,7 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
