@@ -252,7 +252,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       yield* Effect.tryPromise(async () => {
         // Prewarm palette before ThemeProvider mounts so `system` theme avoids a first-paint fallback flash.
         void renderer.getPalette({ size: 16 }).catch(() => undefined)
-        const mode = (await renderer.waitForThemeMode(1000)) ?? "dark"
+        // A terminal that never answers the theme query must not hold up first paint; THEME_MODE corrects it later.
+        const mode = (await renderer.waitForThemeMode(100)) ?? "dark"
         if (renderer.isDestroyed) return
 
         await render(() => {
