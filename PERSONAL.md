@@ -77,6 +77,7 @@ Long-lived decisions are recorded as ADRs in `docs/adr/` (format and when-to-wri
 ## Overlay already on `main` (do not drop)
 
 - Long-session TUI: idle **8fps**, busy 30fps (`packages/tui`).
+- Startup (2026-10-12): the TUI waits **100 ms**, not 1 s, for the terminal's theme-mode reply before the first paint (`packages/tui/src/app.tsx`; Ptyxis never answers, so every launch used to pay the full second), and `packages/opencode/script/build.ts` compiles with `bytecode: true` (binary 312 MB instead of 142 MB, about 0.3 s faster). Measured with tmux from `$HOME` against the 3.5 GB DB, time to first screen: 3.7-5.8 s before, 1.3 s after; resuming a 243-message session settles at 2.4 s instead of 5.3 s. Measure from `$HOME`, the intended launch directory. If a bytecode-specific crash ever appears, drop `bytecode` first.
 - Compaction: prune old tool output **on by default**; advertised 1M contexts compact around a **256k** working set (`overflow.ts` / `compaction.ts`).
 - PDF Read: extract text (`pdftotext` / python); **never** inline `data:application/pdf;base64,…`.
 - `/review` model pin: `command: { review: { model: "provider/model" } }` in `opencode.jsonc` merges over the built-in review command — template, description and `subtask: true` are kept unless overridden (an explicit `subtask: false` wins).
