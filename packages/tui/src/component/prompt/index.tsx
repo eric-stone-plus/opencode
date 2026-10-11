@@ -42,7 +42,7 @@ import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v
 import { Locale } from "../../util/locale"
 import { errorMessage } from "../../util/error"
 import { formatDuration } from "../../util/format"
-import { formatTokenRate, tokensPerSecond, usageStrip } from "../../util/token-rate"
+import { formatTokenRate, timeToFirstToken, tokensPerSecond, usageStrip } from "../../util/token-rate"
 import { createColors, createFrames } from "../../ui/spinner"
 import { useDialog } from "../../ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
@@ -297,9 +297,11 @@ export function Prompt(props: PromptProps) {
     // throughput); undefined when nothing has been measured yet, so the cell
     // is omitted instead of estimated.
     const rate = tokensPerSecond(msg, sync.data.part)
+    const ttft = timeToFirstToken(msg, sync.data.part)
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
+      ttft: ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
       rate: rate === undefined ? undefined : formatTokenRate(rate),
     }
   })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { AssistantMessage, Message, StepFinishPart, ToolPart } from "@opencode-ai/sdk/v2"
-import { formatRate, formatTokenRate, tokensPerSecond, usageStrip } from "../../src/util/token-rate"
+import type { AssistantMessage, Message, ReasoningPart, StepFinishPart, TextPart, ToolPart } from "@opencode-ai/sdk/v2"
+import { formatRate, formatTokenRate, timeToFirstToken, tokensPerSecond, usageStrip } from "../../src/util/token-rate"
 
 function assistant(id: string, time: { created: number; completed?: number }): AssistantMessage {
   return {
@@ -19,7 +19,7 @@ function assistant(id: string, time: { created: number; completed?: number }): A
   }
 }
 
-function stepFinish(messageID: string, output: number): StepFinishPart {
+function stepFinish(messageID: string, output: number, reasoning = 0): StepFinishPart {
   return {
     id: `prt_${messageID}_sf_${output}`,
     sessionID: "ses_1",
@@ -27,7 +27,7 @@ function stepFinish(messageID: string, output: number): StepFinishPart {
     type: "step-finish",
     reason: "tool-use",
     cost: 0,
-    tokens: { input: 0, output, reasoning: 0, cache: { read: 0, write: 0 } },
+    tokens: { input: 0, output, reasoning, cache: { read: 0, write: 0 } },
   }
 }
 
@@ -50,6 +50,28 @@ function tool(messageID: string, start: number, end: number): ToolPart {
   }
 }
 
+function text(messageID: string, start: number): TextPart {
+  return {
+    id: `prt_${messageID}_text_${start}`,
+    sessionID: "ses_1",
+    messageID,
+    type: "text",
+    text: "",
+    time: { start },
+  }
+}
+
+function reasoning(messageID: string, start: number): ReasoningPart {
+  return {
+    id: `prt_${messageID}_reasoning_${start}`,
+    sessionID: "ses_1",
+    messageID,
+    type: "reasoning",
+    text: "",
+    time: { start },
+  }
+}
+
 describe("util.token-rate", () => {
   describe("tokensPerSecond", () => {
     test("rate is summed output tokens over summed request seconds across completed messages", () => {
@@ -62,6 +84,12 @@ describe("util.token-rate", () => {
         msg_b: [stepFinish("msg_b", 2000)],
       }
       expect(tokensPerSecond(messages, parts)).toBe(600)
+    })
+
+    test("reasoning tokens count toward the numerator, matching the time they take to generate", () => {
+      const messages: Message[] = [assistant("msg_a", { created: 0, completed: 4000 })]
+      const parts = { msg_a: [stepFinish("msg_a", 100, 300)] }
+      expect(tokensPerSecond(messages, parts)).toBe(100)
     })
 
     test("sums every step-finish receipt inside one multi-step message", () => {
@@ -96,9 +124,7 @@ describe("util.token-rate", () => {
       expect(
         tokensPerSecond([assistant("msg_a", { created: 0 })], { msg_a: [stepFinish("msg_a", 100)] }),
       ).toBeUndefined()
-      expect(
-        tokensPerSecond([assistant("msg_a", { created: 0, completed: 2000 })], { msg_a: [] }),
-      ).toBeUndefined()
+      expect(tokensPerSecond([assistant("msg_a", { created: 0, completed: 2000 })], { msg_a: [] })).toBeUndefined()
       expect(tokensPerSecond([assistant("msg_a", { created: 0, completed: 2000 })], {})).toBeUndefined()
       expect(
         tokensPerSecond([assistant("msg_a", { created: 0, completed: 2000 })], { msg_a: [stepFinish("msg_a", 0)] }),
@@ -140,13 +166,78 @@ describe("util.token-rate", () => {
     })
   })
 
+  describe("timeToFirstToken", () => {
+    test("averages the gap from reply creation to first output over completed replies", () => {
+      const messages: Message[] = [
+        assistant("msg_a", { created: 0, completed: 4000 }),
+        assistant("msg_b", { created: 5000, completed: 9000 }),
+      ]
+      const parts = {
+        msg_a: [text("msg_a", 800)],
+        msg_b: [reasoning("msg_b", 6200)],
+      }
+      expect(timeToFirstToken(messages, parts)).toBe(1000)
+    })
+
+    test("only the first output of a reply is timed, even when later calls follow", () => {
+      const messages: Message[] = [assistant("msg_a", { created: 0, completed: 10000 })]
+      const parts = {
+        msg_a: [text("msg_a", 800), tool("msg_a", 1000, 2000), text("msg_a", 5000)],
+      }
+      expect(timeToFirstToken(messages, parts)).toBe(800)
+    })
+
+    test("a reply whose output follows an earlier tool call is not sampled", () => {
+      const messages: Message[] = [assistant("msg_a", { created: 0, completed: 10000 })]
+      const parts = {
+        msg_a: [tool("msg_a", 1000, 2000), text("msg_a", 5000)],
+      }
+      expect(timeToFirstToken(messages, parts)).toBeUndefined()
+    })
+
+    test("in-flight replies and replies without timed output never enter the average", () => {
+      const inflight = assistant("msg_a", { created: 0 })
+      const untimed = assistant("msg_b", { created: 0, completed: 3000 })
+      const parts = {
+        msg_a: [text("msg_a", 500)],
+        msg_b: [stepFinish("msg_b", 100)],
+      }
+      expect(timeToFirstToken([inflight, untimed], parts)).toBeUndefined()
+      expect(timeToFirstToken([], {})).toBeUndefined()
+    })
+
+    test("untimed replies do not dilute the average", () => {
+      const messages: Message[] = [
+        assistant("msg_a", { created: 0, completed: 4000 }),
+        assistant("msg_b", { created: 5000, completed: 9000 }),
+      ]
+      const parts = {
+        msg_a: [text("msg_a", 800)],
+        msg_b: [stepFinish("msg_b", 100)],
+      }
+      expect(timeToFirstToken(messages, parts)).toBe(800)
+    })
+
+    test("malformed creation time never leaks NaN", () => {
+      const broken = {
+        ...assistant("msg_a", { created: 0, completed: 2000 }),
+        time: { completed: 2000 },
+      } as unknown as Message
+      expect(timeToFirstToken([broken], { msg_a: [text("msg_a", 800)] })).toBeUndefined()
+    })
+  })
+
   describe("usageStrip", () => {
     test("includes the rate cell last when measured", () => {
       expect(usageStrip({ context: "143.6K (14%)", cost: "$1.56", rate: "42 tok/s" })).toBe(
         "143.6K (14%) · $1.56 · 42 tok/s",
       )
-      expect(usageStrip({ context: "143.6K (14%)", cost: undefined, rate: "42 tok/s" })).toBe(
-        "143.6K (14%) · 42 tok/s",
+      expect(usageStrip({ context: "143.6K (14%)", cost: undefined, rate: "42 tok/s" })).toBe("143.6K (14%) · 42 tok/s")
+    })
+
+    test("places the TTFT cell before the rate", () => {
+      expect(usageStrip({ context: "1K", cost: undefined, ttft: "TTFT avg 916ms", rate: "42 tok/s" })).toBe(
+        "1K · TTFT avg 916ms · 42 tok/s",
       )
     })
 

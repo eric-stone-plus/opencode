@@ -7,7 +7,7 @@ import type { Message, Part } from "@opencode-ai/sdk/v2"
  * (crates/tui/src/tui/session_metrics.rs) and `format_rate`
  * (crates/command-contract/src/metrics.rs).
  *
- * rate = (sum of step-finish output tokens) / (sum of measured request seconds)
+ * rate = (sum of step-finish output + reasoning tokens) / (sum of measured request seconds)
  *
  * across completed assistant messages of the loaded session. This is effective
  * request throughput — it includes connection setup, time to first token, and
@@ -65,7 +65,8 @@ export function tokensPerSecond(
     for (const part of steps) {
       if (part.type === "step-finish") {
         receipts += 1
-        output += part.tokens.output
+        // reasoning is stored apart from output while its time sits in the denominator
+        output += part.tokens.output + part.tokens.reasoning
         continue
       }
       if (part.type === "tool") {
@@ -102,6 +103,32 @@ export function tokensPerSecond(
   return outputTokens / (millis / 1000)
 }
 
+// Timed from reply creation, so it includes pre-request setup; first model call per reply only.
+export function timeToFirstToken(
+  messages: readonly Message[],
+  parts: Readonly<Record<string, readonly Part[]>>,
+): number | undefined {
+  const samples = messages.flatMap((message) => {
+    if (message.role !== "assistant" || message.time.completed === undefined) return []
+    const steps = parts[message.id]
+    if (!steps) return []
+    const outputs = steps.flatMap((part) => {
+      if (part.type !== "reasoning" && part.type !== "text") return []
+      return part.time ? [part.time.start] : []
+    })
+    if (outputs.length === 0) return []
+    const first = Math.min(...outputs)
+    const toolBeforeOutput = steps.some(
+      (part) => part.type === "tool" && "time" in part.state && part.state.time.start < first,
+    )
+    if (toolBeforeOutput) return []
+    const ttft = first - message.time.created
+    return Number.isFinite(ttft) && ttft >= 0 ? [ttft] : []
+  })
+  if (samples.length === 0) return undefined
+  return samples.reduce((sum, value) => sum + value, 0) / samples.length
+}
+
 /**
  * Format an output rate like codewhale's `format_rate`: one decimal below
  * 10 tok/s, integer otherwise. Rust `{rate:.N}` rounds the exact binary value
@@ -129,6 +156,6 @@ export function formatTokenRate(rate: number): string {
 }
 
 /** Join the usage strip cells, omitting any that are unavailable. */
-export function usageStrip(cells: { context?: string; cost?: string; rate?: string }): string {
-  return [cells.context, cells.cost, cells.rate].filter(Boolean).join(" · ")
+export function usageStrip(cells: { context?: string; cost?: string; ttft?: string; rate?: string }): string {
+  return [cells.context, cells.cost, cells.ttft, cells.rate].filter(Boolean).join(" · ")
 }
