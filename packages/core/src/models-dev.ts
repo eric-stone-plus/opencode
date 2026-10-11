@@ -95,7 +95,8 @@ function nativePackage(provider: SourceProvider, model?: SourceModel) {
 
 function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
   const providers: Snapshot[] = []
-  for (const item of Object.values(input)) {
+  // Every source (file, KV, bundled snapshot, fetch) funnels through here, so the vendor allowlist cannot be bypassed.
+  for (const item of Object.values(ModelsDev.restrict(input))) {
     const providerID = Provider.ID.make(item.id)
     const packageName = nativePackage(item)
     const info = {
@@ -259,6 +260,9 @@ export interface Interface {
 export const Options = Schema.Struct({
   url: Schema.optional(Schema.String),
   file: Schema.optional(Schema.String),
+  // Fork policy: the registry never fetches on its own (ADR 0003). `true` opts in to the boot and periodic refresh and
+  // to the last-resort fetch when neither a cache nor the bundled snapshot is available. `Interface.refresh` stays
+  // callable regardless, so an explicit refresh never depends on this flag.
   fetch: Schema.optional(Schema.Boolean),
   snapshot: Schema.optional(Schema.Boolean),
 })
@@ -278,7 +282,7 @@ const Cache = Schema.Struct({
 })
 const defaultSource = "https://models.opencode.ai"
 
-// Bundled snapshot of https://models.opencode.ai/api.json, committed at
+// Bundled snapshot of the registry cut to the supported vendors, committed at
 // packages/core/src/models-dev/snapshot.txt and refreshed via
 // `bun run script/update-models-snapshot.ts`. Decoded and normalized once per
 // isolate: the snapshot is a multi-MB module-level constant and one isolate can
@@ -324,7 +328,7 @@ export const layer = (options?: Options) =>
       )
 
       const source = options?.url || defaultSource
-      const fetch = options?.fetch ?? true
+      const fetch = options?.fetch ?? false
       const userAgent = App.useragent(app)
       const key = cacheKey(source)
       const ttl = Duration.minutes(5)
@@ -333,7 +337,12 @@ export const layer = (options?: Options) =>
       const loadFromCache = Effect.fnUntraced(function* () {
         const value = yield* kv.get(key)
         const cached = Schema.decodeUnknownOption(Cache)(value)
-        if (Option.isSome(cached))
+        // A cache written before the vendor allowlist holds the whole registry. It would outrank the bundled snapshot
+        // and be decoded on every start, so it is dropped here and the next load falls through to the snapshot.
+        if (
+          Option.isSome(cached) &&
+          Object.keys(ModelsDev.restrict(cached.value.body)).length === Object.keys(cached.value.body).length
+        )
           return {
             catalog: cached.value.body as Record<string, SourceProvider>,
             updatedAt: cached.value.updatedAt,
@@ -358,8 +367,8 @@ export const layer = (options?: Options) =>
           )
         : Effect.undefined
 
-      // The bundled snapshot is the boot-time floor for the catalog; the
-      // periodic fetch below still refreshes on top.
+      // The bundled snapshot is the boot-time floor for the catalog; an opted-in
+      // periodic fetch below refreshes on top.
       const loadSnapshot = options?.snapshot === false ? Effect.undefined : bundledSnapshot
 
       // Best-effort: a cache-write failure must never kill catalog
@@ -375,11 +384,16 @@ export const layer = (options?: Options) =>
         )
       })
 
+      // The cache only ever holds the supported vendors, so it stays as small as the bundled snapshot.
+      const fetchRestricted = Effect.fn("ModelsDev.fetchRestricted")(function* () {
+        const catalog = ModelsDev.restrict(yield* decodeCatalog(yield* fetchApi()))
+        return { catalog, text: JSON.stringify(catalog) }
+      })
+
       const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
-        const text = yield* fetchApi()
-        const catalog = yield* decodeCatalog(text)
-        yield* writeCache(text)
-        return catalog
+        const fetched = yield* fetchRestricted()
+        yield* writeCache(fetched.text)
+        return fetched.catalog
       })
 
       const populate = Effect.gen(function* () {
@@ -410,14 +424,13 @@ export const layer = (options?: Options) =>
             Effect.gen(function* () {
               const stored = yield* loadFromCache()
               if (!force && stored && Date.now() - stored.updatedAt < Duration.toMillis(ttl)) return
-              const text = yield* fetchApi()
-              const digest = bodyDigest(text)
+              const fetched = yield* fetchRestricted()
+              const digest = bodyDigest(fetched.text)
               // models.dev rarely changes between polls; skip the cache write,
-              // invalidation, and Refreshed event for a byte-identical body so
+              // invalidation, and Refreshed event for an identical restricted body so
               // downstream provider/model update listeners stay quiet.
               if (!force && stored?.digest === digest) return
-              yield* decodeCatalog(text)
-              yield* writeCache(text, digest)
+              yield* writeCache(fetched.text, digest)
               yield* invalidate
               yield* bus.publish(ModelsDev.Event.Refreshed, {})
             }),
