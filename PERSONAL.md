@@ -22,6 +22,8 @@ We push only `main` to the fork; the GitHub fork additionally carries upstream's
 
 All commands run from the repo root — wherever it is checked out on that machine.
 
+**Upstream catch-up is blocked (checked 2026-10-12).** `upstream/dev` (`47e5e71599`, 4412 commits ahead) deleted the whole `packages/opencode` package — this fork's runtime and the home of every overlay below — and moved the CLI to `packages/cli` (`bun run --cwd packages/cli src/index.ts`, build in `packages/cli/script/build.ts`), with shared code split across `packages/core` and `packages/util`. A dry run (`git merge-tree --write-tree HEAD upstream/dev`) predicts 301 conflicted paths (235 modify/delete, 138 under `packages/opencode`), and 43 of the 121 `@opencode-ai/{core,schema}` subpaths the legacy package imports no longer exist (`effect/layer-node`, `fs-util`, `global`, `flag/flag`, `v1/session`, ...). `bun run sync-upstream` assumes the old layout, so do not run it until the overlay has been ported to the new packages or the owner decides otherwise. The fork stays on its 2026-10-07 base (`a697115b20`).
+
 Catch up to official (fetch `upstream/dev`, **merge** into `main` — rerere records recurring conflict resolutions, build, push `origin/main`, install binary):
 
 ```bash
@@ -70,7 +72,7 @@ Replacing the binary while a TUI is running arms a delayed kill: the CLI daemon 
 
 If a merge conflict hits a file you patched, keep the personal behavior unless the owner says otherwise.
 
-Long-lived decisions are recorded as ADRs in `docs/adr/` (format and when-to-write: `skills/domain-modeling/ADR-FORMAT.md`). Current set: source-built binary / no self-upgrade, merge-only upstream sync, exhaustive config-declared providers, Zen removal.
+Long-lived decisions are recorded as ADRs in `docs/adr/` (format and when-to-write: `skills/domain-modeling/ADR-FORMAT.md`). Current set: source-built binary / no self-upgrade, merge-only upstream sync, exhaustive config-declared providers, Zen removal, four vendors only (Alibaba, DeepSeek, Zhipu, Xiaomi MiMo; every other vendor is deleted, so a sync will conflict on deleted provider files — `git rm` them).
 
 ## Overlay already on `main` (do not drop)
 
