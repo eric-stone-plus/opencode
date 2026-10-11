@@ -56,6 +56,7 @@ import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
+import { Todo } from "./todo"
 import { LLMEvent } from "@opencode-ai/llm"
 
 // @ts-ignore
@@ -167,6 +168,7 @@ const layer = Layer.effect(
     const llm = yield* LLM.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const todo = yield* Todo.Service
     const database = yield* Database.Service
     const { db } = database
     // Admission, runner selection and withdrawal share a short per-session gate.
@@ -1395,6 +1397,7 @@ const layer = Layer.effect(
             Effect.provideService(FSUtil.Service, fsys),
             Effect.provideService(Session.Service, sessions),
             Effect.provideService(EventV2Bridge.Service, events),
+            Effect.provideService(Todo.Service, todo),
           )
 
           const msg: SessionV1.Assistant = {
@@ -1883,6 +1886,7 @@ export const node = LayerNode.make({
     SystemPrompt.node,
     LLM.node,
     EventV2Bridge.node,
+    Todo.node,
     RuntimeFlags.node,
     Database.node,
   ],

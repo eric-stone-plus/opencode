@@ -1,3 +1,4 @@
+import path from "path"
 import { describe, expect } from "bun:test"
 import type { SessionV1 } from "@opencode-ai/core/v1/session"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -12,6 +13,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceState } from "@/effect/instance-state"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Session } from "@/session/session"
+import { Todo } from "@/session/todo"
 import * as SessionReminders from "../../src/session/reminders"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import PROMPT_AUTO_MODE from "../../src/session/prompt/auto-mode.txt"
@@ -24,7 +26,14 @@ import { testEffect } from "../lib/effect"
 const it = testEffect(
   Layer.mergeAll(
     LayerNode.compile(
-      LayerNode.group([Session.node, SessionProjector.node, FSUtil.node, CrossSpawnSpawner.node, EventV2Bridge.node]),
+      LayerNode.group([
+        Session.node,
+        SessionProjector.node,
+        FSUtil.node,
+        CrossSpawnSpawner.node,
+        EventV2Bridge.node,
+        Todo.node,
+      ]),
     ),
     RuntimeFlags.layer({ experimentalPlanMode: false }),
   ),
@@ -102,6 +111,22 @@ const snapshot = (messages: readonly SessionV1.WithParts[]) =>
 
 const texts = (messages: readonly SessionV1.WithParts[]) =>
   messages.findLast((msg) => msg.info.role === "user")!.parts.flatMap((part) => (part.type === "text" ? [part.text] : []))
+
+// Persisted planning-state cards across the whole message stream.
+const planningCards = (messages: readonly SessionV1.WithParts[]) =>
+  messages.flatMap((msg) =>
+    msg.parts.filter((part) => part.type === "text" && part.synthetic && part.metadata?.reminder === "planning"),
+  )
+
+const writePlanning = Effect.fn("test.writePlanning")(function* (
+  dir: string,
+  sessionID: SessionID,
+  name: string,
+  content: string,
+) {
+  const fsys = yield* FSUtil.Service
+  yield* fsys.writeWithDirs(path.join(dir, ".planning", sessionID, name), content).pipe(Effect.orDie)
+})
 
 describe("SessionReminders.apply", () => {
   it.live(
@@ -414,6 +439,210 @@ describe("SessionReminders.apply", () => {
         const info = yield* session.get(id)
         const out = yield* SessionReminders.apply({ messages: messages.slice(2), agent: agent("auto"), session: info })
         expect(texts(out)).toContain(PROMPT_AUTO_MODE)
+      }),
+    ),
+  )
+
+  it.live(
+    "planning state is fixed in a card with todos and planning files",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({
+          sessionID: id,
+          todos: [
+            { content: "write the parser", status: "pending", priority: "high" },
+            { content: "ship the release", status: "in_progress", priority: "medium" },
+          ],
+        })
+        yield* writePlanning(dir, id, "task_plan.md", "# Plan\nbuild the thing")
+        yield* writePlanning(dir, id, "findings.md", "finding: cache hits")
+        yield* user(id, "auto")
+        const out = texts(yield* apply(id, "auto"))
+        const card = out.find((text) => text.includes("## Loss check")) ?? ""
+        expect(card).toContain("write the parser")
+        expect(card).toContain("ship the release")
+        expect(card).toContain("# Plan\nbuild the thing")
+        expect(card).toContain("finding: cache hits")
+        expect(card).toContain("clean")
+        expect(card).toContain("2 todos")
+        expect(card).toContain("1 pending")
+        expect(card).toContain("1 in_progress")
+        expect(card).toContain("task_plan.md")
+        expect(card).toContain("findings.md")
+      }),
+    ),
+  )
+
+  it.live(
+    "unchanged planning state writes no second card",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({
+          sessionID: id,
+          todos: [{ content: "keep the card stable", status: "pending", priority: "high" }],
+        })
+        yield* writePlanning(dir, id, "progress.md", "step one done")
+        const first = yield* user(id, "auto")
+        yield* apply(id, "auto")
+        yield* assistant(id, first.id, "auto")
+        yield* user(id, "auto")
+        const out = yield* apply(id, "auto")
+        expect(planningCards(out)).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.live(
+    "a planning card compacted out of context is re-injected with a restore notice",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({
+          sessionID: id,
+          todos: [{ content: "survive the compaction", status: "pending", priority: "high" }],
+        })
+        yield* writePlanning(dir, id, "task_plan.md", "the plan survives too")
+        const first = yield* user(id, "auto")
+        yield* apply(id, "auto")
+        yield* assistant(id, first.id, "auto")
+        yield* user(id, "auto")
+        const messages = yield* session.messages({ sessionID: id })
+        // Simulate filterCompacted dropping the first turn and with it the card.
+        const info = yield* session.get(id)
+        const out = texts(yield* SessionReminders.apply({ messages: messages.slice(2), agent: agent("auto"), session: info }))
+        const card = out.find((text) => text.includes("## Loss check")) ?? ""
+        expect(card).toContain("survive the compaction")
+        expect(card).toContain("the plan survives too")
+        expect(card).toContain("Restored after compaction")
+      }),
+    ),
+  )
+
+  it.live(
+    "the loss check names a vanished todo and a vanished planning file",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const fsys = yield* FSUtil.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({
+          sessionID: id,
+          todos: [
+            { content: "task A", status: "pending", priority: "high" },
+            { content: "task B", status: "pending", priority: "medium" },
+            { content: "task C", status: "completed", priority: "low" },
+          ],
+        })
+        yield* writePlanning(dir, id, "findings.md", "kept finding")
+        const first = yield* user(id, "auto")
+        yield* apply(id, "auto")
+        yield* assistant(id, first.id, "auto")
+        yield* todo.update({ sessionID: id, todos: [{ content: "task A", status: "in_progress", priority: "high" }] })
+        yield* fsys.remove(path.join(dir, ".planning", id, "findings.md")).pipe(Effect.orDie)
+        yield* user(id, "auto")
+        const out = texts(yield* apply(id, "auto"))
+        const card = out.findLast((text) => text.includes("## Loss check")) ?? ""
+        expect(card).toContain("LOST since the last planning card")
+        expect(card).toContain('todo "task B" (was pending)')
+        expect(card).toContain("planning file findings.md")
+        expect(card).not.toContain("task C")
+      }),
+    ),
+  )
+
+  it.live(
+    "no todos and no planning files write no planning card",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const { id } = yield* session.create({})
+        yield* user(id, "auto")
+        const out = yield* apply(id, "auto")
+        expect(planningCards(out)).toHaveLength(0)
+      }),
+    ),
+  )
+
+  it.live(
+    "a deduped apply leaves the loss ledger intact and a later vanished todo is named",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({ sessionID: id, todos: [{ content: "task A", status: "pending", priority: "high" }] })
+        yield* writePlanning(dir, id, "task_plan.md", "the plan")
+        const first = yield* user(id, "auto")
+        yield* apply(id, "auto")
+        yield* assistant(id, first.id, "auto")
+        yield* user(id, "auto")
+        const second = yield* apply(id, "auto")
+        expect(planningCards(second)).toHaveLength(1)
+        yield* assistant(id, second.findLast((msg) => msg.info.role === "user")!.info.id, "auto")
+        yield* todo.update({ sessionID: id, todos: [] })
+        yield* user(id, "auto")
+        const out = yield* apply(id, "auto")
+        const card = texts(out).findLast((text) => text.includes("## Loss check")) ?? ""
+        expect(card).toContain("LOST since the last planning card")
+        expect(card).toContain('todo "task A" (was pending)')
+      }),
+    ),
+  )
+
+  it.live(
+    "a todo vanished mid-turn is named even when apply reuses a stale session snapshot",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id } = yield* session.create({})
+        yield* todo.update({
+          sessionID: id,
+          todos: [
+            { content: "task A", status: "pending", priority: "high" },
+            { content: "task B", status: "pending", priority: "medium" },
+          ],
+        })
+        // prompt.ts captures the session info once per turn and reuses it for
+        // every loop step, so mid-turn applies see the pre-turn metadata.
+        const stale = yield* session.get(id)
+        yield* user(id, "auto")
+        const msgs1 = yield* session.messages({ sessionID: id })
+        yield* SessionReminders.apply({ messages: msgs1, agent: agent("auto"), session: stale })
+        yield* todo.update({ sessionID: id, todos: [{ content: "task A", status: "pending", priority: "high" }] })
+        yield* user(id, "auto")
+        const msgs2 = yield* session.messages({ sessionID: id })
+        const out = yield* SessionReminders.apply({ messages: msgs2, agent: agent("auto"), session: stale })
+        const card = texts(out).findLast((text) => text.includes("## Loss check")) ?? ""
+        expect(card).toContain('todo "task B" (was pending)')
+      }),
+    ),
+  )
+
+  it.live(
+    "planning files of another live session are never injected",
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const todo = yield* Todo.Service
+        const { id: other } = yield* session.create({})
+        yield* writePlanning(dir, other, "task_plan.md", "SESSION ONE PLAN")
+        const { id } = yield* session.create({})
+        yield* todo.update({ sessionID: id, todos: [{ content: "task A", status: "pending", priority: "high" }] })
+        yield* user(id, "auto")
+        const out = yield* apply(id, "auto")
+        const card = texts(out).findLast((text) => text.includes("## Loss check")) ?? ""
+        expect(card).not.toContain("SESSION ONE PLAN")
+        expect(card).toContain("No planning files exist")
       }),
     ),
   )

@@ -2,7 +2,7 @@ import path from "path"
 import { createHash } from "crypto"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionGoal } from "@opencode-ai/schema/session-goal"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Agent } from "@/agent/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
@@ -11,6 +11,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { Session } from "./session"
+import { Todo } from "./todo"
 import PROMPT_PLAN from "./prompt/plan.txt"
 import BUILD_SWITCH from "./prompt/build-switch.txt"
 import PLAN_MODE from "./prompt/plan-mode.txt"
@@ -20,6 +21,8 @@ import PROMPT_BUILD_MODE from "./prompt/build-mode.txt"
 import PROMPT_GOAL_MODE from "./prompt/goal-mode.txt"
 
 const GOAL_REMINDER_MAX = 8000
+const PLANNING_FILES = ["task_plan.md", "findings.md", "progress.md"]
+const PLANNING_CONTENT_MAX = 32000
 const INTERNAL_AGENTS = new Set(["compaction", "title", "summary"])
 
 // Standing mode cards: one per primary profile (auto / goal / build; plan uses
@@ -38,7 +41,7 @@ const STANDING_MODE: Record<string, string> = {
   build: PROMPT_BUILD_MODE,
 }
 
-export type ReminderKind = "goal" | "mode"
+export type ReminderKind = "goal" | "mode" | "planning"
 
 const key = (text: string) => createHash("sha1").update(text).digest("hex")
 
@@ -47,6 +50,19 @@ const goalCleared = () =>
 
 const goalChanged = (text: string) =>
   text.replace("<system-reminder>\n", () => "<system-reminder>\nThe session goal changed; this replaces any earlier goal reminder.\n")
+
+const planningChanged = (text: string) =>
+  text.replace(
+    "<system-reminder>\n",
+    () => "<system-reminder>\nThe planning state changed; this replaces any earlier planning card.\n",
+  )
+
+const planningRestored = (text: string) =>
+  text.replace(
+    "## Loss check\n",
+    () =>
+      "## Loss check\nRestored after compaction — the previous planning card is gone from context; compare this inventory with what you remember and re-record anything missing.\n",
+  )
 
 const modeOther = (agent: string) =>
   `<system-reminder>\nOperational mode: ${agent}. Earlier operational-mode reminders in this conversation are superseded and no longer apply.\n</system-reminder>`
@@ -66,6 +82,7 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const flags = yield* RuntimeFlags.Service
   const fsys = yield* FSUtil.Service
   const sessions = yield* Session.Service
+  const todo = yield* Todo.Service
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage) return input.messages
 
@@ -153,6 +170,76 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
     yield* standing("goal", { text: goalCleared(), neutral: true })
   }
 
+  // Standing planning-state card: re-injects the todo table and the planning
+  // files under <directory>/.planning/<sessionID>/ after compaction drops them
+  // from context, and the loss check names anything that vanished since the
+  // previous card. The loss ledger lives in session metadata and advances only
+  // when a card is actually persisted, so every loss check diffs against the
+  // last card, not the last loop step.
+  const todos = yield* todo.get(input.session.id)
+  const planningRoot = path.join(input.session.directory, ".planning", input.session.id)
+  // apply() receives session info captured once at the top of the prompt loop,
+  // so input.session.metadata goes stale after the first setMetadata of the
+  // turn. Re-read it: the loss ledger must reflect the last card write even
+  // mid-turn, and the map written back must not clobber keys others updated
+  // since the capture.
+  const fresh = yield* sessions.get(input.session.id).pipe(Effect.orElseSucceed(() => input.session))
+  const ledger = Option.getOrNull(decodePlanningInventory(fresh.metadata?.planning_inventory))
+  const planning = yield* Effect.fn("SessionReminders.planningState")(function* () {
+    const primary = yield* readPlanning(planningRoot)
+    if (primary.size > 0) return { dir: planningRoot, files: primary }
+    // Fallback for a renamed or manually moved directory. Only a prior planning
+    // card (the ledger) proves these files are this session's, and a directory
+    // named after another live session under .planning/ is never ours to claim.
+    if (!ledger) return undefined
+    const live = new Set<string>((yield* sessions.list()).map((item) => item.id))
+    const base = path.dirname(planningRoot)
+    const entries = yield* fsys.readDirectoryEntries(base).pipe(Effect.orElseSucceed((): FSUtil.DirEntry[] => []))
+    let best: { dir: string; files: Map<string, PlanningFile>; mtime: number } | undefined
+    for (const entry of entries) {
+      if (entry.type !== "directory") continue
+      if (entry.name !== input.session.id && live.has(entry.name)) continue
+      const dir = path.join(base, entry.name)
+      const files = yield* readPlanning(dir)
+      if (files.size === 0) continue
+      let mtime = 0
+      const info = yield* fsys.stat(dir).pipe(Effect.orElseSucceed(() => undefined))
+      if (info && Option.isSome(info.mtime)) mtime = info.mtime.value.getTime()
+      // Directory mtime does not move on content edits; take the files too.
+      for (const name of files.keys()) {
+        const file = yield* fsys.stat(path.join(dir, name)).pipe(Effect.orElseSucceed(() => undefined))
+        if (file && Option.isSome(file.mtime)) mtime = Math.max(mtime, file.mtime.value.getTime())
+      }
+      if (!best || mtime > best.mtime) best = { dir, files, mtime }
+    }
+    return best
+  })()
+  const body = planningBody({
+    dir: planning?.dir ?? planningRoot,
+    todos,
+    files: planning?.files ?? new Map<string, PlanningFile>(),
+    losses: planningLosses(ledger, todos, planning?.files ?? new Map<string, PlanningFile>()),
+  })
+  const previous = latest("planning")
+  // An empty state is a neutral card: it exists only to supersede an earlier
+  // planning card. The dedupe key covers the state sections (header, todos,
+  // planning files); the loss check is a diff against the ledger and the two
+  // notices below are context notes, so an unchanged inventory never rewrites
+  // the card even though the diff view flips once the ledger advances.
+  if (todos.length > 0 || planning !== undefined || previous) {
+    if (previous?.key !== body.key) {
+      const text = previous ? planningChanged(body.text) : ledger ? planningRestored(body.text) : body.text
+      yield* persist(text, { reminder: "planning", key: body.key })
+      yield* sessions.setMetadata({
+        sessionID: userMessage.info.sessionID,
+        metadata: {
+          ...fresh.metadata,
+          planning_inventory: JSON.stringify(planningInventory(todos, planning?.files)),
+        },
+      })
+    }
+  }
+
   // Standing mode card for the active profile.
   if (input.agent.name === "plan") {
     if (flags.experimentalPlanMode) {
@@ -207,5 +294,103 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   yield* persist(text)
   return input.messages
 })
+
+type PlanningFile = { content: string; bytes: number; sha: string }
+
+const readPlanning = Effect.fn("SessionReminders.readPlanning")(function* (dir: string) {
+  const fsys = yield* FSUtil.Service
+  const found = new Map<string, PlanningFile>()
+  for (const name of PLANNING_FILES) {
+    const content = yield* fsys.readFileStringSafe(path.join(dir, name)).pipe(Effect.orElseSucceed(() => undefined))
+    if (content === undefined) continue
+    const bytes = Buffer.from(content, "utf8")
+    found.set(name, { content, bytes: bytes.length, sha: createHash("sha256").update(bytes).digest("hex") })
+  }
+  return found
+})
+
+const PlanningInventory = Schema.Struct({
+  todos: Schema.Array(Schema.Struct({ content: Schema.String, status: Schema.String, priority: Schema.String })),
+  files: Schema.Record(Schema.String, Schema.Struct({ bytes: Schema.Number, sha: Schema.String })),
+})
+
+const decodePlanningInventory = Schema.decodeUnknownOption(Schema.fromJsonString(PlanningInventory))
+
+function planningInventory(todos: readonly Todo.Info[], files: ReadonlyMap<string, PlanningFile> | undefined) {
+  return {
+    todos: todos.map((todo) => ({ content: todo.content, status: todo.status, priority: todo.priority })),
+    files: Object.fromEntries(
+      [...(files ?? new Map<string, PlanningFile>())].map(([name, file]) => [name, { bytes: file.bytes, sha: file.sha }]),
+    ),
+  }
+}
+
+// A loss is a ledger todo that is gone without being completed or cancelled,
+// or a ledger planning file that is gone; status changes, reordering and file
+// content updates are not losses.
+function planningLosses(
+  ledger: Schema.Schema.Type<typeof PlanningInventory> | null,
+  todos: readonly Todo.Info[],
+  files: ReadonlyMap<string, PlanningFile>,
+): string[] {
+  if (!ledger) return []
+  return [
+    ...ledger.todos
+      .filter(
+        (todo) =>
+          todo.status !== "completed" &&
+          todo.status !== "cancelled" &&
+          !todos.some((current) => current.content === todo.content),
+      )
+      .map((todo) => `todo "${todo.content}" (was ${todo.status})`),
+    ...Object.keys(ledger.files)
+      .filter((name) => !files.has(name))
+      .map((name) => `planning file ${name}`),
+  ]
+}
+
+function planningBody(input: {
+  dir: string
+  todos: readonly Todo.Info[]
+  files: ReadonlyMap<string, PlanningFile>
+  losses: readonly string[]
+}) {
+  const count = (status: string) => input.todos.filter((todo) => todo.status === status).length
+  const header = `Planning-state card: the current todos and planning files for this session. Planning directory: ${input.dir}.`
+  const todoList = input.todos.map((todo) => `- [${todo.status}] (${todo.priority}) ${todo.content}`).join("\n") || "(none)"
+  const filesSection = input.files.size
+    ? `## Planning files\n${planningSections(input.files)}`
+    : `No planning files exist at ${input.dir}.`
+  const lossCheck = input.losses.length
+    ? `LOST since the last planning card:\n${input.losses.map((loss) => `- ${loss}`).join("\n")}`
+    : `clean — ${input.todos.length} todos (${count("pending")} pending / ${count("in_progress")} in_progress / ${count("completed")} completed / ${count("cancelled")} cancelled); planning files: ${[...input.files].map(([name, file]) => `${name} (${file.bytes} bytes, ${file.sha.slice(0, 8)})`).join(", ") || "(none)"}`
+  return {
+    text: `<system-reminder>\n${header}\n\n## Loss check\n${lossCheck}\n\n## Todo list\n${todoList}\n\n${filesSection}\n</system-reminder>`,
+    key: key([header, todoList, filesSection].join("\n")),
+  }
+}
+
+function planningSections(files: ReadonlyMap<string, PlanningFile>) {
+  const sections: string[] = []
+  let budget = PLANNING_CONTENT_MAX
+  for (const [name, file] of files) {
+    sections.push(`### ${name} — ${file.bytes} bytes, sha256 ${file.sha.slice(0, 8)}`)
+    if (budget <= 0) {
+      sections.push("(truncated)")
+      continue
+    }
+    if (file.content.length <= budget) {
+      sections.push(file.content)
+      budget -= file.content.length
+      continue
+    }
+    let cut = budget
+    // Do not slice between the halves of a surrogate pair.
+    if (cut > 0 && file.content.charCodeAt(cut) >= 0xdc00 && file.content.charCodeAt(cut) <= 0xdfff) cut -= 1
+    sections.push(`${file.content.slice(0, cut)}\n(truncated)`)
+    budget = 0
+  }
+  return sections.join("\n")
+}
 
 export * as SessionReminders from "./reminders"
