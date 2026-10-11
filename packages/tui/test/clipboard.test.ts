@@ -1,122 +1,142 @@
 import { expect, test } from "bun:test"
-import { copyCommand, createCopyMethod, isRemoteTerminal, osc52Sequence, writeWith } from "../src/clipboard"
+import {
+  createClipboard,
+  type ClipboardReadOptions,
+  type ClipboardReadResult,
+  type ClipboardService as CoreClipboardService,
+  type ClipboardWriteOptions,
+  type ClipboardWriteResult,
+  type HostClipboardService,
+} from "@opentui/core"
+import { createClipboardAdapter } from "../src/clipboard"
 
-test("prefers Wayland clipboard when available", () => {
-  expect(copyCommand("linux", true, (name) => name === "wl-copy")).toEqual(["wl-copy"])
-})
-
-test("uses osascript on macOS", () => {
-  expect(copyCommand("darwin", false, (name) => name === "osascript")).toEqual(["osascript"])
-})
-
-test("falls back through X11 clipboard commands", () => {
-  expect(copyCommand("linux", true, (name) => name === "xclip")).toEqual(["xclip", "-selection", "clipboard"])
-  expect(copyCommand("linux", false, (name) => name === "xsel")).toEqual(["xsel", "--clipboard", "--input"])
-})
-
-test("returns undefined when native clipboard is unavailable", () => {
-  expect(copyCommand("linux", false, () => false)).toBeUndefined()
-})
-
-test("only SSH sessions count as remote terminals", () => {
-  expect(isRemoteTerminal({})).toBe(false)
-  expect(isRemoteTerminal({ TMUX: "/tmp/tmux-1000/default,1,0" })).toBe(false)
-  expect(isRemoteTerminal({ SSH_TTY: "/dev/pts/1" })).toBe(true)
-  expect(isRemoteTerminal({ SSH_CONNECTION: "10.0.0.1 5000 10.0.0.2 22" })).toBe(true)
-  expect(isRemoteTerminal({ SSH_CLIENT: "10.0.0.1 5000 22" })).toBe(true)
-})
-
-test("OSC 52 is wrapped for tmux and screen", () => {
-  const plain = `\x1b]52;c;${Buffer.from("x").toString("base64")}\x07`
-  expect(osc52Sequence("x", {})).toBe(plain)
-  expect(osc52Sequence("x", { TMUX: "1" })).toBe(plain + `\x1bPtmux;\x1b${plain}\x1b\\`)
-  expect(osc52Sequence("x", { STY: "1" })).toBe(`\x1bPtmux;\x1b${plain}\x1b\\`)
-})
-
-function writer(input: { env?: Record<string, string>; tty?: boolean; fail?: boolean }) {
-  const emitted: string[] = []
-  const copied: string[] = []
+function coreClipboard(options: {
+  read?: ClipboardReadResult
+  write?: ClipboardWriteResult
+  onRead?: (input: ClipboardReadOptions) => void
+  onWrite?: (text: string, input: ClipboardWriteOptions) => void
+}): CoreClipboardService {
   return {
-    emitted,
-    copied,
-    deps: {
-      env: input.env ?? {},
-      tty: input.tty ?? true,
-      emit: (sequence: string) => emitted.push(sequence),
-      copy: async (text: string) => {
-        if (input.fail) throw new Error("osascript exited with code 1")
-        copied.push(text)
-      },
+    async read(input) {
+      options.onRead?.(input)
+      return options.read ?? { status: "empty" }
     },
+    async writeText(text, input) {
+      options.onWrite?.(text, input)
+      return (
+        options.write ?? {
+          host: { status: "written" },
+          terminal: { status: "not-attempted", capability: "unknown" },
+        }
+      )
+    },
+    async clear() {
+      return {
+        host: { status: "cleared" },
+        terminal: { status: "not-attempted", capability: "unknown" },
+      }
+    },
+    async dispose() {},
   }
 }
 
-test("write resolves when the native copy succeeds", async () => {
-  const w = writer({})
-  await writeWith("hello", w.deps)
-  expect(w.copied).toEqual(["hello"])
-  expect(w.emitted).toHaveLength(1)
+test("adapts OpenTUI image and text reads", async () => {
+  const requests: ClipboardReadOptions[] = []
+  const image = createClipboardAdapter(
+    coreClipboard({
+      read: {
+        status: "read",
+        representation: { mimeType: "image/png", bytes: new Uint8Array([0, 1, 2, 255]) },
+      },
+      onRead: (input) => requests.push(input),
+    }),
+  )
+  const text = "line 1\r\n\t世界"
+  const plain = createClipboardAdapter(
+    coreClipboard({
+      read: {
+        status: "read",
+        representation: { mimeType: "text/plain", bytes: new TextEncoder().encode(text) },
+      },
+    }),
+  )
+
+  expect(await image.read()).toEqual({ data: "AAEC/w==", mime: "image/png" })
+  expect(await plain.read()).toEqual({ data: text, mime: "text/plain" })
+  expect(requests).toEqual([{ preferredTypes: ["image/png", "text/plain"], selection: "clipboard" }])
 })
 
-test("write rejects a local native failure even though OSC 52 was emitted", async () => {
-  // Terminal.app / tmux without set-clipboard drop OSC 52 silently, so a local
-  // TTY is no evidence anything was copied.
-  for (const env of [{}, { TMUX: "1" }] as Record<string, string>[]) {
-    const w = writer({ env, fail: true })
-    await expect(writeWith("hello", w.deps)).rejects.toThrow("Clipboard unavailable: osascript exited with code 1")
-    expect(w.emitted).toHaveLength(1)
-  }
-})
-
-test("write resolves a native failure over SSH where OSC 52 is the intended path", async () => {
-  const w = writer({ env: { SSH_TTY: "/dev/pts/1" }, fail: true })
-  await writeWith("hello", w.deps)
-  expect(w.emitted).toEqual([osc52Sequence("hello", {})])
-})
-
-test("write rejects a native failure over SSH without a terminal", async () => {
-  const w = writer({ env: { SSH_CONNECTION: "a" }, tty: false, fail: true })
-  await expect(writeWith("hello", w.deps)).rejects.toThrow("Clipboard unavailable")
-  expect(w.emitted).toEqual([])
-})
-
-test("copy method runs the platform command and propagates its failure", async () => {
-  const runs: unknown[][] = []
-  const fallback = async () => {
-    throw new Error("fallback should not run")
-  }
-  const run = async (...args: unknown[]) => {
-    runs.push(args)
-    throw new Error("exit 1")
-  }
-  const mac = createCopyMethod({ platform: "darwin", env: {}, which: (n) => n === "osascript", run, fallback })
-  await expect(mac('say "hi" \\')).rejects.toThrow("exit 1")
-  expect(runs[0]).toEqual(["osascript", ["-e", 'set the clipboard to "say \\"hi\\" \\\\"']])
-
-  const wayland = createCopyMethod({
-    platform: "linux",
-    env: { WAYLAND_DISPLAY: "wayland-0" },
-    which: (n) => n === "wl-copy",
-    run,
-    fallback,
-  })
-  await expect(wayland("text")).rejects.toThrow("exit 1")
-  expect(runs[1]).toEqual(["wl-copy", [], "text"])
-})
-
-test("copy method falls back when no platform command exists", async () => {
-  const seen: string[] = []
-  const method = createCopyMethod({
-    platform: "linux",
-    env: {},
-    which: () => false,
-    run: async () => {
-      throw new Error("no command should run")
+test("uses all available routes but skips the process host remotely", async () => {
+  const writes = { host: 0, terminal: 0 }
+  const host: HostClipboardService = {
+    maxWriteBytes: 8 * 1024 * 1024,
+    async read() {
+      return { status: "empty" }
     },
-    fallback: async (text) => {
-      seen.push(text)
+    async writeText() {
+      writes.host++
+      return { status: "written" }
     },
-  })
-  await method("text")
-  expect(seen).toEqual(["text"])
+    async clear() {
+      return { status: "cleared" }
+    },
+    async dispose() {},
+  }
+  const clipboard = createClipboardAdapter(
+    createClipboard({
+      host,
+      terminal: {
+        remote: true,
+        writeText() {
+          writes.terminal++
+          return { status: "attempted", capability: "supported" }
+        },
+        clear() {
+          return { status: "attempted", capability: "supported" }
+        },
+      },
+    }),
+  )
+
+  expect(await clipboard.write("hello")).toBeUndefined()
+  expect(writes).toEqual({ host: 0, terminal: 1 })
+})
+
+test("removes NUL characters before writing", async () => {
+  const writes: string[] = []
+  const clipboard = createClipboardAdapter(
+    coreClipboard({
+      onWrite: (text) => writes.push(text),
+    }),
+  )
+
+  expect(await clipboard.write("before\0after")).toBeUndefined()
+  expect(await clipboard.write("clean")).toBeUndefined()
+  expect(writes).toEqual(["beforeafter", "clean"])
+})
+
+test("rejects only when no clipboard route accepted the write", async () => {
+  const writes: [string, ClipboardWriteOptions][] = []
+  const failure = new Error("native clipboard failed")
+  const fallback = createClipboardAdapter(
+    coreClipboard({
+      write: {
+        host: { status: "written" },
+        terminal: { status: "local-failure", capability: "supported" },
+      },
+    }),
+  )
+  const clipboard = createClipboardAdapter(
+    coreClipboard({
+      write: {
+        host: { status: "failed", error: failure },
+        terminal: { status: "local-failure", capability: "supported" },
+      },
+      onWrite: (text, input) => writes.push([text, input]),
+    }),
+  )
+
+  expect(await fallback.write("hello")).toBeUndefined()
+  expect(await clipboard.write("hello").then(undefined, (error) => error)).toBe(failure)
+  expect(writes).toEqual([["hello", { destination: "all-available", selection: "clipboard" }]])
 })

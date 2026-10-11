@@ -1,9 +1,9 @@
-export * as ConfigCommandV1 from "./command"
+export * as ConfigCommandV1 from "./command.js"
 
 import { Schema } from "effect"
 
 export const Info = Schema.Struct({
-  template: Schema.optional(Schema.String),
+  template: Schema.String,
   description: Schema.optional(Schema.String),
   agent: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),

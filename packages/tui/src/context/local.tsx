@@ -1,248 +1,133 @@
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore } from "solid-js/store"
+import { dedupeWith } from "effect/Array"
 import { createSimpleContext } from "./helper"
-import { batch, createEffect, createMemo } from "solid-js"
-import { useSync } from "./sync"
+import { batch, createMemo, onCleanup } from "solid-js"
 import { useEvent } from "./event"
 import path from "path"
 import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
-import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { readJson, writeJsonAtomic } from "../util/persistence"
+import {
+  createModelPreferenceRepository,
+  cycleModelVariant,
+  favoriteModels,
+  modelPreferenceKey,
+  normalizeModelVariant,
+  recentModels,
+  type ModelPreference,
+  type ModelPreferenceModel,
+} from "../model-preference"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
-import { useRoute, type Route } from "./route"
+import { useRoute } from "./route"
+import { useData } from "./data"
 import { usePermission } from "./permission"
-import { DRAFT_SCOPE, cycleVariant, normalizeVariantStore, topVariant, type VariantStore } from "@opencode-ai/core/variant"
-
-export type LocalTheme = {
-  secondary: RGBA
-  accent: RGBA
-  success: RGBA
-  warning: RGBA
-  primary: RGBA
-  error: RGBA
-  info: RGBA
-}
-
-export function parseModel(model: string) {
-  const [providerID, ...rest] = model.split("/")
-  return {
-    providerID: providerID,
-    modelID: rest.join("/"),
-  }
-}
-
-export function recentModels(
-  model: { providerID: string; modelID: string },
-  recent: { providerID: string; modelID: string }[],
-) {
-  const seen = new Set<string>()
-  return [model, ...recent]
-    .filter((item) => {
-      const key = `${item.providerID}/${item.modelID}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    .slice(0, 10)
-    .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
-}
-
-// Mirrors the server's variant resolution (packages/opencode/src/session/prompt.ts createUserMessage):
-// the explicit pick wins, otherwise the agent default applies only when the request model is the
-// agent's own model and the variant exists on that model. "default" is the unset sentinel that
-// variant.set(undefined) persists, so it is treated as no selection.
-function resolveExplicitVariant(input: {
-  selected: string | undefined
-  variants: string[]
-  model: { providerID: string; modelID: string }
-  agentModel: { providerID: string; modelID: string } | undefined
-  agentVariant: string | undefined
-}) {
-  if (input.selected && input.selected !== "default" && input.variants.includes(input.selected)) return input.selected
-  const same =
-    !!input.agentModel &&
-    input.model.providerID === input.agentModel.providerID &&
-    input.model.modelID === input.agentModel.modelID
-  if (input.agentVariant && same && input.variants.includes(input.agentVariant)) return input.agentVariant
-  return undefined
-}
-
-export function resolveVariant(input: {
-  selected: string | undefined
-  variants: string[]
-  model: { providerID: string; modelID: string }
-  agentModel: { providerID: string; modelID: string } | undefined
-  agentVariant: string | undefined
-}) {
-  // Default = ladder top (2026-10-10): effort must never fall to the
-  // provider's "default" by omission. Explicit and agent picks above still win.
-  return resolveExplicitVariant(input) ?? topVariant(input.variants)
-}
-
-// Display-only companion to resolveVariant: when no explicit or agent variant
-// resolves, a model-level `options.reasoningEffort` pin still reaches every
-// request (the server merges model options over the variant), so the footer
-// must show it instead of hiding the effort. This never feeds back into the
-// request or the variant store.
-export function effectiveVariant(input: {
-  selected: string | undefined
-  variants: string[]
-  model: { providerID: string; modelID: string }
-  agentModel: { providerID: string; modelID: string } | undefined
-  agentVariant: string | undefined
-  pinned: string | undefined
-}) {
-  const resolved = resolveExplicitVariant(input)
-  if (resolved) return resolved
-  if (input.pinned && input.variants.includes(input.pinned)) return input.pinned
-  return topVariant(input.variants)
-}
-
-export type ModelRef = { providerID: string; modelID: string }
-
-// The model is a per-session choice, not a per-agent one: once the user picks
-// a model in a session (or the session is opened with a model on its last user
-// message) it survives agent switches (Tab, follow, plan_exit). Sessions
-// without a choice resolve to the agent's pinned model, then the fallback.
-// `null` marks a session known to have no choice (created from a draft that
-// had none), `undefined` one this TUI has not seen yet. The draft composer
-// (home, before the first prompt creates a session) has its own scope, handed
-// to the session it creates.
-export type ModelChoice = ModelRef | null | undefined
-
-export function modelScope(route: Route) {
-  return route.type === "session" ? route.sessionID : DRAFT_SCOPE
-}
-
-// Precedence: the session's explicit choice > the agent's pinned model > the
-// global fallback (--model, config model, recents, provider default). Invalid
-// candidates (disconnected provider, removed model) are skipped — except an
-// explicitly configured fallback (`configured`), which is kept as-is so the
-// server reports ModelNotFound instead of the TUI silently using another model.
-export function resolveModel(input: {
-  choice: ModelChoice
-  agentModel: ModelRef | undefined
-  fallback: ModelRef | undefined
-  configured?: boolean
-  valid(model: ModelRef): boolean
-}) {
-  for (const model of [input.choice, input.agentModel, input.fallback]) {
-    if (model && input.valid(model)) return model
-  }
-  if (input.configured) return input.fallback
-}
-
-// The explicitly requested global model (--model, else config `model`). It is
-// authoritative: when it is not in the provider list the TUI keeps it (and
-// warns) rather than falling through to recents or a provider default.
-export function configuredModel(input: { arg?: string; config?: string }) {
-  const value = input.arg || input.config
-  if (!value) return undefined
-  return { ...parseModel(value), source: input.arg ? ("--model" as const) : ("config" as const) }
-}
-
-// Variants are stored per session and model, like the model choice itself: a
-// variant picked in one session must not leak into another. The draft composer
-// (home, before the first prompt creates a session) has its own bucket that is
-// handed to the session it creates. A stored variant the newly chosen model
-// does not offer is dropped (unset, i.e. default) rather than kept as a
-// dangling selection; the model dialog then offers the variant picker again.
-// The store shape and its migration live in core, shared with `opencode run`.
-export function readVariant(store: VariantStore, scope: string, model: ModelRef | undefined) {
-  if (!model) return undefined
-  return store[scope]?.[`${model.providerID}/${model.modelID}`]
-}
-
-// Hands the draft bucket to the session and clears the draft. Returns a new
-// store because Solid merges plain objects written into a store path: writing
-// the draft node into the session key directly would alias the two buckets,
-// and writing `{}` would not replace an existing one.
-export function adoptVariant(store: VariantStore, sessionID: string): VariantStore {
-  return {
-    ...store,
-    [sessionID]: { ...(store[DRAFT_SCOPE] ?? {}) },
-    [DRAFT_SCOPE]: {},
-  }
-}
-
-export function variantAfterModelChange(selected: string | undefined, variants: string[]) {
-  if (!selected || selected === "default" || variants.includes(selected)) return selected
-  return undefined
-}
+import { useLocation } from "./location"
+import { parse } from "../util/model"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
-    const sync = useSync()
-    const sdk = useSDK()
+    const data = useData()
     const toast = useToast()
-    const theme = useTheme().theme
+    const theme = useTheme()
     const route = useRoute()
     const paths = useTuiPaths()
     const args = useArgs()
     const event = useEvent()
     const permission = usePermission()
+    const location = useLocation()
 
-    function isModelValid(model: { providerID: string; modelID: string }) {
-      const provider = sync.data.provider.find((item) => item.id === model.providerID)
-      return !!provider?.models[model.modelID]
+    const models = () => data.location.model.list(location.ref)
+    const providers = () => data.location.provider.list(location.ref)
+
+    function isModelValid(model: ModelPreferenceModel) {
+      return !!models()?.some((item) => item.providerID === model.providerID && item.id === model.modelID)
+    }
+
+    function getFirstValidModel(...modelFns: (() => ModelPreferenceModel | undefined)[]) {
+      for (const modelFn of modelFns) {
+        const model = modelFn()
+        if (model && isModelValid(model)) return model
+      }
     }
 
     function createAgent() {
-      const agents = createMemo(() => sync.data.agent.filter((agent) => agent.mode !== "subagent" && !agent.hidden))
-      const visibleAgents = createMemo(() => sync.data.agent.filter((agent) => !agent.hidden))
+      const agents = createMemo(() =>
+        (data.location.agent.list(location.ref) ?? []).filter((agent) => agent.mode !== "subagent" && !agent.hidden),
+      )
+      const visibleAgents = createMemo(() =>
+        (data.location.agent.list(location.ref) ?? []).filter((agent) => !agent.hidden),
+      )
       const [agentStore, setAgentStore] = createStore({
         current: undefined as string | undefined,
+        draftBySession: {} as Record<string, { agent?: string } | undefined>,
       })
-      const colors = createMemo(() => [
-        theme.secondary,
-        theme.accent,
-        theme.success,
-        theme.warning,
-        theme.primary,
-        theme.error,
-        theme.info,
-      ])
+      onCleanup(event.on("session.deleted", (evt) => setAgentStore("draftBySession", evt.data.sessionID, undefined)))
+      onCleanup(
+        event.on("session.agent.selected", (evt) => {
+          // Keep an entry after acknowledgment: CLI defaults must not override a user's later choice.
+          if (agentStore.draftBySession[evt.data.sessionID]?.agent === evt.data.agent)
+            setAgentStore("draftBySession", evt.data.sessionID, { agent: undefined })
+        }),
+      )
+      const colors = createMemo(() => {
+        const step = 200
+        return dedupeWith(
+          theme.categorical.map((scale) => scale[step]),
+          (first, second) => first.equals(second),
+        )
+      })
       return {
         list() {
           return agents()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current) ?? agents().at(0)
+          const draft = route.data.type === "session" ? agentStore.draftBySession[route.data.sessionID] : undefined
+          const selected =
+            route.data.type === "session"
+              ? (draft?.agent ??
+                (draft ? undefined : args.agent) ??
+                data.session.get(route.data.sessionID)?.agent ??
+                agentStore.current)
+              : agentStore.current
+          return agents().find((agent) => agent.id === selected) ?? agents().at(0)
         },
-        set(name: string) {
-          if (!agents().some((x) => x.name === name))
+        set(id: string) {
+          if (!agents().some((agent) => agent.id === id))
             return toast.show({
               variant: "warning",
-              message: `Agent not found: ${name}`,
+              message: `Agent not found: ${id}`,
               duration: 3000,
             })
-          setAgentStore("current", name)
+          batch(() => {
+            const changed = this.current()?.id !== id
+            if (changed) model.remember()
+            setAgentStore("current", id)
+            if (route.data.type === "session") setAgentStore("draftBySession", route.data.sessionID, { agent: id })
+            // Retain both selections while agent and model commits arrive separately.
+            const selected = changed && route.data.type === "session" ? model.current() : undefined
+            if (selected) model.set(selected)
+          })
         },
         move(direction: 1 | -1) {
           batch(() => {
             const current = this.current()
             if (!current) return
-            let next = agents().findIndex((x) => x.name === current.name) + direction
+            let next = agents().findIndex((agent) => agent.id === current.id) + direction
             if (next < 0) next = agents().length - 1
             if (next >= agents().length) next = 0
             const value = agents()[next]
-            setAgentStore("current", value.name)
+            this.set(value.id)
           })
         },
-        color(name: string) {
-          const index = visibleAgents().findIndex((x) => x.name === name)
+        color(id: string) {
+          const index = visibleAgents().findIndex((agent) => agent.id === id)
           if (index === -1) return colors()[0]
           const agent = visibleAgents()[index]
 
-          if (agent?.color) {
-            const color = agent.color
-            if (color.startsWith("#")) return RGBA.fromHex(color)
-            // already validated by config, just satisfying TS here
-            return theme[color as keyof typeof theme] as RGBA
-          }
+          if (agent?.color) return RGBA.fromHex(agent.color)
           return colors()[index % colors().length]
         },
       }
@@ -251,176 +136,264 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const agent = createAgent()
 
     function createModel() {
-      const [modelStore, setModelStore] = createStore<{
-        ready: boolean
-        // Session-scoped explicit choice, keyed by modelScope(); in memory only.
-        model: Record<string, ModelChoice>
-        recent: {
-          providerID: string
-          modelID: string
-        }[]
-        favorite: {
-          providerID: string
-          modelID: string
-        }[]
-        variant: VariantStore
-      }>({
+      type ModelSelection = ModelPreferenceModel & { variant?: string }
+      const [preferences, setPreferences] = createStore<ModelPreference & { ready: boolean }>({
         ready: false,
-        model: {},
         recent: [],
         favorite: [],
         variant: {},
       })
-
-      const filePath = path.join(paths.state, "model.json")
-      const state = {
-        pending: false,
-      }
-
-      function save() {
-        if (!modelStore.ready) {
-          state.pending = true
-          return
-        }
-        state.pending = false
-        void writeJsonAtomic(filePath, {
-          recent: modelStore.recent,
-          favorite: modelStore.favorite,
-          variant: modelStore.variant,
-        })
-      }
-
-      readJson<unknown>(filePath)
-        .then((x) => {
-          if (!x || typeof x !== "object") return
-          const value = x as Record<string, unknown>
-          if (Array.isArray(value.recent)) setModelStore("recent", value.recent)
-          if (Array.isArray(value.favorite)) setModelStore("favorite", value.favorite)
-          if (typeof value.variant === "object" && value.variant !== null)
-            setModelStore("variant", normalizeVariantStore(value.variant))
-        })
-        .catch(() => {})
-        .finally(() => {
-          setModelStore("ready", true)
-          if (state.pending) save()
-        })
-
-      // Session buckets are only useful while the session exists; without this
-      // the store grows with every session ever opened or created.
-      event.on("session.deleted", (evt) => {
-        const sessionID = evt.properties.info.id
-        if (modelStore.variant[sessionID] === undefined && modelStore.model[sessionID] === undefined) return
-        setModelStore(
-          produce((draft) => {
-            delete draft.variant[sessionID]
-            delete draft.model[sessionID]
-          }),
-        )
-        save()
+      const [selectionState, setSelectionState] = createStore<{
+        newSessionModelByLocationAgent: Record<string, ModelPreferenceModel | undefined>
+        selectionBySessionAgent: Record<string, Record<string, ModelSelection | undefined> | undefined>
+      }>({
+        newSessionModelByLocationAgent: {},
+        selectionBySessionAgent: {},
       })
 
-      const configured = createMemo(() => configuredModel({ arg: args.model, config: sync.data.config.model }))
+      const repository = createModelPreferenceRepository(path.join(paths.state, "model.json"))
+      const pendingSelectionCommits = new Map<string, { agentID: string; selection: string }>()
+      const selectionKey = (value: ModelSelection) =>
+        `${modelPreferenceKey(value)}:${normalizeModelVariant(value.variant) ?? "default"}`
 
-      // Warn (once per value) when the configured model is not offered by any
-      // connected provider; it is still used so the server reports the error.
-      let warned: string | undefined
-      createEffect(() => {
-        const model = configured()
-        if (!model || sync.status === "loading") return
-        const key = `${model.providerID}/${model.modelID}`
-        if (isModelValid(model) || warned === key) return
-        warned = key
-        toast.show({
-          variant: "warning",
-          message: `Configured model ${key} (${model.source}) is not available from any connected provider`,
-          duration: 5000,
+      function applyPreferences(value: ModelPreference) {
+        batch(() => {
+          setPreferences("recent", value.recent)
+          setPreferences("favorite", value.favorite)
+          setPreferences("variant", value.variant)
+          setPreferences("ready", true)
         })
+      }
+
+      onCleanup(repository.subscribe(applyPreferences))
+
+      const configuredModel = createMemo(() => {
+        const entry = data.location.config
+          .list(location.ref)
+          ?.findLast((entry) => entry.type === "document" && entry.info.model !== undefined)
+        const configured = entry?.type === "document" ? entry.info.model : undefined
+        if (!configured) return
+        return typeof configured === "string"
+          ? { ...parse(configured), variant: undefined }
+          : { providerID: configured.providerID, modelID: configured.model, variant: configured.variant }
       })
 
       const fallbackModel = createMemo(() => {
-        const explicit = configured()
-        if (explicit) return { providerID: explicit.providerID, modelID: explicit.modelID }
+        if (args.model) {
+          const { providerID, modelID } = parse(args.model)
+          if (isModelValid({ providerID, modelID })) {
+            return {
+              providerID,
+              modelID,
+            }
+          }
+        }
 
-        for (const item of modelStore.recent) {
+        const configured = configuredModel()
+        if (configured && isModelValid(configured)) return configured
+
+        for (const item of preferences.recent) {
           if (isModelValid(item)) {
             return item
           }
         }
 
-        const provider = sync.data.provider[0]
-        if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
+        const model = models()?.[0]
         if (!model) return undefined
         return {
-          providerID: provider.id,
-          modelID: model,
+          providerID: model.providerID,
+          modelID: model.id,
         }
       })
 
-      const scope = createMemo(() => modelScope(route.data))
+      const newSessionModel = createMemo(() => {
+        const a = agent.current()
+        return getFirstValidModel(
+          () => a && selectionState.newSessionModelByLocationAgent[locationAgentKey(a.id)],
+          () => a?.model && { providerID: a.model.providerID, modelID: a.model.id },
+          fallbackModel,
+        )
+      })
 
-      const currentModel = createMemo(() =>
-        resolveModel({
-          choice: modelStore.model[scope()],
-          agentModel: agent.current()?.model,
-          fallback: fallbackModel(),
-          configured: configured() !== undefined,
-          valid: isModelValid,
-        }),
-      )
+      const currentSelection = createMemo<ModelSelection | undefined>(() => {
+        if (route.data.type === "session") return sessionSelection(route.data.sessionID)
+        const model = newSessionModel()
+        if (!model) return
+        return preferredSelection(model)
+      })
 
-      function variantsOf(model: ModelRef) {
-        const info = sync.data.provider.find((item) => item.id === model.providerID)?.models[model.modelID]
-        return info?.variants ? Object.keys(info.variants) : []
+      const currentModel = createMemo(() => {
+        const selection = currentSelection()
+        if (!selection) return
+        return { providerID: selection.providerID, modelID: selection.modelID }
+      })
+
+      function locationAgentKey(agentID: string) {
+        const ref = location.ref ?? data.location.default()
+        return `${JSON.stringify([ref.directory, ref.workspaceID])}:${agentID}`
       }
 
-      function choose(model: ModelRef) {
-        batch(() => {
-          setModelStore("model", scope(), { providerID: model.providerID, modelID: model.modelID })
-          const key = `${model.providerID}/${model.modelID}`
-          const previous = modelStore.variant[scope()]?.[key]
-          const next = variantAfterModelChange(previous, variantsOf(model))
-          if (next === previous) return
-          setModelStore(
-            produce((draft) => {
-              draft.variant[scope()] ??= {}
-              draft.variant[scope()]![key] = next
-            }),
-          )
-          save()
+      function preferredSelection(model: ModelPreferenceModel): ModelSelection {
+        const configured = agent.current()?.model
+        const fallback = configuredModel()
+        const preferred = preferences.variant[modelPreferenceKey(model)]
+        const variant = normalizeModelVariant(
+          preferred ??
+            (configured?.providerID === model.providerID && configured.id === model.modelID
+              ? configured.variant
+              : undefined) ??
+            (fallback?.providerID === model.providerID && fallback.modelID === model.modelID
+              ? fallback.variant
+              : undefined),
+        )
+        const info = models()?.find((item) => item.providerID === model.providerID && item.id === model.modelID)
+        return { ...model, variant: info?.variants.some((item) => item.id === variant) ? variant : undefined }
+      }
+
+      function durableSelection(sessionID: string): ModelSelection | undefined {
+        const model = data.session.get(sessionID)?.model
+        if (!model) return
+        return {
+          providerID: model.providerID,
+          modelID: model.id,
+          variant: normalizeModelVariant(model.variant),
+        }
+      }
+
+      function sessionSelection(sessionID: string) {
+        const current = agent.current()
+        if (!current) return
+        const session = data.session.get(sessionID)
+        const selected =
+          selectionState.selectionBySessionAgent[sessionID]?.[current.id] ??
+          (!session?.agent || session.agent === current.id ? durableSelection(sessionID) : undefined)
+        if (selected) {
+          const info = models()?.find((item) => item.providerID === selected.providerID && item.id === selected.modelID)
+          return {
+            ...selected,
+            variant:
+              !info || info.variants.some((variant) => variant.id === selected.variant) ? selected.variant : undefined,
+          }
+        }
+        const model = newSessionModel()
+        return model && preferredSelection(model)
+      }
+
+      function setSessionSelection(sessionID: string, agentID: string, selection: ModelSelection | undefined) {
+        setSelectionState("selectionBySessionAgent", sessionID, {
+          ...selectionState.selectionBySessionAgent[sessionID],
+          [agentID]: selection,
         })
       }
 
+      function setSessionDraft(sessionID: string, selection: ModelSelection) {
+        const current = agent.current()
+        if (!current) return
+        const durable = durableSelection(sessionID)
+        const session = data.session.get(sessionID)
+        setSessionSelection(
+          sessionID,
+          current.id,
+          (!session?.agent || session.agent === current.id) &&
+            durable &&
+            selectionKey(durable) === selectionKey(selection)
+            ? undefined
+            : selection,
+        )
+      }
+
+      function selectModel(model: ModelPreferenceModel) {
+        if (route.data.type === "session") {
+          const sessionID = route.data.sessionID
+          const current = sessionSelection(sessionID)
+          setSessionDraft(
+            sessionID,
+            current?.providerID === model.providerID && current.modelID === model.modelID
+              ? current
+              : preferredSelection(model),
+          )
+          return true
+        }
+        const current = agent.current()
+        if (!current) return false
+        setSelectionState("newSessionModelByLocationAgent", locationAgentKey(current.id), model)
+        return true
+      }
+
+      function reconcileSessionSelection(sessionID: string) {
+        const expected = pendingSelectionCommits.get(sessionID)
+        const durable = durableSelection(sessionID)
+        if (!expected || !durable || data.session.get(sessionID)?.agent !== expected.agentID) return
+        if (selectionKey(durable) !== expected.selection) return
+        pendingSelectionCommits.delete(sessionID)
+        // Inactive agents keep their remembered choices after another agent commits.
+        if (
+          route.data.type !== "session" ||
+          route.data.sessionID !== sessionID ||
+          agent.current()?.id !== expected.agentID
+        )
+          return
+        const draft = selectionState.selectionBySessionAgent[sessionID]?.[expected.agentID]
+        if (draft && selectionKey(draft) === expected.selection)
+          setSessionSelection(sessionID, expected.agentID, undefined)
+      }
+
+      onCleanup(event.on("session.model.selected", (evt) => reconcileSessionSelection(evt.data.sessionID)))
+      onCleanup(event.on("session.agent.selected", (evt) => reconcileSessionSelection(evt.data.sessionID)))
+
+      onCleanup(
+        event.on("session.deleted", (evt) => {
+          pendingSelectionCommits.delete(evt.data.sessionID)
+          setSelectionState("selectionBySessionAgent", evt.data.sessionID, undefined)
+        }),
+      )
+
       return {
         current: currentModel,
+        selection: currentSelection,
+        remember() {
+          const current = agent.current()
+          const selection = currentSelection()
+          if (route.data.type !== "session" || !current || !selection) return
+          setSessionSelection(route.data.sessionID, current.id, { ...selection })
+        },
+        available(model = currentModel()) {
+          return model ? isModelValid(model) : false
+        },
+        trackSessionCommit(
+          sessionID: string,
+          value: {
+            providerID: string
+            id: string
+            variant?: string
+          },
+          agentID: string,
+        ) {
+          const committed = {
+            agentID,
+            selection: selectionKey({ providerID: value.providerID, modelID: value.id, variant: value.variant }),
+          }
+          pendingSelectionCommits.set(sessionID, committed)
+          // An unchanged model emits no event; the agent may be the only durable change.
+          reconcileSessionSelection(sessionID)
+          return () => {
+            if (pendingSelectionCommits.get(sessionID) === committed) pendingSelectionCommits.delete(sessionID)
+          }
+        },
         get ready() {
-          return modelStore.ready
+          return preferences.ready
         },
-        // Whether this TUI already holds the session's model state, in which
-        // case opening it must not re-initialize from its last user message.
-        known(sessionID: string) {
-          return modelStore.model[sessionID] !== undefined
-        },
-        // Hand the draft composer's choice (or its absence) to the session it
-        // just created, so the next new session starts from defaults/pins.
-        adopt(sessionID: string) {
-          batch(() => {
-            setModelStore("model", sessionID, modelStore.model[DRAFT_SCOPE] ?? null)
-            setModelStore("model", DRAFT_SCOPE, undefined)
-            setModelStore("variant", reconcile(adoptVariant(modelStore.variant, sessionID)))
-          })
-          save()
+        get catalogReady() {
+          return models() !== undefined
         },
         recent() {
-          return modelStore.recent
+          return preferences.recent
         },
         favorite() {
-          return modelStore.favorite
+          return preferences.favorite
         },
         parsed: createMemo(() => {
-          const value = currentModel()
+          const value = currentSelection()
           if (!value) {
             return {
               provider: "Connect a provider",
@@ -428,29 +401,28 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               reasoning: false,
             }
           }
-          const provider = sync.data.provider.find((item) => item.id === value.providerID)
-          const info = provider?.models[value.modelID]
+          const provider = providers()?.find((item) => item.id === value.providerID)
+          const info = models()?.find((item) => item.providerID === value.providerID && item.id === value.modelID)
           return {
             provider: provider?.name ?? value.providerID,
-            model: info?.name ?? value.modelID,
-            reasoning: info?.capabilities?.reasoning ?? false,
+            model: info?.name ?? `${value.modelID} (unavailable)`,
+            reasoning: (info?.variants?.length ?? 0) !== 0,
           }
         }),
         cycle(direction: 1 | -1) {
-          const current = currentModel()
+          const current = currentSelection()
           if (!current) return
-          const recent = modelStore.recent
+          const recent = preferences.recent.filter(isModelValid)
           const index = recent.findIndex((x) => x.providerID === current.providerID && x.modelID === current.modelID)
-          if (index === -1) return
-          let next = index + direction
+          let next = index === -1 ? (direction === 1 ? 0 : recent.length - 1) : index + direction
           if (next < 0) next = recent.length - 1
           if (next >= recent.length) next = 0
           const val = recent[next]
           if (!val) return
-          choose(val)
+          selectModel({ ...val })
         },
         cycleFavorite(direction: 1 | -1) {
-          const favorites = modelStore.favorite.filter((item) => isModelValid(item))
+          const favorites = preferences.favorite.filter((item) => isModelValid(item))
           if (!favorites.length) {
             toast.show({
               variant: "info",
@@ -459,7 +431,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             })
             return
           }
-          const current = currentModel()
+          const current = currentSelection()
           let index = -1
           if (current) {
             index = favorites.findIndex((x) => x.providerID === current.providerID && x.modelID === current.modelID)
@@ -473,109 +445,56 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
           const next = favorites[index]
           if (!next) return
-          choose(next)
-          setModelStore("recent", recentModels(next, modelStore.recent))
-          save()
+          if (!selectModel({ ...next })) return
+          setPreferences("recent", recentModels(next, preferences.recent))
+          void repository.addRecent(next).catch(() => undefined)
         },
         set(model: { providerID: string; modelID: string }, options?: { recent?: boolean }) {
           batch(() => {
-            if (!isModelValid(model)) {
-              toast.show({
-                message: `Model ${model.providerID}/${model.modelID} is not valid`,
-                variant: "warning",
-                duration: 3000,
-              })
-              return
-            }
-            choose(model)
+            if (!isModelValid(model)) return
+            if (!selectModel(model)) return
             if (options?.recent) {
-              setModelStore("recent", recentModels(model, modelStore.recent))
-              save()
+              setPreferences("recent", recentModels(model, preferences.recent))
+              void repository.addRecent(model).catch(() => undefined)
             }
           })
         },
         toggleFavorite(model: { providerID: string; modelID: string }) {
           batch(() => {
-            if (!isModelValid(model)) {
-              toast.show({
-                message: `Model ${model.providerID}/${model.modelID} is not valid`,
-                variant: "warning",
-                duration: 3000,
-              })
-              return
-            }
-            const exists = modelStore.favorite.some(
+            if (!isModelValid(model)) return
+            const exists = preferences.favorite.some(
               (x) => x.providerID === model.providerID && x.modelID === model.modelID,
             )
-            const next = exists
-              ? modelStore.favorite.filter((x) => x.providerID !== model.providerID || x.modelID !== model.modelID)
-              : [model, ...modelStore.favorite]
-            setModelStore(
-              "favorite",
-              next.map((x) => ({ providerID: x.providerID, modelID: x.modelID })),
-            )
-            save()
+            setPreferences("favorite", favoriteModels(model, preferences.favorite, !exists))
+            void repository.setFavorite(model, !exists).catch(() => undefined)
           })
         },
         variant: {
           selected() {
-            return readVariant(modelStore.variant, scope(), currentModel())
+            return currentSelection()?.variant
           },
           current() {
-            const m = currentModel()
-            if (!m) return undefined
-            const variants = this.list()
-            if (variants.length === 0) return undefined
-            const a = agent.current()
-            return resolveVariant({
-              selected: this.selected(),
-              variants,
-              model: m,
-              agentModel: a?.model,
-              agentVariant: a?.variant,
-            })
-          },
-          effective() {
-            const m = currentModel()
-            if (!m) return undefined
-            const variants = this.list()
-            if (variants.length === 0) return undefined
-            const a = agent.current()
-            const info = sync.data.provider.find((item) => item.id === m.providerID)?.models[m.modelID]
-            const pinned = info?.options?.reasoningEffort
-            return effectiveVariant({
-              selected: this.selected(),
-              variants,
-              model: m,
-              agentModel: a?.model,
-              agentVariant: a?.variant,
-              pinned: typeof pinned === "string" ? pinned : undefined,
-            })
+            return this.selected()
           },
           list() {
-            const m = currentModel()
+            const m = currentSelection()
             if (!m) return []
-            return variantsOf(m)
+            const info = models()?.find((item) => item.providerID === m.providerID && item.id === m.modelID)
+            return info?.variants?.map((variant) => variant.id) ?? []
           },
           set(value: string | undefined) {
-            const m = currentModel()
+            const m = currentSelection()
             if (!m) return
-            const key = `${m.providerID}/${m.modelID}`
-            setModelStore(
-              produce((draft) => {
-                draft.variant[scope()] ??= {}
-                draft.variant[scope()]![key] = value ?? "default"
-              }),
-            )
-            save()
+            if (route.data.type === "session") {
+              setSessionDraft(route.data.sessionID, { ...m, variant: normalizeModelVariant(value) })
+            }
+            setPreferences("variant", modelPreferenceKey(m), value ?? "default")
+            void repository.saveVariant(m, value).catch(() => undefined)
           },
           cycle() {
             const variants = this.list()
             if (variants.length === 0) return
-            // Shared ladder walk: wraps to the first step — there is no
-            // "default" stop (unset resolves to the ladder top).
-            const next = cycleVariant(this.current(), variants)
-            if (next !== undefined) this.set(next)
+            this.set(cycleModelVariant(this.current(), variants))
           },
         },
       }
@@ -625,7 +544,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
 
       const slots = createMemo(() => {
-        const existing = new Set(sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id))
+        const existing = new Set(
+          data.session
+            .list()
+            .filter((x) => x.parentID === undefined)
+            .map((x) => x.id),
+        )
         return sessionStore.pinned.filter((id) => existing.has(id)).slice(0, 9)
       })
 
@@ -642,7 +566,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
 
       event.on("session.deleted", (evt) => {
-        prune(evt.properties.info.id)
+        prune(evt.data.sessionID)
       })
 
       return {
@@ -677,38 +601,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     const session = createSession()
 
-    const mcp = {
-      isEnabled(name: string) {
-        const status = sync.data.mcp[name]
-        return status?.status === "connected"
-      },
-      async toggle(name: string) {
-        const status = sync.data.mcp[name]
-        if (status?.status === "connected") {
-          // Disable: disconnect the MCP
-          await sdk.client.mcp.disconnect({ name })
-        } else {
-          // Enable/Retry: connect the MCP (handles disabled, failed, and other states)
-          await sdk.client.mcp.connect({ name })
-        }
-      },
-    }
-
-    createEffect(() => {
-      const value = agent.current()
-      if (!value?.model) return
-      if (isModelValid(value.model)) return
-      toast.show({
-        variant: "warning",
-        message: `Agent ${value.name}'s configured model ${value.model.providerID}/${value.model.modelID} is not valid`,
-        duration: 3000,
-      })
-    })
-
     const result = {
       model,
       agent,
-      mcp,
       session,
       permission,
     }

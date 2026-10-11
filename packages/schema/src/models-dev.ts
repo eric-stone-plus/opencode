@@ -1,17 +1,9 @@
-export * as ModelsDev from "./models-dev"
+export * as ModelsDev from "./models-dev.js"
 
-import { define, inventory } from "./event"
+import { ephemeral, inventory } from "./event.js"
 
-const Refreshed = define({
+const Refreshed = ephemeral({
   type: "models-dev.refreshed",
   schema: {},
 })
 export const Event = { Refreshed, Definitions: inventory(Refreshed) }
-
-// This fork supports four vendors only (Alibaba, DeepSeek, Zhipu incl. Z.ai, Xiaomi MiMo; ADR 0005).
-// Every other registry provider is dropped wherever the registry is loaded, written or embedded.
-export function restrict<T>(registry: Record<string, T>): Record<string, T> {
-  return Object.fromEntries(
-    Object.entries(registry).filter(([providerID]) => /^(alibaba|deepseek|zhipuai|zai|xiaomi)(-|$)/.test(providerID)),
-  )
-}

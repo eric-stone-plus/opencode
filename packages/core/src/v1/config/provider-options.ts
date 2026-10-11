@@ -1,136 +1,31 @@
-export * as ConfigProviderOptionsV1 from "./provider-options"
+export * as ConfigProviderOptionsV1 from "./provider-options.js"
 
 type Options = Readonly<Record<string, unknown>>
 
 export interface ProviderResult {
+  readonly settings: Record<string, unknown>
   readonly headers?: Record<string, string>
   readonly body?: Record<string, unknown>
-  readonly url?: string
-  readonly settings?: Record<string, unknown>
 }
 
-export interface Lowerer {
-  readonly provider: (options: Options) => ProviderResult
-  readonly request: (options: Options) => Record<string, unknown>
-}
-
-export function get(packageName?: string): Lowerer {
-  const key = packageName ?? ""
-  return Object.hasOwn(lowerers, key) ? lowerers[key]! : raw
-}
-
-const raw: Lowerer = {
-  provider(options) {
-    return { body: clone(options) }
-  },
-  request: clone,
-}
-
-const anthropic: Lowerer = {
-  provider(options) {
-    return {
-      url: string(options.baseURL),
-      headers: compact({
-        "x-api-key": string(options.apiKey),
-        Authorization: options.authToken ? bearer(options.authToken) : undefined,
-        ...headers(options.headers),
-      }),
-      body: body(options.body),
-      settings: omit(options, ["apiKey", "authToken", "baseURL", "headers", "body"]),
-    }
-  },
-  request(options) {
-    const result = snake(options)
-    if (options.effort !== undefined || options.taskBudget !== undefined) {
-      result.output_config = compactUnknown({ effort: options.effort, task_budget: options.taskBudget })
-      delete result.effort
-      delete result.task_budget
-    }
-    if (isRecord(options.metadata) && options.metadata.userId !== undefined) {
-      result.metadata = { ...(isRecord(result.metadata) ? result.metadata : {}), user_id: options.metadata.userId }
-    }
-    return result
-  },
-}
-
-const openaiCompatible: Lowerer = {
-  provider(options) {
-    return { ...direct(options, ["baseURL"]), url: string(options.baseURL) }
-  },
-  request(options) {
-    const result = clone(options)
-    if (options.reasoningEffort !== undefined) {
-      result.reasoning_effort = options.reasoningEffort
-      delete result.reasoningEffort
-    }
-    return result
-  },
-}
-
-const lowerers: Readonly<Record<string, Lowerer>> = {
-  "@ai-sdk/anthropic": anthropic,
-  "@ai-sdk/openai-compatible": openaiCompatible,
-}
-
-function direct(options: Options, extraKeys: ReadonlyArray<string> = []): ProviderResult {
+export function provider(options: Options): ProviderResult {
+  const headers = options.headers
+  const body = options.body
+  const settings = Object.fromEntries(Object.entries(options).filter(([key]) => key !== "headers" && key !== "body"))
+  const headerOverlay =
+    typeof headers === "object" && headers !== null && !Array.isArray(headers)
+      ? Object.fromEntries(
+          Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        )
+      : undefined
+  const bodyOverlay = typeof body === "object" && body !== null && !Array.isArray(body) ? { ...body } : undefined
   return {
-    headers: headers(options.headers),
-    body: body(options.body),
-    settings: omit(options, ["headers", "body", ...extraKeys]),
+    settings,
+    headers: headerOverlay,
+    body: bodyOverlay,
   }
 }
 
-function body(input: unknown) {
-  if (!isRecord(input)) return undefined
-  return { ...input }
-}
-
-function snake(options: Options) {
-  return Object.fromEntries(Object.entries(options).map(([key, value]) => [snakeKey(key), snakeValue(value)]))
-}
-
-function snakeValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snakeValue)
-  if (!isRecord(value)) return value
-  return Object.fromEntries(Object.entries(value).map(([key, value]) => [snakeKey(key), snakeValue(value)]))
-}
-
-function snakeKey(key: string) {
-  return key.replace(/[A-Z]/g, (match) => "_" + match.toLowerCase())
-}
-
-function clone(options: Options) {
+export function model(options: Options) {
   return { ...options }
-}
-
-function omit(options: Options, keys: ReadonlyArray<string>) {
-  return Object.fromEntries(Object.entries(options).filter(([key]) => !keys.includes(key)))
-}
-
-function headers(input: unknown) {
-  if (!isRecord(input)) return undefined
-  return Object.fromEntries(
-    Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-  )
-}
-
-function compact(input: Record<string, string | undefined>) {
-  const entries = Object.entries(input).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  return entries.length ? Object.fromEntries(entries) : undefined
-}
-
-function compactUnknown(input: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(input).filter((entry) => entry[1] !== undefined))
-}
-
-function string(input: unknown) {
-  return typeof input === "string" && input ? input : undefined
-}
-
-function bearer(input: unknown) {
-  return typeof input === "string" && input ? `Bearer ${input}` : undefined
-}
-
-function isRecord(input: unknown): input is Record<string, unknown> {
-  return typeof input === "object" && input !== null && !Array.isArray(input)
 }

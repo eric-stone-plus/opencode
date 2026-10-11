@@ -1,71 +1,48 @@
 import { describe, expect, test } from "bun:test"
-import { ConfigProviderOptionsV1 } from "@opencode-ai/core/v1/config/provider-options"
+import { ConfigProviderOptionsV1 } from "@opencode/core/v1/config/provider-options"
 
 describe("ConfigProviderOptionsV1", () => {
-  test("keeps raw provider and request options unchanged", () => {
-    const lowerer = ConfigProviderOptionsV1.get("custom-provider")
-
-    expect(lowerer.provider({ apiKey: "secret", headers: { "x-test": "1" }, nested: { camelCase: true } })).toEqual({
-      body: { apiKey: "secret", headers: { "x-test": "1" }, nested: { camelCase: true } },
-    })
-    expect(lowerer.request({ nested: { camelCase: true } })).toEqual({ nested: { camelCase: true } })
-  })
-
-  test("falls back to raw lowering for prototype property package names", () => {
-    expect(ConfigProviderOptionsV1.get("toString").provider({ enabled: true })).toEqual({ body: { enabled: true } })
-  })
-
-  test("lowers Anthropic provider and request options", () => {
-    const lowerer = ConfigProviderOptionsV1.get("@ai-sdk/anthropic")
-
+  test("splits provider overlays without changing package settings", () => {
     expect(
-      lowerer.provider({
+      ConfigProviderOptionsV1.provider({
         apiKey: "secret",
-        authToken: "token",
-        baseURL: "https://anthropic.example",
-        headers: { "x-test": "1" },
-        body: { beta: true },
-        generateId: "custom",
+        baseURL: "https://openai.example/v1",
+        organization: "org",
+        headers: { "x-test": "1", invalid: true },
+        body: { store: true },
+        nested: { camelCase: true },
       }),
     ).toEqual({
-      url: "https://anthropic.example",
-      headers: { "x-api-key": "secret", Authorization: "Bearer token", "x-test": "1" },
-      body: { beta: true },
-      settings: { generateId: "custom" },
-    })
-    expect(
-      lowerer.request({
-        effort: "high",
-        taskBudget: 1024,
-        metadata: { userId: "user", traceId: "trace" },
-        nestedValue: { camelCase: true },
-      }),
-    ).toEqual({
-      output_config: { effort: "high", task_budget: 1024 },
-      metadata: { user_id: "user", trace_id: "trace" },
-      nested_value: { camel_case: true },
-    })
-  })
-
-  test("lowers OpenAI-compatible provider and request options", () => {
-    const lowerer = ConfigProviderOptionsV1.get("@ai-sdk/openai-compatible")
-
-    expect(
-      lowerer.provider({
-        baseURL: "https://compatible.example/v1",
-        headers: { "x-test": "1" },
-        body: { trace: true },
+      settings: {
         apiKey: "secret",
-      }),
-    ).toEqual({
-      url: "https://compatible.example/v1",
+        baseURL: "https://openai.example/v1",
+        organization: "org",
+        nested: { camelCase: true },
+      },
       headers: { "x-test": "1" },
-      body: { trace: true },
-      settings: { apiKey: "secret" },
+      body: { store: true },
     })
-    expect(lowerer.request({ reasoningEffort: "high", serviceTier: "priority" })).toEqual({
-      reasoning_effort: "high",
-      serviceTier: "priority",
+  })
+
+  test("keeps model and variant options unchanged", () => {
+    expect(
+      ConfigProviderOptionsV1.model({
+        reasoningEffort: "high",
+        taskBudget: 1024,
+        metadata: { userId: "user" },
+      }),
+    ).toEqual({
+      reasoningEffort: "high",
+      taskBudget: 1024,
+      metadata: { userId: "user" },
+    })
+  })
+
+  test("uses mechanical lowering for custom provider options", () => {
+    expect(ConfigProviderOptionsV1.provider({ enabled: true })).toEqual({
+      settings: { enabled: true },
+      headers: undefined,
+      body: undefined,
     })
   })
 })
