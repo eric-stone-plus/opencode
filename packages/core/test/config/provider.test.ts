@@ -48,7 +48,10 @@ describe("ConfigProviderPlugin.Plugin", () => {
                 settings: { compaction: { type: "native" } },
                 models: {
                   native: {},
-                  local: { settings: { compaction: { type: "summary" } }, package: "@opencode/ai/providers/openai/chat" },
+                  local: {
+                    settings: { compaction: { type: "summary" } },
+                    package: "@opencode/ai/providers/openai/chat",
+                  },
                   unsupported: { package: "@opencode/ai/providers/openai/chat" },
                 },
               },
@@ -521,16 +524,16 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps configured model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service
-      const providerID = Provider.ID.opencode
+      const providerID = Provider.ID.make("gateway")
       const modelID = Model.ID.make("alpha-gpt-next")
       const entries = [
         new Document({
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 package: "aisdk:@ai-sdk/openai",
-                settings: { baseURL: "https://opencode.test/v1" },
+                settings: { baseURL: "https://gateway.test/v1" },
                 models: {
                   "alpha-gpt-next": {
                     variants: [
@@ -570,16 +573,16 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps layered model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service
-      const providerID = Provider.ID.opencode
+      const providerID = Provider.ID.make("gateway")
       const modelID = Model.ID.make("alpha-gpt-next")
       const entries = [
         new Document({
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 package: "aisdk:@ai-sdk/openai",
-                settings: { baseURL: "https://opencode.test/v1" },
+                settings: { baseURL: "https://gateway.test/v1" },
               },
             },
           }),
@@ -588,7 +591,7 @@ describe("ConfigProviderPlugin.Plugin", () => {
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 models: {
                   "alpha-gpt-next": {
                     variants: [{ id: "high", body: { reasoningEffort: "high" } }],

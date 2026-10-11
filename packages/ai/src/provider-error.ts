@@ -116,15 +116,8 @@ export const isRetryable = (error: AIError) => {
 }
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
-// OpenCode Zen reports account caps as typed 429/402 errors that are not throttles.
-const QUOTA_CODES = new Set([
-  "insufficient_quota",
-  "usage_not_included",
-  "billing_error",
-  "gousagelimiterror",
-  "freeusagelimiterror",
-  "creditlimitexceeded",
-])
+// Account caps reported as typed 429/402 errors are not throttles.
+const QUOTA_CODES = new Set(["insufficient_quota", "usage_not_included", "billing_error"])
 // Google reports an invalid API key as HTTP 400 INVALID_ARGUMENT with this `details[].reason`.
 // Z.ai's Responses API reports account and plan rejections mid-stream as `permission_denied`.
 const AUTH_CODES = new Set(["authentication_error", "permission_error", "permission_denied", "api_key_invalid"])
@@ -158,9 +151,6 @@ const CONTENT_POLICY_CODES = new Set([
   "image_content_policy_violation",
   "refusal",
 ])
-// OpenCode Zen replaces upstream codes outside its allow-list but keeps the original
-// as a `[code]` label at the start of the rewritten message.
-const GATEWAY_CODE_LABEL = /^[^:\n]+: \[([A-Za-z0-9_.-]+)\]/
 // xAI reports an invalid API key as HTTP 400 with the generic `invalid-argument` code.
 const AUTH_TEXT = /incorrect api key provided/i
 const RATE_LIMIT_TEXT = /rate increased too quickly|rate[-_\s]?limit|too[_\s]?many[_\s]?requests/i
@@ -235,12 +225,9 @@ export interface ProviderFailure {
 export function classifyProviderFailure(input: ProviderFailure): AIError["reason"] {
   const details = { message: input.message, body: input.rawBody, http: input.http, cause: input.cause }
   const body = input.rawBody ?? ""
-  const codes = [
-    ...providerCodes(input.data),
-    ...providerCodes(body),
-    ...providerCodes(input.message),
-    ...(GATEWAY_CODE_LABEL.exec(input.message)?.slice(1) ?? []),
-  ].map((code) => code.toLowerCase())
+  const codes = [...providerCodes(input.data), ...providerCodes(body), ...providerCodes(input.message)].map((code) =>
+    code.toLowerCase(),
+  )
   // Scan the raw payload too so signals missing from the summary message
   // (e.g. overflow phrases nested in a JSON error body) still classify.
   const text = [input.message, body].filter((value) => value.length > 0).join("\n")
@@ -288,8 +275,8 @@ export function classifyProviderFailure(input: ProviderFailure): AIError["reason
     input.status === 409 ||
     (input.status !== undefined && input.status >= 500) ||
     // Server codes and phrasing only decide when no HTTP status contradicts them:
-    // gateways such as OpenCode Zen substitute `server_error` for codes they do
-    // not forward, so a 4xx with a server code is still a rejected request.
+    // gateways substitute `server_error` for codes they do not forward, so a 4xx
+    // with a server code is still a rejected request.
     ((input.status === undefined || input.status < 400) &&
       ((!codes.some((code) => INVALID_REQUEST_CODES.has(code)) && SERVER_ERROR_TEXT.test(text)) ||
         codes.some((code) => SERVER_CODES.has(code) || code.includes("exhausted") || code.includes("unavailable"))))

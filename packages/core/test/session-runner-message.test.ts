@@ -907,15 +907,18 @@ Earlier work
     ])
   })
 
-  test("replays flat state under an OpenCode hosted model's route key", () => {
-    const opencode = Model.Ref.make({ id: Model.ID.make("claude-fable-5"), providerID: Provider.ID.opencode })
+  test("replays flat state under an Anthropic-protocol provider's route key", () => {
+    const hosted = Model.Ref.make({
+      id: Model.ID.make("qwen3.8-max"),
+      providerID: Provider.ID.make("bailian-token-plan-personal"),
+    })
     const messages = toLLMMessages(
       [
         SessionMessage.Assistant.make({
-          id: id("assistant-opencode-reasoning"),
+          id: id("assistant-hosted-reasoning"),
           type: "assistant",
           agent: build,
-          model: opencode,
+          model: hosted,
           content: [
             SessionMessage.AssistantReasoning.make({
               type: "reasoning",
@@ -926,7 +929,7 @@ Earlier work
           time: { created, completed: created },
         }),
       ],
-      opencode,
+      hosted,
       "anthropic",
     )
 

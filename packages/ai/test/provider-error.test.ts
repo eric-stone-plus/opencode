@@ -203,21 +203,6 @@ describe("provider error classification", () => {
     ).toBe("ContentPolicy")
   })
 
-  test("recovers policy codes that OpenCode Zen preserves only in its message label", () => {
-    // Zen drops upstream codes outside its allow-list and replaces the type, but
-    // `Protocol.errorMessage` keeps the original code as a `[code]` prefix.
-    const zen = {
-      error: {
-        type: "server_error",
-        message: "Upstream request failed: [content_filter] The response was filtered",
-      },
-    }
-
-    expect(
-      classifyProviderFailure({ message: zen.error.message, status: 400, rawBody: JSON.stringify(zen) })._tag,
-    ).toBe("ContentPolicy")
-  })
-
   test("keeps invalid_prompt schema validation failures as invalid requests", () => {
     // Bedrock Mantle reports request validation failures under `invalid_prompt`
     // with a pydantic dump that lists every input union member's fields.
@@ -260,27 +245,6 @@ describe("provider error classification", () => {
 
   test("classifies 402 as exhausted quota", () => {
     expect(classifyProviderFailure({ message: "Payment Required", status: 402 })._tag).toBe("QuotaExceeded")
-  })
-
-  test("classifies OpenCode Zen account limits as quota rather than throttling", () => {
-    const typed = (type: string, message: string) => ({ type: "error", error: { type, message } })
-    const substituted = (message: string) => ({
-      error: { type: "server_error", message: `Upstream request failed: ${message}` },
-    })
-    const cases: ReadonlyArray<[number, { error: { message: string } }]> = [
-      [429, typed("GoUsageLimitError", "Go usage limit exceeded")],
-      [429, typed("FreeUsageLimitError", "Rate limit exceeded. Please try again later.")],
-      [402, typed("CreditLimitExceeded", "Credit limit exceeded.")],
-      [402, substituted("Insufficient account funds")],
-      [402, substituted("Account invoice is overdue")],
-      [429, substituted("Account budget exceeded")],
-    ]
-    expect(
-      cases.map(
-        ([status, body]) =>
-          classifyProviderFailure({ message: body.error.message, status, rawBody: JSON.stringify(body) })._tag,
-      ),
-    ).toEqual(Array(6).fill("QuotaExceeded"))
   })
 
   test("classifies Z.ai plan and balance limits as quota rather than throttling", () => {
