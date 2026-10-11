@@ -141,6 +141,13 @@ function handle(raw) {
 
   if (data.method === "textDocument/didOpen") {
     maybeRegister("didOpen")
+    // Lets a test script what a server reports for every opened document.
+    if (process.env.FAKE_LSP_PUBLISH) {
+      sendNotification("textDocument/publishDiagnostics", {
+        uri: data.params.textDocument.uri,
+        diagnostics: JSON.parse(process.env.FAKE_LSP_PUBLISH),
+      })
+    }
     return
   }
 

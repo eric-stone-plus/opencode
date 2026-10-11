@@ -119,10 +119,13 @@ export const Typescript: Info = {
     ["deno.json", "deno.jsonc"],
   ),
   extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
-  async spawn(root, ctx) {
+  async spawn(root, ctx, flags) {
     const tsserver = Module.resolve("typescript/lib/tsserver.js", ctx.directory)
     if (!tsserver) return
-    const bin = await Npm.which("typescript-language-server")
+    // Prefer a hand-installed server; with downloads disabled it is the only source.
+    const found = which("typescript-language-server")
+    if (!found && flags.disableLspDownload) return
+    const bin = found ?? (await Npm.which("typescript-language-server"))
     if (!bin) return
     const proc = spawn(bin, ["--stdio"], {
       cwd: root,
@@ -323,7 +326,7 @@ export const Biome: Info = {
     ".gql",
     ".html",
   ],
-  async spawn(root) {
+  async spawn(root, _ctx, flags) {
     const localBin = path.join(root, "node_modules", ".bin", "biome")
     let bin: string | undefined
     if (await Filesystem.exists(localBin)) bin = localBin
@@ -337,6 +340,7 @@ export const Biome: Info = {
     if (!bin) {
       const resolved = Module.resolve("biome", root)
       if (!resolved) return
+      if (flags.disableLspDownload) return
       bin = await Npm.which("biome")
       if (!bin) return
       args = ["lsp-proxy", "--stdio"]

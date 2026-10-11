@@ -428,7 +428,22 @@ const layer = Layer.effect(
           results[p] = arr
         }
       }
-      return results
+      // Two servers claiming one file (a custom pyright-compatible entry next to the built-in one) report the same
+      // finding under different `source`/`code`; the client only dedupes within a single server.
+      return Object.fromEntries(
+        Object.entries(results).map(([file, items]) => {
+          const seen = new Set<string>()
+          return [
+            file,
+            items.filter((item) => {
+              const key = JSON.stringify([item.severity, item.range, item.message])
+              if (seen.has(key)) return false
+              seen.add(key)
+              return true
+            }),
+          ]
+        }),
+      )
     })
 
     const hover = Effect.fn("LSP.hover")(function* (input: LocInput) {

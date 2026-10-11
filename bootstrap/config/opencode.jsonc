@@ -1,6 +1,14 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
+  "lsp": {
+    // basedpyright runs in the built-in "pyright" slot: keeps nearest-pyproject roots (nested .venv) and avoids a duplicate second Python server.
+    "pyright": {
+      "command": ["basedpyright-langserver", "--stdio"],
+      // "standard" keeps feedback to real type errors; the default "recommended" floods error-level style findings.
+      "initialization": { "basedpyright": { "analysis": { "typeCheckingMode": "standard" } } }
+    }
+  },
   // Default track (2026-10-07): temporary switch to DeepSeek-V4.1-Flash.
   // API id is deepseek-flash (deepseek-v4-flash is a retired alias that
   // now routes to the same model). Revert this line and the auto/goal

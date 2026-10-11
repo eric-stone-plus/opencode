@@ -104,6 +104,16 @@ if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" 
   else
     warn "shim lacks OPENCODE_EXPERIMENTAL_PLAN_MODE=1: plan_exit is not registered and the plan profile is prompt-only (re-run install.sh)"
   fi
+  if grep -q "OPENCODE_EXPERIMENTAL_LSP_TOOL=1" "$SHIM" 2>/dev/null; then
+    pass "shim enables the lsp agent tool (OPENCODE_EXPERIMENTAL_LSP_TOOL=1)"
+  else
+    warn "shim lacks OPENCODE_EXPERIMENTAL_LSP_TOOL=1: the model has no lsp tool (re-run install.sh)"
+  fi
+  if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
+    pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
+  else
+    warn "shim lacks OPENCODE_DISABLE_LSP_DOWNLOAD=1: a missing language server auto-downloads inside the awaited edit/write path (re-run install.sh)"
+  fi
 elif [ -L "$SHIM" ] || [ -e "$SHIM" ]; then
   tgt=$(readlink "$SHIM" 2>/dev/null || echo "(not a symlink)")
   warn "shim present but carries no pin: $SHIM -> $tgt (fork risk for non-channel launches; install.sh step 3 writes a pin wrapper)"

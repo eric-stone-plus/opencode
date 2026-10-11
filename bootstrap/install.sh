@@ -23,7 +23,8 @@
 #   2  config: opencode.jsonc (copy + plans-path sed from --home, or --link), auth.json (template,
 #      only if absent), env (template, only if absent)
 #   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
-#      OPENCODE_EXPERIMENTAL_PLAN_MODE=1 -> exec binary)
+#      OPENCODE_EXPERIMENTAL_PLAN_MODE=1 + OPENCODE_EXPERIMENTAL_LSP_TOOL=1 +
+#      OPENCODE_DISABLE_LSP_DOWNLOAD=1 -> exec binary)
 #   4  environment.d/10-opencode-db.conf (managed) + the other *.conf templates
 #      (only if absent, never overwritten)
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
@@ -125,6 +126,12 @@ export OPENCODE_DB=opencode-main.db
 # (packages/opencode/src/tool/registry.ts): without it plan_exit does not
 # exist and plan is prompt-only.
 export OPENCODE_EXPERIMENTAL_PLAN_MODE=1
+# The `lsp` agent tool (query LSP diagnostics/hover/references from tools) is
+# gated on this flag (packages/opencode/src/effect/runtime-flags.ts, tool/registry.ts).
+export OPENCODE_EXPERIMENTAL_LSP_TOOL=1
+# Language servers are installed by hand: a missing one would otherwise auto-download
+# inside the awaited edit/write path with no timeout. Delete this line to restore it.
+export OPENCODE_DISABLE_LSP_DOWNLOAD=1
 exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
   chmod +x "$SHIM"
@@ -324,7 +331,9 @@ say ""
 say "-- step 3: ~/.local/bin/opencode shim (anti-fork pin wrapper)"
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null \
-  && grep -q "OPENCODE_EXPERIMENTAL_PLAN_MODE=1" "$SHIM" 2>/dev/null; then
+  && grep -q "OPENCODE_EXPERIMENTAL_PLAN_MODE=1" "$SHIM" 2>/dev/null \
+  && grep -q "OPENCODE_EXPERIMENTAL_LSP_TOOL=1" "$SHIM" 2>/dev/null \
+  && grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
   note "unchanged $SHIM (pin wrapper already in place)"
 elif [ -e "$SHIM" ] || [ -L "$SHIM" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
