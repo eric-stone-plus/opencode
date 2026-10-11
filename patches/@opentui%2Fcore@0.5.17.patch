@@ -1,0 +1,156 @@
+diff --git a/chunk-bun-h3ggawd9.js b/chunk-bun-h3ggawd9.js
+index 4808e75d8fac63fbf1727f79d56f8045f2593c74..af8b0229554488314052b654887bdebaaa7cb9c4 100644
+--- a/chunk-bun-h3ggawd9.js
++++ b/chunk-bun-h3ggawd9.js
+@@ -3219,6 +3219,7 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+   _initialStyledText;
+   _hadInitialContent = false;
+   _lastHighlights = [];
++  _lastHighlightContent = "";
+   _baseHighlight;
+   _onHighlight;
+   _onChunks;
+@@ -3267,6 +3268,21 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       this._content = value;
+       this.invalidateHighlights();
+       if (this._streaming && this._filetype && !this._drawUnstyledText) {
++        // Fork patch: a stream that outpaces the highlighter supersedes every highlight pass, so the block would
++        // stay frozen on stale text until the stream pauses. Replay the last highlight set over strict-prefix growth
++        // (raw text would flip the layout whenever concealed markers come and go), otherwise write plain text.
++        if (value.startsWith(this._lastHighlightContent) && (this._lastHighlights.length > 0 || this._onChunks || this._baseHighlight)) {
++          const chunks = treeSitterToTextChunks2(value, this._lastHighlights, this._syntaxStyle, {
++            enabled: this._conceal,
++            baseHighlight: this._baseHighlight
++          });
++          this.textBuffer.setStyledText(new StyledText2(chunks));
++          this.setRenderedLineSources(this._onChunks ? undefined : this.getConcealLinesSourceMap(value, this._lastHighlights));
++        } else {
++          this.textBuffer.setText(value);
++          this.setRenderedLineSources(undefined);
++        }
++        this.updateTextInfo();
+         this.requestRender();
+         return;
+       }
+@@ -3379,6 +3395,7 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       this._streaming = value;
+       this._hadInitialContent = false;
+       this._lastHighlights = [];
++      this._lastHighlightContent = "";
+       this.invalidateHighlights();
+     }
+   }
+@@ -3491,10 +3508,9 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       }
+       if (this.isDestroyed)
+         return;
+-      if (highlights.length > 0) {
+-        if (this._streaming) {
+-          this._lastHighlights = highlights;
+-        }
++      if (this._streaming) {
++        this._lastHighlights = highlights;
++        this._lastHighlightContent = content;
+       }
+       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
+         const sourceRanges = this._onChunks ? [] : undefined;
+@@ -10112,7 +10128,9 @@ Captured external output:
+           }
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            // Fork patch: never reschedule sooner than 16 ms. A frame that overruns its budget used to rearm a 1 ms timer,
++            // which pinned a core and starved input handling.
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+@@ -10126,7 +10144,9 @@ Captured external output:
+           const overallFrameTime = performance.now() - overallStart;
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            // Fork patch: never reschedule sooner than 16 ms. A frame that overruns its budget used to rearm a 1 ms timer,
++            // which pinned a core and starved input handling.
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+diff --git a/chunk-node-kc1sqq2a.js b/chunk-node-kc1sqq2a.js
+index 8a014caa43ae6edb6118dd803ab8553bc917a6e6..d4daa787050a0a1d5a3824c4bc2d9ca4aa554225 100644
+--- a/chunk-node-kc1sqq2a.js
++++ b/chunk-node-kc1sqq2a.js
+@@ -3218,6 +3218,7 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+   _initialStyledText;
+   _hadInitialContent = false;
+   _lastHighlights = [];
++  _lastHighlightContent = "";
+   _baseHighlight;
+   _onHighlight;
+   _onChunks;
+@@ -3266,6 +3267,21 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       this._content = value;
+       this.invalidateHighlights();
+       if (this._streaming && this._filetype && !this._drawUnstyledText) {
++        // Fork patch: a stream that outpaces the highlighter supersedes every highlight pass, so the block would
++        // stay frozen on stale text until the stream pauses. Replay the last highlight set over strict-prefix growth
++        // (raw text would flip the layout whenever concealed markers come and go), otherwise write plain text.
++        if (value.startsWith(this._lastHighlightContent) && (this._lastHighlights.length > 0 || this._onChunks || this._baseHighlight)) {
++          const chunks = treeSitterToTextChunks2(value, this._lastHighlights, this._syntaxStyle, {
++            enabled: this._conceal,
++            baseHighlight: this._baseHighlight
++          });
++          this.textBuffer.setStyledText(new StyledText2(chunks));
++          this.setRenderedLineSources(this._onChunks ? undefined : this.getConcealLinesSourceMap(value, this._lastHighlights));
++        } else {
++          this.textBuffer.setText(value);
++          this.setRenderedLineSources(undefined);
++        }
++        this.updateTextInfo();
+         this.requestRender();
+         return;
+       }
+@@ -3378,6 +3394,7 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       this._streaming = value;
+       this._hadInitialContent = false;
+       this._lastHighlights = [];
++      this._lastHighlightContent = "";
+       this.invalidateHighlights();
+     }
+   }
+@@ -3490,10 +3507,9 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       }
+       if (this.isDestroyed)
+         return;
+-      if (highlights.length > 0) {
+-        if (this._streaming) {
+-          this._lastHighlights = highlights;
+-        }
++      if (this._streaming) {
++        this._lastHighlights = highlights;
++        this._lastHighlightContent = content;
+       }
+       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
+         const sourceRanges = this._onChunks ? [] : undefined;
+@@ -10111,7 +10127,9 @@ Captured external output:
+           }
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            // Fork patch: never reschedule sooner than 16 ms. A frame that overruns its budget used to rearm a 1 ms timer,
++            // which pinned a core and starved input handling.
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
+@@ -10125,7 +10143,9 @@ Captured external output:
+           const overallFrameTime = performance.now() - overallStart;
+           if (this._isRunning || this.immediateRerenderRequested) {
+             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
+-            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime));
++            // Fork patch: never reschedule sooner than 16 ms. A frame that overruns its budget used to rearm a 1 ms timer,
++            // which pinned a core and starved input handling.
++            const delay = Math.max(16, targetFrameTime - Math.floor(overallFrameTime));
+             this.immediateRerenderRequested = false;
+             this.renderTimeout = this.clock.setTimeout(() => {
+               this.renderTimeout = null;
