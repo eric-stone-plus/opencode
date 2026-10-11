@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "mouse": true,
+  "keybinds": {
+    "app.exit": "none",
+    "session.page.up": "pageup,ctrl+up,alt+up,ctrl+alt+b",
+    "session.page.down": "pagedown,ctrl+down,alt+down,ctrl+alt+f",
+    "session.line.up": "ctrl+alt+y,ctrl+shift+up",
+    "session.line.down": "ctrl+alt+e,ctrl+shift+down"
+  }
+}
