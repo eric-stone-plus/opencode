@@ -26,39 +26,6 @@ const raw: Lowerer = {
   request: clone,
 }
 
-const openai: Lowerer = {
-  provider(options) {
-    return {
-      url: string(options.baseURL),
-      headers: compact({
-        Authorization: bearer(options.apiKey),
-        "OpenAI-Organization": string(options.organization),
-        "OpenAI-Project": string(options.project),
-        ...headers(options.headers),
-      }),
-      body: body(options.body),
-      settings: omit(options, ["apiKey", "baseURL", "organization", "project", "headers", "body"]),
-    }
-  },
-  request(options) {
-    const result = snake(options)
-    if (options.reasoningEffort !== undefined || options.reasoningSummary !== undefined) {
-      result.reasoning = {
-        ...(isRecord(result.reasoning) ? result.reasoning : {}),
-        ...(options.reasoningEffort !== undefined ? { effort: options.reasoningEffort } : {}),
-        ...(options.reasoningSummary !== undefined ? { summary: options.reasoningSummary } : {}),
-      }
-      delete result.reasoning_effort
-      delete result.reasoning_summary
-    }
-    if (options.textVerbosity !== undefined) {
-      result.text = { ...(isRecord(result.text) ? result.text : {}), verbosity: options.textVerbosity }
-      delete result.text_verbosity
-    }
-    return result
-  },
-}
-
 const anthropic: Lowerer = {
   provider(options) {
     return {
@@ -86,45 +53,6 @@ const anthropic: Lowerer = {
   },
 }
 
-const google: Lowerer = {
-  provider(options) {
-    return {
-      url: string(options.baseURL),
-      headers: compact({ "x-goog-api-key": string(options.apiKey), ...headers(options.headers) }),
-      body: body(options.body),
-      settings: omit(options, ["apiKey", "baseURL", "headers", "body"]),
-    }
-  },
-  request(options) {
-    const generationConfig = pick(options, ["thinkingConfig", "responseModalities", "mediaResolution", "imageConfig"])
-    return {
-      ...omit(options, ["thinkingConfig", "responseModalities", "mediaResolution", "imageConfig"]),
-      ...(Object.keys(generationConfig).length ? { generationConfig } : {}),
-    }
-  },
-}
-
-const azure: Lowerer = {
-  provider(options) {
-    return {
-      url: string(options.baseURL),
-      headers: compact({ "api-key": string(options.apiKey), ...headers(options.headers) }),
-      body: body(options.body),
-      settings: omit(options, ["apiKey", "baseURL", "headers", "body"]),
-    }
-  },
-  request: openai.request,
-}
-
-const bedrock: Lowerer = {
-  provider(options) {
-    return direct(options)
-  },
-  request(options) {
-    return { additionalModelRequestFields: clone(options) }
-  },
-}
-
 const openaiCompatible: Lowerer = {
   provider(options) {
     return { ...direct(options, ["baseURL"]), url: string(options.baseURL) }
@@ -140,23 +68,8 @@ const openaiCompatible: Lowerer = {
 }
 
 const lowerers: Readonly<Record<string, Lowerer>> = {
-  "@ai-sdk/openai": openai,
   "@ai-sdk/anthropic": anthropic,
-  "@ai-sdk/google-vertex/anthropic": anthropic,
-  "@ai-sdk/google": google,
-  "@ai-sdk/google-vertex": google,
-  "@ai-sdk/azure": azure,
-  "@ai-sdk/amazon-bedrock": bedrock,
   "@ai-sdk/openai-compatible": openaiCompatible,
-  "@ai-sdk/cerebras": openaiCompatible,
-  "@ai-sdk/deepinfra": openaiCompatible,
-  "@ai-sdk/groq": openaiCompatible,
-  "@ai-sdk/mistral": openaiCompatible,
-  "@ai-sdk/togetherai": openaiCompatible,
-  "@ai-sdk/xai": openaiCompatible,
-  "@openrouter/ai-sdk-provider": openaiCompatible,
-  "ai-gateway-provider": openaiCompatible,
-  "venice-ai-sdk-provider": openaiCompatible,
 }
 
 function direct(options: Options, extraKeys: ReadonlyArray<string> = []): ProviderResult {
@@ -192,10 +105,6 @@ function clone(options: Options) {
 
 function omit(options: Options, keys: ReadonlyArray<string>) {
   return Object.fromEntries(Object.entries(options).filter(([key]) => !keys.includes(key)))
-}
-
-function pick(options: Options, keys: ReadonlyArray<string>) {
-  return Object.fromEntries(Object.entries(options).filter(([key]) => keys.includes(key)))
 }
 
 function headers(input: unknown) {

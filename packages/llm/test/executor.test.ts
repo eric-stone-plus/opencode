@@ -429,8 +429,8 @@ describe("RequestExecutor", () => {
     Effect.gen(function* () {
       const attempts = yield* Ref.make(0)
       const model = OpenAIChat.route
-        .with({ endpoint: { baseURL: "https://api.openai.test/v1" } })
-        .model({ id: "gpt-4o-mini" })
+        .with({ endpoint: { baseURL: "https://api.example.test/v1" } })
+        .model({ id: "deepseek-chat" })
       const error = yield* LLMClient.generate(LLM.request({ model, prompt: "Say hello." })).pipe(
         Effect.provide(
           dynamicResponse((input) =>

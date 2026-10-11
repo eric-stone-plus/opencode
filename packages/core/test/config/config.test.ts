@@ -55,13 +55,13 @@ describe("Config", () => {
   it.effect("returns the latest defined scalar from priority-ordered documents", () =>
     Effect.sync(() => {
       const entries = [
-        new Config.Document({ type: "document", info: new Config.Info({ model: "openrouter/openai/gpt-5" }) }),
+        new Config.Document({ type: "document", info: new Config.Info({ model: "xiaomi/mimo-v2.6-flash" }) }),
         new Config.Directory({ type: "directory", path: AbsolutePath.make("/skills") }),
         new Config.Document({ type: "document", info: new Config.Info({}) }),
-        new Config.Document({ type: "document", info: new Config.Info({ model: "openrouter/openai/gpt-5.5" }) }),
+        new Config.Document({ type: "document", info: new Config.Info({ model: "xiaomi/mimo-v2.6-pro" }) }),
       ]
 
-      expect(Config.latest(entries, "model")).toBe("openrouter/openai/gpt-5.5")
+      expect(Config.latest(entries, "model")).toBe("xiaomi/mimo-v2.6-pro")
       expect(Config.latest(entries, "default_agent")).toBeUndefined()
     }),
   )
@@ -71,7 +71,7 @@ describe("Config", () => {
       expect(ConfigMigrateV1.isV1({ snapshot: false })).toBe(true)
       expect(ConfigMigrateV1.isV1({ snapshot: false, agents: {} })).toBe(true)
       expect(ConfigMigrateV1.isV1({ reference: {} })).toBe(true)
-      expect(ConfigMigrateV1.isV1({ shell: "/bin/zsh", model: "anthropic/claude" })).toBe(false)
+      expect(ConfigMigrateV1.isV1({ shell: "/bin/zsh", model: "deepseek/deepseek-flash" })).toBe(false)
       expect(ConfigMigrateV1.isV1({ references: {} })).toBe(false)
     }),
   )
@@ -91,8 +91,8 @@ describe("Config", () => {
     Effect.sync(() => {
       const migrated = ConfigMigrateV1.migrate({
         provider: {
-          bedrock: {
-            npm: "@ai-sdk/amazon-bedrock",
+          xiaomi: {
+            npm: "@ai-sdk/openai-compatible",
             options: {
               headers: { "x-test": "1" },
               body: { trace: true },
@@ -103,12 +103,12 @@ describe("Config", () => {
         },
       })
 
-      expect(migrated.providers?.bedrock?.api).toEqual({
+      expect(migrated.providers?.xiaomi?.api).toEqual({
         type: "aisdk",
-        package: "@ai-sdk/amazon-bedrock",
+        package: "@ai-sdk/openai-compatible",
         settings: { region: "us-east-1", profile: "dev" },
       })
-      expect(migrated.providers?.bedrock?.request).toEqual({
+      expect(migrated.providers?.xiaomi?.request).toEqual({
         headers: { "x-test": "1" },
         body: { trace: true },
       })
@@ -124,7 +124,7 @@ describe("Config", () => {
               template: "Review changes",
               description: "Review code",
               agent: "reviewer",
-              model: "anthropic/claude",
+              model: "deepseek/deepseek-flash",
               variant: "high",
               subtask: true,
             },
@@ -135,7 +135,7 @@ describe("Config", () => {
           template: "Review changes",
           description: "Review code",
           agent: "reviewer",
-          model: "anthropic/claude",
+          model: "deepseek/deepseek-flash",
           variant: "high",
           subtask: true,
         },
@@ -276,7 +276,7 @@ describe("Config", () => {
               path.join(tmp.path, "opencode.json"),
               JSON.stringify({
                 shell: "/bin/bash",
-                model: "anthropic/claude",
+                model: "deepseek/deepseek-flash",
                 default_agent: "reviewer",
                 autoupdate: "notify",
                 share: "disabled",
@@ -288,7 +288,7 @@ describe("Config", () => {
                 ],
                 agents: {
                   reviewer: {
-                    model: "openrouter/openai/gpt-5",
+                    model: "xiaomi/mimo-v2.6-flash",
                     variant: "high",
                     request: {
                       headers: { "x-agent": "reviewer" },
@@ -362,7 +362,7 @@ describe("Config", () => {
 
             expect(documents).toHaveLength(1)
             expect(documents[0]?.info.shell).toBe("/bin/bash")
-            expect(documents[0]?.info.model).toBe("anthropic/claude")
+            expect(documents[0]?.info.model).toBe("deepseek/deepseek-flash")
             expect(documents[0]?.info.default_agent).toBe("reviewer")
             expect(documents[0]?.info.autoupdate).toBe("notify")
             expect(documents[0]?.info.share).toBe("disabled")
@@ -373,7 +373,7 @@ describe("Config", () => {
               { action: "bash", resource: "git status", effect: "allow" },
             ])
             const reviewer = documents[0]?.info.agents?.reviewer
-            expect(reviewer?.model).toBe("openrouter/openai/gpt-5")
+            expect(reviewer?.model).toBe("xiaomi/mimo-v2.6-flash")
             expect(reviewer?.variant).toBe("high")
             expect(reviewer?.request).toEqual({
               headers: { "x-agent": "reviewer" },
@@ -535,17 +535,17 @@ describe("Config", () => {
                       },
                     },
                   },
-                  openai: {
-                    npm: "@ai-sdk/openai",
-                    options: { apiKey: "secret", organization: "org" },
+                  deepseek: {
+                    npm: "@ai-sdk/openai-compatible",
+                    options: { apiKey: "secret" },
                     models: {
                       model: {
                         options: { temperature: 0.3, reasoningEffort: "high", serviceTier: "priority" },
-                        variants: { high: { reasoningEffort: "high", reasoningSummary: "auto" } },
+                        variants: { high: { reasoningEffort: "high" } },
                       },
                     },
                   },
-                  anthropic: {
+                  bailian: {
                     npm: "@ai-sdk/anthropic",
                     models: {
                       model: {
@@ -613,19 +613,18 @@ describe("Config", () => {
                 },
               },
             })
-            expect(documents[0]?.info.providers?.openai).toMatchObject({
-              api: { settings: {} },
-              request: { headers: { Authorization: "Bearer secret", "OpenAI-Organization": "org" } },
+            expect(documents[0]?.info.providers?.deepseek).toMatchObject({
+              api: { settings: { apiKey: "secret" } },
               models: {
                 model: {
                   request: {
-                    body: { temperature: 0.3, reasoning: { effort: "high" }, service_tier: "priority" },
+                    body: { temperature: 0.3, reasoning_effort: "high", serviceTier: "priority" },
                   },
-                  variants: [{ id: "high", body: { reasoning: { effort: "high", summary: "auto" } } }],
+                  variants: [{ id: "high", body: { reasoning_effort: "high" } }],
                 },
               },
             })
-            expect(documents[0]?.info.providers?.anthropic).toMatchObject({
+            expect(documents[0]?.info.providers?.bailian).toMatchObject({
               models: {
                 model: {
                   request: {

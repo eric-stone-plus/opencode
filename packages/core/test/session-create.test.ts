@@ -78,8 +78,8 @@ describe("SessionV2.create", () => {
       const session = yield* SessionV2.Service
       const workspaceID = WorkspaceV2.ID.make("wrk_test")
       const model = ModelV2.Ref.make({
-        id: ModelV2.ID.make("sonnet"),
-        providerID: ProviderV2.ID.anthropic,
+        id: ModelV2.ID.make("deepseek-flash"),
+        providerID: ProviderV2.ID.make("deepseek"),
         variant: ModelV2.VariantID.make("fast"),
       })
 
@@ -103,7 +103,10 @@ describe("SessionV2.create", () => {
         {
           id,
           location,
-          model: ModelV2.Ref.make({ id: ModelV2.ID.make("sonnet"), providerID: ProviderV2.ID.anthropic }),
+          model: ModelV2.Ref.make({
+            id: ModelV2.ID.make("deepseek-flash"),
+            providerID: ProviderV2.ID.make("deepseek"),
+          }),
         },
       ]
 
@@ -355,8 +358,8 @@ describe("SessionV2.create", () => {
       const session = yield* SessionV2.Service
       const created = yield* session.create({ location })
       const model = ModelV2.Ref.make({
-        id: ModelV2.ID.make("sonnet"),
-        providerID: ProviderV2.ID.anthropic,
+        id: ModelV2.ID.make("deepseek-flash"),
+        providerID: ProviderV2.ID.make("deepseek"),
         variant: ModelV2.VariantID.make("high"),
       })
 
@@ -373,7 +376,10 @@ describe("SessionV2.create", () => {
     Effect.gen(function* () {
       const session = yield* SessionV2.Service
       const created = yield* session.create({ location })
-      const model = ModelV2.Ref.make({ id: ModelV2.ID.make("sonnet"), providerID: ProviderV2.ID.anthropic })
+      const model = ModelV2.Ref.make({
+        id: ModelV2.ID.make("deepseek-flash"),
+        providerID: ProviderV2.ID.make("deepseek"),
+      })
 
       yield* session.switchModel({ sessionID: created.id, model })
       yield* session.switchModel({ sessionID: created.id, model })
@@ -389,7 +395,10 @@ describe("SessionV2.create", () => {
   it.effect("treats an omitted variant as the default variant", () =>
     Effect.gen(function* () {
       const session = yield* SessionV2.Service
-      const model = ModelV2.Ref.make({ id: ModelV2.ID.make("sonnet"), providerID: ProviderV2.ID.anthropic })
+      const model = ModelV2.Ref.make({
+        id: ModelV2.ID.make("deepseek-flash"),
+        providerID: ProviderV2.ID.make("deepseek"),
+      })
       const created = yield* session.create({ location, model })
 
       yield* session.switchModel({
@@ -413,7 +422,10 @@ describe("SessionV2.create", () => {
         yield* session
           .switchModel({
             sessionID: missing,
-            model: ModelV2.Ref.make({ id: ModelV2.ID.make("sonnet"), providerID: ProviderV2.ID.anthropic }),
+            model: ModelV2.Ref.make({
+              id: ModelV2.ID.make("deepseek-flash"),
+              providerID: ProviderV2.ID.make("deepseek"),
+            }),
           })
           .pipe(
             Effect.flip,

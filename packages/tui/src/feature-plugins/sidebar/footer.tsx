@@ -49,10 +49,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
                 ✕
               </text>
             </box>
-            <text fg={theme().textMuted}>OpenCode includes free models so you can start immediately.</text>
-            <text fg={theme().textMuted}>
-              Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
-            </text>
+            <text fg={theme().textMuted}>Connect Alibaba, DeepSeek, Zhipu or Xiaomi MiMo to start.</text>
             <box flexDirection="row" gap={1} justifyContent="space-between">
               <text fg={theme().text}>Connect provider</text>
               <text fg={theme().textMuted}>/connect</text>

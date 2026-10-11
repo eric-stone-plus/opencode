@@ -1,13 +1,13 @@
 {
-  "acme": {
-    "id": "acme",
-    "name": "Acme",
-    "env": ["ACME_API_KEY"],
+  "deepseek": {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "env": ["DEEPSEEK_API_KEY"],
     "models": {}
   },
-  "local": {
-    "id": "local",
-    "name": "Local",
+  "alibaba": {
+    "id": "alibaba",
+    "name": "Alibaba",
     "env": [],
     "models": {}
   }

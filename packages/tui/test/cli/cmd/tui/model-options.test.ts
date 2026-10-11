@@ -5,14 +5,14 @@ describe("sortModelOptions", () => {
   test("orders provider-scoped model choices by newest release first", () => {
     const sorted = sortModelOptions(
       [
-        { title: "GPT 5.2", releaseDate: "2025-12-11" },
-        { title: "GPT 5.4", releaseDate: "2026-03-05" },
-        { title: "GPT 5.1", releaseDate: "2025-11-13" },
+        { title: "GLM 5.2", releaseDate: "2025-12-11" },
+        { title: "GLM 5.3", releaseDate: "2026-03-05" },
+        { title: "GLM 5.1", releaseDate: "2025-11-13" },
       ],
       true,
     )
 
-    expect(sorted.map((model) => model.title)).toEqual(["GPT 5.4", "GPT 5.2", "GPT 5.1"])
+    expect(sorted.map((model) => model.title)).toEqual(["GLM 5.3", "GLM 5.2", "GLM 5.1"])
   })
 
   test("orders regular model choices free-first and then newest-first", () => {

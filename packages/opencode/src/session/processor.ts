@@ -505,12 +505,9 @@ const layer = Layer.effect(
             // Auto price match: an all-zero catalog cost means the catalog has
             // no price for this model — resolve one (offline match, then a
             // throttled web registry refresh) and re-price the step, but only
-            // for steps that actually consumed tokens. Copilot nanoAiu billing
-            // wins over rate-based pricing when present.
-            const nanoAiu = value.providerMetadata?.["copilot"]?.["totalNanoAiu"]
-            const nanoAiuApplies = typeof nanoAiu === "number" && Number.isFinite(nanoAiu) && nanoAiu >= 0
+            // for steps that actually consumed tokens.
             const matched =
-              !nanoAiuApplies && hasNonzeroTokens(usage.tokens) && Pricing.isZeroRates(ctx.model.cost)
+              hasNonzeroTokens(usage.tokens) && Pricing.isZeroRates(ctx.model.cost)
                 ? yield* pricing.resolve({ providerID: ctx.model.providerID, modelID: ctx.model.api.id })
                 : undefined
             const stepCost = matched

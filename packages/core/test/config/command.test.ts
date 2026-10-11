@@ -33,7 +33,7 @@ describe("ConfigCommandPlugin.Plugin", () => {
               `---
 description: File review
 agent: reviewer
-model: anthropic/claude
+model: deepseek/deepseek-flash
 variant: high
 subtask: true
 ---
@@ -67,8 +67,8 @@ Review files`,
               description: "File review",
               agent: "reviewer",
               model: {
-                providerID: ProviderV2.ID.make("anthropic"),
-                id: ModelV2.ID.make("claude"),
+                providerID: ProviderV2.ID.make("deepseek"),
+                id: ModelV2.ID.make("deepseek-flash"),
                 variant: ModelV2.VariantID.make("high"),
               },
               subtask: true,

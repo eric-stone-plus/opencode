@@ -12,6 +12,10 @@ import { PluginTestLayer } from "./fixture"
 
 const it = testEffect(PluginTestLayer)
 
+// Bailian and GLM coding-plan expose Anthropic-protocol endpoints, so they use the Anthropic SDK.
+const bailian = ProviderV2.ID.make("bailian-token-plan-personal")
+const glm = ProviderV2.ID.make("glm-coding-plan")
+
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* PluginV2.Service
   const aisdk = yield* AISDK.Service
@@ -30,7 +34,7 @@ describe("AnthropicPlugin", () => {
       const catalog = yield* Catalog.Service
       yield* catalog.transform((catalog) => {
         const item = ProviderV2.Info.make({
-          ...ProviderV2.Info.empty(ProviderV2.ID.anthropic),
+          ...ProviderV2.Info.empty(bailian),
           api: { type: "aisdk", package: "@ai-sdk/anthropic" },
           request: { headers: { Existing: "1" }, body: {} },
         })
@@ -40,21 +44,20 @@ describe("AnthropicPlugin", () => {
         })
       })
       yield* addPlugin()
-      expect(required(yield* catalog.provider.get(ProviderV2.ID.anthropic)).request.headers["anthropic-beta"]).toBe(
+      expect(required(yield* catalog.provider.get(bailian)).request.headers["anthropic-beta"]).toBe(
         "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
       )
-      expect(required(yield* catalog.provider.get(ProviderV2.ID.anthropic)).request.headers.Existing).toBe("1")
+      expect(required(yield* catalog.provider.get(bailian)).request.headers.Existing).toBe("1")
     }),
   )
 
-  it.effect("ignores non-Anthropic providers", () =>
+  it.effect("ignores providers that do not use the Anthropic SDK", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
-      yield* catalog.transform((catalog) => catalog.provider.update(ProviderV2.ID.openai, () => {}))
+      const deepseek = ProviderV2.ID.make("deepseek")
+      yield* catalog.transform((catalog) => catalog.provider.update(deepseek, () => {}))
       yield* addPlugin()
-      expect(
-        required(yield* catalog.provider.get(ProviderV2.ID.openai)).request.headers["anthropic-beta"],
-      ).toBeUndefined()
+      expect(required(yield* catalog.provider.get(deepseek)).request.headers["anthropic-beta"]).toBeUndefined()
     }),
   )
 
@@ -65,30 +68,13 @@ describe("AnthropicPlugin", () => {
       yield* addPlugin()
       const result = yield* aisdk.runSDK({
         model: ModelV2.Info.make({
-          ...ModelV2.Info.empty(ProviderV2.ID.make("custom-anthropic"), ModelV2.ID.make("claude-sonnet-4-5")),
-          api: { id: ModelV2.ID.make("claude-sonnet-4-5"), type: "aisdk", package: "@ai-sdk/anthropic" },
+          ...ModelV2.Info.empty(glm, ModelV2.ID.make("glm-5.3")),
+          api: { id: ModelV2.ID.make("glm-5.3"), type: "aisdk", package: "@ai-sdk/anthropic" },
         }),
         package: "@ai-sdk/anthropic",
-        options: { name: "custom-anthropic", apiKey: "test" },
+        options: { name: "glm-coding-plan", apiKey: "test" },
       })
-      expect(result.sdk.languageModel("claude-sonnet-4-5").provider).toBe("custom-anthropic")
-    }),
-  )
-
-  it.effect("uses the Anthropic provider ID as the SDK name for the bundled Anthropic provider", () =>
-    Effect.gen(function* () {
-      const plugin = yield* PluginV2.Service
-      const aisdk = yield* AISDK.Service
-      yield* addPlugin()
-      const result = yield* aisdk.runSDK({
-        model: ModelV2.Info.make({
-          ...ModelV2.Info.empty(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-sonnet-4-5")),
-          api: { id: ModelV2.ID.make("claude-sonnet-4-5"), type: "aisdk", package: "@ai-sdk/anthropic" },
-        }),
-        package: "@ai-sdk/anthropic",
-        options: { name: "anthropic", apiKey: "test" },
-      })
-      expect(result.sdk.languageModel("claude-sonnet-4-5").provider).toBe("anthropic")
+      expect(result.sdk.languageModel("glm-5.3").provider).toBe("glm-coding-plan")
     }),
   )
 })

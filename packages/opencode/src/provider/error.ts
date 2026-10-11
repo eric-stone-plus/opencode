@@ -37,13 +37,6 @@ function isZhipuOverflowCode(code: unknown) {
   return code === "1261" || code === 1261
 }
 
-function isOpenAiErrorRetryable(e: APICallError) {
-  const status = e.statusCode
-  if (!status) return e.isRetryable
-  // openai sometimes returns 404 for models that are actually available
-  return status === 404 || e.isRetryable
-}
-
 // Providers not reliably handled in this function:
 // - z.ai: can accept overflow silently (needs token-count/context-window checks)
 function message(providerID: ProviderV2.ID, e: APICallError) {
@@ -142,13 +135,6 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
         isRetryable: false,
         responseBody,
       }
-    case "usage_not_included":
-      return {
-        type: "api_error",
-        message: "To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
-        isRetryable: false,
-        responseBody,
-      }
     case "invalid_prompt":
       return {
         type: "api_error",
@@ -231,7 +217,7 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     type: "api_error",
     message: m,
     statusCode: input.error.statusCode,
-    isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
+    isRetryable: input.error.isRetryable,
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,

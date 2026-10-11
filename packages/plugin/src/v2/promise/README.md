@@ -65,14 +65,14 @@ Runtime hooks intercept live operations:
 
 ```ts
 await ctx.aisdk.sdk(async (event) => {
-  if (event.package !== "@ai-sdk/xai") return
-  const mod = await import("@ai-sdk/xai")
-  event.sdk = mod.createXai(event.options)
+  if (event.package !== "@ai-sdk/openai-compatible") return
+  const mod = await import("@ai-sdk/openai-compatible")
+  event.sdk = mod.createOpenAICompatible(event.options)
 })
 
 await ctx.aisdk.language((event) => {
-  if (event.model.providerID !== "xai") return
-  event.language = event.sdk.responses(event.model.api.id)
+  if (event.model.providerID !== "deepseek") return
+  event.language = event.sdk.chat(event.model.api.id)
 })
 ```
 

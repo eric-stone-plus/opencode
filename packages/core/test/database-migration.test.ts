@@ -208,10 +208,10 @@ describe("DatabaseMigration", () => {
         yield* DatabaseMigration.applyOnly(db, [simplifyIntegrationCredentialsMigration])
 
         yield* db.run(
-          sql`INSERT INTO credential (id, connector_id, method_id, label, value, active, time_created, time_updated) VALUES ('legacy', 'openai', 'oauth', 'Legacy', '{}', 1, 1, 1)`,
+          sql`INSERT INTO credential (id, connector_id, method_id, label, value, active, time_created, time_updated) VALUES ('legacy', 'deepseek', 'oauth', 'Legacy', '{}', 1, 1, 1)`,
         )
         yield* db.run(
-          sql`INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES ('current', 'anthropic', 'Current', '{}', 2, 2)`,
+          sql`INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES ('current', 'xiaomi', 'Current', '{}', 2, 2)`,
         )
         expect(yield* db.get(sql`SELECT connector_id, method_id, active FROM credential WHERE id = 'current'`)).toEqual(
           { connector_id: null, method_id: null, active: null },

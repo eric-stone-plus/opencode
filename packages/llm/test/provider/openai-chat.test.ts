@@ -2,8 +2,6 @@ import { describe, expect } from "bun:test"
 import { Effect, Schema, Stream } from "effect"
 import { HttpClientRequest } from "effect/unstable/http"
 import { LLM, LLMError, LLMEvent, Message, Model, ToolCallPart, Usage } from "../../src"
-import * as Azure from "../../src/providers/azure"
-import * as OpenAI from "../../src/providers/openai"
 import * as OpenAIChat from "../../src/protocols/openai-chat"
 import { ProviderShared } from "../../src/protocols/shared"
 import { Auth, LLMClient } from "../../src/route"
@@ -17,8 +15,8 @@ const encodeJson = Schema.encodeSync(TargetJson)
 const decodeJson = Schema.decodeUnknownSync(TargetJson)
 
 const model = OpenAIChat.route
-  .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-  .model({ id: "gpt-4o-mini" })
+  .with({ endpoint: { baseURL: "https://api.example.test/v1/" }, auth: Auth.bearer("test") })
+  .model({ id: "deepseek-chat" })
 
 const request = LLM.request({
   id: "req_1",
@@ -38,7 +36,7 @@ describe("OpenAI Chat route", () => {
       const _typed: { readonly model: string; readonly stream: true } = prepared.body
 
       expect(prepared.body).toEqual({
-        model: "gpt-4o-mini",
+        model: "deepseek-chat",
         messages: [
           { role: "system", content: "You are concise." },
           { role: "user", content: "Say hello." },
@@ -92,13 +90,13 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
-  it.effect("maps OpenAI provider options to Chat options", () =>
+  it.effect("maps openai provider options to Chat options", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare<OpenAIChat.OpenAIChatBody>(
         LLM.request({
-          model: OpenAI.configure({ baseURL: "https://api.openai.test/v1/", apiKey: "test" }).chat("gpt-4o-mini"),
+          model,
           prompt: "think",
-          providerOptions: { openai: { reasoningEffort: "low" } },
+          providerOptions: { openai: { store: false, reasoningEffort: "low" } },
         }),
       )
 
@@ -117,33 +115,7 @@ describe("OpenAI Chat route", () => {
         dynamicResponse((input) =>
           Effect.gen(function* () {
             const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.url).toBe("https://api.openai.test/v1/chat/completions?api-version=v1")
-            return input.respond(sseEvents(deltaChunk({}, "stop")), {
-              headers: { "content-type": "text/event-stream" },
-            })
-          }),
-        ),
-      ),
-    ),
-  )
-
-  it.effect("uses Azure api-key header for static OpenAI Chat keys", () =>
-    LLMClient.generate(
-      LLM.updateRequest(request, {
-        model: Azure.configure({
-          baseURL: "https://opencode-test.openai.azure.com/openai/v1/",
-          apiKey: "azure-key",
-          headers: { authorization: "Bearer stale" },
-        }).chat("gpt-4o-mini"),
-      }),
-    ).pipe(
-      Effect.provide(
-        dynamicResponse((input) =>
-          Effect.gen(function* () {
-            const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.url).toBe("https://opencode-test.openai.azure.com/openai/v1/chat/completions?api-version=v1")
-            expect(web.headers.get("api-key")).toBe("azure-key")
-            expect(web.headers.get("authorization")).toBeNull()
+            expect(web.url).toBe("https://api.example.test/v1/chat/completions?api-version=v1")
             return input.respond(sseEvents(deltaChunk({}, "stop")), {
               headers: { "content-type": "text/event-stream" },
             })
@@ -170,7 +142,7 @@ describe("OpenAI Chat route", () => {
         dynamicResponse((input) =>
           Effect.gen(function* () {
             const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.url).toBe("https://api.openai.test/v1/chat/completions?debug=1")
+            expect(web.url).toBe("https://api.example.test/v1/chat/completions?debug=1")
             expect(web.headers.get("authorization")).toBe("Bearer fresh-key")
             expect(web.headers.get("x-custom")).toBe("yes")
             expect(decodeJson(input.text)).toMatchObject({
@@ -202,7 +174,7 @@ describe("OpenAI Chat route", () => {
       )
 
       expect(prepared.body).toEqual({
-        model: "gpt-4o-mini",
+        model: "deepseek-chat",
         messages: [
           { role: "user", content: "What is the weather?" },
           {

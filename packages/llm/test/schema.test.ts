@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
-import * as OpenAIResponses from "../src/protocols/openai-responses"
+import * as AnthropicMessages from "../src/protocols/anthropic-messages"
 import { ContentPart, LLMEvent, LLMRequest, Model, ModelID, ProviderID, Usage } from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
@@ -33,14 +33,14 @@ describe("llm schema", () => {
 
   test("accepts custom route ids", () => {
     const decoded = decodeLLMRequest({
-      model: Model.update(model, { route: OpenAIResponses.route }),
+      model: Model.update(model, { route: AnthropicMessages.route }),
       system: [],
       messages: [],
       tools: [],
       generation: {},
     })
 
-    expect(decoded.model.route.id).toBe("openai-responses")
+    expect(decoded.model.route.id).toBe("anthropic-messages")
   })
 
   test("rejects invalid event type", () => {

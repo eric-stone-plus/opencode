@@ -641,21 +641,6 @@ describe("session.message-v2.fromError", () => {
     expect(retryable).toEqual({ message: "Connection reset by server" })
   })
 
-  test("marks OpenAI 404 status codes as retryable", () => {
-    const error = new APICallError({
-      message: "boom",
-      url: "https://api.openai.com/v1/chat/completions",
-      requestBodyValues: {},
-      statusCode: 404,
-      responseHeaders: { "content-type": "application/json" },
-      responseBody: '{"error":"boom"}',
-      isRetryable: false,
-    })
-    const result = MessageV2.fromError(error, { providerID: ProviderV2.ID.make("openai") })
-    if (!SessionV1.APIError.isInstance(result)) throw new Error("expected APIError")
-    expect(result.data.isRetryable).toBe(true)
-  })
-
   test("converts OpenAI server_error stream chunks to retryable APIError", () => {
     const result = MessageV2.fromError(
       {

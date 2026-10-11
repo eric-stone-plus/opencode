@@ -120,7 +120,7 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
     yield* client.sessions.switchAgent({ sessionID: Session.ID.make("ses_test"), agent: Agent.ID.make("build") })
     yield* client.sessions.switchModel({
       sessionID: Session.ID.make("ses_test"),
-      model: Model.Ref.make({ id: "claude", providerID: "anthropic" }),
+      model: Model.Ref.make({ id: "deepseek-flash", providerID: "deepseek" }),
     })
     const admitted = yield* client.sessions.prompt({
       sessionID: Session.ID.make("ses_test"),
@@ -230,7 +230,7 @@ const modelSwitchedMessage = {
   id: "msg_model",
   type: "model-switched",
   time: { created: 1_717_171_717_000 },
-  model: { id: "claude", providerID: "anthropic" },
+  model: { id: "deepseek-flash", providerID: "deepseek" },
 }
 
 const modelSwitchedEvent = {
@@ -241,6 +241,6 @@ const modelSwitchedEvent = {
     timestamp: 1_717_171_717_000,
     sessionID: "ses_test",
     messageID: "msg_model",
-    model: { id: "claude", providerID: "anthropic" },
+    model: { id: "deepseek-flash", providerID: "deepseek" },
   },
 }

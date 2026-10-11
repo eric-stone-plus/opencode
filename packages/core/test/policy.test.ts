@@ -21,8 +21,8 @@ describe("Policy", () => {
     Effect.gen(function* () {
       const policy = yield* Policy.Service
 
-      expect(yield* policy.evaluate("provider.use", "anthropic", "allow")).toBe("allow")
-      expect(yield* policy.evaluate("provider.use", "anthropic", "deny")).toBe("deny")
+      expect(yield* policy.evaluate("provider.use", "deepseek", "allow")).toBe("allow")
+      expect(yield* policy.evaluate("provider.use", "deepseek", "deny")).toBe("deny")
     }),
   )
 
@@ -38,12 +38,12 @@ describe("Policy", () => {
         new Policy.Info({
           effect: "allow",
           action: "provider.use",
-          resource: "anthropic",
+          resource: "deepseek",
         }),
       ])
 
-      expect(yield* policy.evaluate("provider.use", "anthropic", "allow")).toBe("allow")
-      expect(yield* policy.evaluate("provider.use", "openai", "allow")).toBe("deny")
+      expect(yield* policy.evaluate("provider.use", "deepseek", "allow")).toBe("allow")
+      expect(yield* policy.evaluate("provider.use", "alibaba", "allow")).toBe("deny")
     }),
   )
 
@@ -70,16 +70,16 @@ describe("Policy", () => {
         new Policy.Info({
           effect: "allow",
           action: "provider.use",
-          resource: "openai",
+          resource: "alibaba",
         }),
         new Policy.Info({
           effect: "deny",
           action: "provider.use",
-          resource: "openai",
+          resource: "alibaba",
         }),
       ])
 
-      expect(yield* policy.evaluate("provider.use", "openai", "allow")).toBe("deny")
+      expect(yield* policy.evaluate("provider.use", "alibaba", "allow")).toBe("deny")
     }),
   )
 })

@@ -17,10 +17,10 @@ import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
-  openai: 2,
-  "github-copilot": 3,
-  anthropic: 4,
-  google: 5,
+  deepseek: 0,
+  "xiaomi-token-plan-cn": 1,
+  "alibaba-cn": 2,
+  "zhipuai-coding-plan": 3,
 }
 
 const CUSTOM_PROVIDER_OPTION_VALUE = "__opencode_custom_provider__"
@@ -56,10 +56,6 @@ export function providerOptions(list: { id: string; name: string }[]): ProviderO
         title: provider.name,
         value: provider.id,
         providerID: provider.id,
-        description: {
-          anthropic: "(API key)",
-          openai: "(ChatGPT Plus/Pro or API key)",
-        }[provider.id],
         category: provider.id in PROVIDER_PRIORITY ? "Popular" : "Providers",
       })),
     ),

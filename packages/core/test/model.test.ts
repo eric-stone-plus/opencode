@@ -7,16 +7,16 @@ const decode = Schema.decodeUnknownSync(ModelV2.Ref)
 
 describe("ModelV2.Ref", () => {
   test("accepts a model selection without a variant", () => {
-    expect(decode({ id: "claude-sonnet", providerID: "anthropic" })).toEqual({
-      id: ModelV2.ID.make("claude-sonnet"),
-      providerID: ProviderV2.ID.make("anthropic"),
+    expect(decode({ id: "deepseek-flash", providerID: "deepseek" })).toEqual({
+      id: ModelV2.ID.make("deepseek-flash"),
+      providerID: ProviderV2.ID.make("deepseek"),
     })
   })
 
   test("preserves an explicit model variant", () => {
-    expect(decode({ id: "claude-sonnet", providerID: "anthropic", variant: "high" })).toEqual({
-      id: ModelV2.ID.make("claude-sonnet"),
-      providerID: ProviderV2.ID.make("anthropic"),
+    expect(decode({ id: "deepseek-flash", providerID: "deepseek", variant: "high" })).toEqual({
+      id: ModelV2.ID.make("deepseek-flash"),
+      providerID: ProviderV2.ID.make("deepseek"),
       variant: ModelV2.VariantID.make("high"),
     })
   })

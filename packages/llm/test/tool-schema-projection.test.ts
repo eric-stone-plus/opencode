@@ -27,28 +27,6 @@ describe("tool schema projections", () => {
     })
   })
 
-  test("gemini handles numeric enums, dangling required fields, untyped arrays, and scalar object keys", () => {
-    expect(
-      ToolSchemaProjection.gemini({
-        type: "object",
-        required: ["status", "missing"],
-        properties: {
-          status: { type: "integer", enum: [1, 2] },
-          tags: { type: "array" },
-          name: { type: "string", properties: { ignored: { type: "string" } }, required: ["ignored"] },
-        },
-      }),
-    ).toEqual({
-      type: "object",
-      required: ["status"],
-      properties: {
-        status: { type: "string", enum: ["1", "2"] },
-        tags: { type: "array", items: { type: "string" } },
-        name: { type: "string" },
-      },
-    })
-  })
-
   test("openai keeps one flat object top-level schema", () => {
     expect(
       ToolSchemaProjection.openAI({
@@ -77,8 +55,8 @@ describe("tool schema projections", () => {
   it.effect("applies model compatibility before protocol projection", () =>
     Effect.gen(function* () {
       const model = OpenAIChat.route
-        .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-        .model({ id: "kimi-k2", compatibility: { toolSchema: "moonshot" } })
+        .with({ endpoint: { baseURL: "https://api.example.test/v1/" }, auth: Auth.bearer("test") })
+        .model({ id: "strict-schema-model", compatibility: { toolSchema: "moonshot" } })
       const prepared = yield* LLMClient.prepare<OpenAIChat.OpenAIChatBody>(
         LLM.request({
           model,

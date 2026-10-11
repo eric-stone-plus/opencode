@@ -15,37 +15,37 @@ describe("Integration", () => {
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
       const scope = yield* Scope.fork(yield* Scope.Scope)
-      const openai = Integration.ID.make("openai")
+      const deepseek = Integration.ID.make("deepseek")
 
       yield* integrations
-        .transform((editor) => editor.update(openai, (integration) => (integration.name = "OpenAI")))
+        .transform((editor) => editor.update(deepseek, (integration) => (integration.name = "DeepSeek")))
         .pipe(Scope.provide(scope))
-      expect(yield* integrations.get(openai)).toEqual(
-        new Integration.Info({ id: openai, name: "OpenAI", methods: [], connections: [] }),
+      expect(yield* integrations.get(deepseek)).toEqual(
+        new Integration.Info({ id: deepseek, name: "DeepSeek", methods: [], connections: [] }),
       )
 
       yield* Scope.close(scope, Exit.void)
-      expect(yield* integrations.get(openai)).toBeUndefined()
+      expect(yield* integrations.get(deepseek)).toBeUndefined()
     }),
   )
 
   it.effect("reveals the previous registration when an override closes", () =>
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
-      const id = Integration.ID.make("openai")
+      const id = Integration.ID.make("deepseek")
       const first = yield* Scope.fork(yield* Scope.Scope)
       const second = yield* Scope.fork(yield* Scope.Scope)
 
       yield* integrations
-        .transform((editor) => editor.update(id, (integration) => (integration.name = "OpenAI")))
+        .transform((editor) => editor.update(id, (integration) => (integration.name = "DeepSeek")))
         .pipe(Scope.provide(first))
       yield* integrations
-        .transform((editor) => editor.update(id, (integration) => (integration.name = "OpenAI Override")))
+        .transform((editor) => editor.update(id, (integration) => (integration.name = "DeepSeek Override")))
         .pipe(Scope.provide(second))
-      expect((yield* integrations.get(id))?.name).toBe("OpenAI Override")
+      expect((yield* integrations.get(id))?.name).toBe("DeepSeek Override")
 
       yield* Scope.close(second, Exit.void)
-      expect((yield* integrations.get(id))?.name).toBe("OpenAI")
+      expect((yield* integrations.get(id))?.name).toBe("DeepSeek")
       expect((yield* integrations.list()).map((integration) => integration.id)).toEqual([id])
     }),
   )
@@ -53,7 +53,7 @@ describe("Integration", () => {
   it.effect("registers and overrides methods independently", () =>
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const methodID = Integration.MethodID.make("chatgpt")
       const first = yield* Scope.fork(yield* Scope.Scope)
       const second = yield* Scope.fork(yield* Scope.Scope)
@@ -76,8 +76,8 @@ describe("Integration", () => {
         .pipe(Scope.provide(first))
       yield* integrations
         .transform((editor) => {
-          expect(editor.get(integrationID)).toEqual({ id: integrationID, name: "openai" })
-          expect(editor.list()).toEqual([{ id: integrationID, name: "openai" }])
+          expect(editor.get(integrationID)).toEqual({ id: integrationID, name: "deepseek" })
+          expect(editor.list()).toEqual([{ id: integrationID, name: "deepseek" }])
           expect(editor.method.list(integrationID)).toEqual([
             expect.objectContaining({ id: methodID, label: "ChatGPT" }),
           ])
@@ -89,7 +89,7 @@ describe("Integration", () => {
         })
         .pipe(Scope.provide(second))
 
-      expect((yield* integrations.get(integrationID))?.name).toBe("openai")
+      expect((yield* integrations.get(integrationID))?.name).toBe("deepseek")
       expect((yield* integrations.get(integrationID))?.methods[0]).toMatchObject({ label: "ChatGPT Override" })
 
       yield* Scope.close(second, Exit.void)
@@ -103,7 +103,7 @@ describe("Integration", () => {
       const integrations = yield* Integration.Service
       const credentials = yield* Credential.Service
       const events = yield* EventV2.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       yield* integrations.transform((editor) =>
         editor.method.update({
           integrationID,
@@ -136,7 +136,7 @@ describe("Integration", () => {
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
       const credentials = yield* Credential.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const methodID = Integration.MethodID.make("chatgpt")
       yield* integrations.transform((editor) =>
         editor.method.update({
@@ -192,7 +192,7 @@ describe("Integration", () => {
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
       const credentials = yield* Credential.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const methodID = Integration.MethodID.make("chatgpt")
       let closed = false
       yield* integrations.transform((editor) =>
@@ -226,7 +226,7 @@ describe("Integration", () => {
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
       const credentials = yield* Credential.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const methodID = Integration.MethodID.make("browser")
       yield* integrations.transform((editor) =>
         editor.method.update({
@@ -258,7 +258,7 @@ describe("Integration", () => {
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
       const credentials = yield* Credential.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const methodID = Integration.MethodID.make("browser")
       let closed = false
       yield* integrations.transform((editor) =>

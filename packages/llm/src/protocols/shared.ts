@@ -103,8 +103,7 @@ export const parseJson = (route: string, input: string, message: string) =>
 /**
  * Join the `text` field of a list of parts with newlines. Used by routes
  * that flatten system / message content arrays into a single provider string
- * (OpenAI Chat `system` content, OpenAI Responses `system` content, Gemini
- * `systemInstruction.parts[].text`).
+ * (OpenAI Chat `system` content).
  */
 export const joinText = (parts: ReadonlyArray<{ readonly text: string }>) => parts.map((part) => part.text).join("\n")
 
@@ -156,9 +155,6 @@ export const parseToolInput = (route: string, name: string, raw: string) =>
   parseJson(route, raw || "{}", `Invalid JSON input for ${route} tool call ${name}`)
 
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
-export const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"] as const
-export const AUDIO_MIMES = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac"] as const
-export const MEDIA_MIMES = [...IMAGE_MIMES, ...VIDEO_MIMES, ...AUDIO_MIMES] as const
 export const MAX_MEDIA_ENCODED_BYTES = 28 * 1024 * 1024
 export const MAX_MEDIA_DECODED_BYTES = 20 * 1024 * 1024
 

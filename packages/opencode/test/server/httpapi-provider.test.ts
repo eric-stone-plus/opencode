@@ -26,7 +26,7 @@ function providerListHasFetch(list: unknown) {
   if (!Array.isArray(list)) return false
   return list.some((item: unknown) => {
     if (typeof item !== "object" || item === null || !("id" in item) || !("options" in item)) return false
-    if (item.id !== "google") return false
+    if (item.id !== "deepseek") return false
     if (typeof item.options !== "object" || item.options === null) return false
     return "fetch" in item.options
   })
@@ -192,7 +192,7 @@ function writeFunctionOptionsPlugin(dir: string) {
         '  id: "test.provider-function-options",',
         "  server: async () => ({",
         "    auth: {",
-        '      provider: "google",',
+        '      provider: "deepseek",',
         "      loader: async (_getAuth, provider) => {",
         "        for (const model of Object.values(provider.models ?? {})) {",
         "          model.cost = { input: 0, output: 0 }",
@@ -224,7 +224,7 @@ function writeProviderModelsMutationPlugin(dir: string) {
         '  id: "test.provider-models-mutation",',
         "  server: async () => ({",
         "    provider: {",
-        '      id: "google",',
+        '      id: "deepseek",',
         "      models: async (provider) => {",
         "        const models = Object.fromEntries(",
         "          Object.entries(provider.models ?? {}).map(([id, model]) => [id, { ...model }]),",
@@ -358,7 +358,7 @@ describe("provider HttpApi", () => {
       yield* setEnvScoped(
         "OPENCODE_AUTH_CONTENT",
         JSON.stringify({
-          google: { type: "oauth", refresh: "dummy", access: "dummy", expires: 9999999999999 },
+          deepseek: { type: "oauth", refresh: "dummy", access: "dummy", expires: 9999999999999 },
         }),
       )
       const headers = { "x-opencode-directory": directory }
@@ -372,11 +372,11 @@ describe("provider HttpApi", () => {
       const configBody = yield* configResponse.json
       expect(hasProviderWithFetch(providerBody, "all")).toBe(false)
       expect(hasProviderWithFetch(configBody, "providers")).toBe(false)
-      expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
-      expect(hasNonZeroModelCost(configBody, "providers", "google")).toBe(true)
+      expect(hasNonZeroModelCost(providerBody, "all", "deepseek")).toBe(true)
+      expect(hasNonZeroModelCost(configBody, "providers", "deepseek")).toBe(true)
     }),
-    // Providers only load when declared in config (fork policy); auth.json alone never activates google.
-    { config: { ...projectOptions.config, provider: { google: {} } }, init: writeFunctionOptionsPlugin },
+    // Providers only load when declared in config (fork policy); auth.json alone never activates deepseek.
+    { config: { ...projectOptions.config, provider: { deepseek: {} } }, init: writeFunctionOptionsPlugin },
   )
 
   it.instance(
@@ -393,10 +393,10 @@ describe("provider HttpApi", () => {
 
       const providerBody = yield* providerResponse.json
       const configBody = yield* configResponse.json
-      expect(hasProviderMutationMarker(providerBody, "all", "google")).toBe(false)
-      expect(hasProviderMutationMarker(configBody, "providers", "google")).toBe(false)
-      expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
+      expect(hasProviderMutationMarker(providerBody, "all", "deepseek")).toBe(false)
+      expect(hasProviderMutationMarker(configBody, "providers", "deepseek")).toBe(false)
+      expect(hasNonZeroModelCost(providerBody, "all", "deepseek")).toBe(true)
     }),
-    { config: { ...projectOptions.config, provider: { google: {} } }, init: writeProviderModelsMutationPlugin },
+    { config: { ...projectOptions.config, provider: { deepseek: {} } }, init: writeProviderModelsMutationPlugin },
   )
 })

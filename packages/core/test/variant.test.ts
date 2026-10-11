@@ -11,12 +11,9 @@ describe("topVariant", () => {
   })
 
   test("toggle ladders: the enabled tier beats none/off", () => {
-    // minimax-m3: "none" = thinking disabled, "thinking" = adaptive
-    // (packages/opencode/src/provider/transform.ts variants()).
-    expect(topVariant(["none", "thinking"])).toBe("thinking")
-    expect(topVariant(["thinking", "none"])).toBe("thinking")
-    // groq qwen3-32b reasoning_options values: none | default.
-    expect(topVariant(["none", "default"])).toBe("default")
+    expect(topVariant(["none", "high"])).toBe("high")
+    expect(topVariant(["high", "none"])).toBe("high")
+    expect(topVariant(["off", "low"])).toBe("low")
   })
 
   test("unknown names fall back to the ladder's own order (last entry)", () => {

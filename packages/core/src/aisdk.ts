@@ -71,7 +71,7 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   })
 }
 
-function prepareOptions(model: ModelV2.Info, pkg: string) {
+function prepareOptions(model: ModelV2.Info) {
   const options: Record<string, any> = {
     name: model.providerID,
     ...(model.api.type === "aisdk" ? (model.api.settings ?? {}) : {}),
@@ -95,20 +95,6 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
     const abortSignals = signals.map((item) => (item instanceof AbortController ? item.signal : item))
     if (abortSignals.length === 1) opts.signal = abortSignals[0]
     if (abortSignals.length > 1) opts.signal = AbortSignal.any(abortSignals)
-
-    if (
-      (pkg === "@ai-sdk/openai" || pkg === "@ai-sdk/azure" || pkg === "@ai-sdk/amazon-bedrock/mantle") &&
-      opts.body &&
-      opts.method === "POST"
-    ) {
-      const body = JSON.parse(opts.body as string)
-      if (body.store !== true && Array.isArray(body.input)) {
-        for (const item of body.input) {
-          if ("id" in item) delete item.id
-        }
-        opts.body = JSON.stringify(body)
-      }
-    }
 
     const res = await (typeof customFetch === "function" ? customFetch : fetch)(input, {
       ...opts,
@@ -205,7 +191,7 @@ export const locationLayer = Layer.effect(
             cause: new Error(`Unsupported api ${model.api.type}`),
           })
 
-        const options = prepareOptions(model, model.api.package)
+        const options = prepareOptions(model)
         const sdkKey = JSON.stringify({
           providerID: model.providerID,
           api: model.api,

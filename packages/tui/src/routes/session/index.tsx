@@ -1559,10 +1559,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
   // layout never shifts. Click to open the full markdown block, click to close.
   const [expanded, setExpanded] = createSignal(false)
 
-  const content = createMemo(() => {
-    // OpenRouter encrypts some reasoning blocks; drop the placeholder.
-    return props.part.text.replace("[REDACTED]", "").trim()
-  })
+  const content = createMemo(() => props.part.text.trim())
   const opaque = createMemo(() => !content() && Boolean(props.part.metadata))
   // Reasoning is finalized when the server sets `time.end` (see processor.ts).
   // Flips independently of the parent message completing.

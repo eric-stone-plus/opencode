@@ -5,7 +5,7 @@ import { Auth } from "../src/route"
 import { Tool } from "../src/tool"
 
 const request = LLM.request({
-  model: OpenAIChat.route.with({ auth: Auth.bearer("fixture") }).model({ id: "gpt-4o-mini" }),
+  model: OpenAIChat.route.with({ auth: Auth.bearer("fixture") }).model({ id: "deepseek-chat" }),
   prompt: "Use the tool.",
 })
 

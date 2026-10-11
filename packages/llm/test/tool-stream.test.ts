@@ -45,25 +45,6 @@ describe("ToolStream", () => {
     }),
   )
 
-  it.effect("uses final input override without losing accumulated deltas", () =>
-    Effect.gen(function* () {
-      const tools = ToolStream.start(ToolStream.empty<string>(), "item_1", {
-        id: "call_1",
-        name: "lookup",
-        input: '{"query":"partial"}',
-      })
-      const finished = yield* ToolStream.finishWithInput(ADAPTER, tools, "item_1", '{"query":"final"}')
-
-      expect(finished).toEqual({
-        tools: {},
-        events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: { query: "final" } },
-        ],
-      })
-    }),
-  )
-
   it.effect("preserves providerExecuted and clears all tools", () =>
     Effect.gen(function* () {
       const first: ToolStream.State<number> = ToolStream.start(ToolStream.empty<number>(), 0, {

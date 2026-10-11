@@ -236,11 +236,6 @@ const layer = Layer.effect(
           if (!record) return
           const provider = record.provider
 
-          // TODO: Remove these provider-specific assumptions once model syncing reliably reports available deployments.
-          if (providerID === ProviderV2.ID.azure || providerID === ProviderV2.ID.make("azure-cognitive-services")) {
-            return
-          }
-
           const candidates = pipe(
             Array.fromIterable(record.models.values()),
             Array.filter(
@@ -286,7 +281,7 @@ const layer = Layer.effect(
   }),
 )
 
-const SMALL_MODEL_RE = /\b(nano|flash|lite|mini|haiku|small|fast)\b/
+const SMALL_MODEL_RE = /\b(flash|lite|mini|small|fast)\b/
 
 export const locationLayer = layer.pipe(
   Layer.provideMerge(Integration.locationLayer),

@@ -118,8 +118,8 @@ test("refreshes integrations after integration updates", async () => {
           ? []
           : [
               {
-                id: "openai",
-                name: "OpenAI",
+                id: "deepseek",
+                name: "DeepSeek",
                 methods: [{ type: "key" }],
               },
             ],
@@ -158,7 +158,7 @@ test("refreshes integrations after integration updates", async () => {
     emitEvent(events, { id: "evt_integration", type: "integration.updated", properties: {} })
     await wait(() => data.location.integration.list()?.length === 1)
     await wait(() => requests.model > before.model && requests.provider > before.provider)
-    expect(data.location.integration.list()?.[0]).toMatchObject({ id: "openai", name: "OpenAI" })
+    expect(data.location.integration.list()?.[0]).toMatchObject({ id: "deepseek", name: "DeepSeek" })
   } finally {
     app.renderer.destroy()
   }

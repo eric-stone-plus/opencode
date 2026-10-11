@@ -66,16 +66,16 @@ Runtime hooks intercept live operations rather than rebuilding domain state:
 yield *
   ctx.aisdk.sdk(
     Effect.fn(function* (event) {
-      if (event.package !== "@ai-sdk/xai") return
-      const mod = yield* Effect.promise(() => import("@ai-sdk/xai"))
-      event.sdk = mod.createXai(event.options)
+      if (event.package !== "@ai-sdk/openai-compatible") return
+      const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
+      event.sdk = mod.createOpenAICompatible(event.options)
     }),
   )
 
 yield *
   ctx.aisdk.language((event) => {
-    if (event.model.providerID !== "xai") return
-    event.language = event.sdk.responses(event.model.api.id)
+    if (event.model.providerID !== "deepseek") return
+    event.language = event.sdk.chat(event.model.api.id)
   })
 ```
 

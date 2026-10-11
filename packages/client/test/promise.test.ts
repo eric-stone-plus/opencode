@@ -118,7 +118,7 @@ test("session methods use the public HTTP contract", async () => {
   await client.sessions.switchAgent({ sessionID: "ses_test", agent: "build" })
   await client.sessions.switchModel({
     sessionID: "ses_test",
-    model: { id: "claude", providerID: "anthropic" },
+    model: { id: "deepseek-flash", providerID: "deepseek" },
   })
   const admitted = await client.sessions.prompt({
     sessionID: "ses_test",
@@ -239,7 +239,7 @@ const modelSwitchedMessage = {
   id: "msg_model",
   type: "model-switched",
   time: { created: 1_717_171_717_000 },
-  model: { id: "claude", providerID: "anthropic" },
+  model: { id: "deepseek-flash", providerID: "deepseek" },
 }
 
 const modelSwitchedEvent = {
@@ -250,6 +250,6 @@ const modelSwitchedEvent = {
     timestamp: 1_717_171_717_000,
     sessionID: "ses_test",
     messageID: "msg_model",
-    model: { id: "claude", providerID: "anthropic" },
+    model: { id: "deepseek-flash", providerID: "deepseek" },
   },
 }

@@ -72,7 +72,7 @@ export const Info = Schema.Struct({
     description: "When set, ONLY these providers will be enabled. All other providers will be ignored",
   }),
   model: Schema.optional(Schema.String).annotate({
-    description: "Model to use in the format of provider/model, eg anthropic/claude-2",
+    description: "Model to use in the format of provider/model, eg deepseek/deepseek-flash",
   }),
   small_model: Schema.optional(Schema.String).annotate({
     description: "Small model to use for tasks like title generation in the format of provider/model",

@@ -12,31 +12,31 @@ import {
 
 const providers: ConfigOptionProvider[] = [
   {
-    id: "anthropic",
-    name: "Anthropic",
+    id: "alibaba",
+    name: "Alibaba",
     models: {
-      "claude/sonnet-4": {
-        id: "claude/sonnet-4",
-        name: "Claude Sonnet 4",
+      "qwen/max": {
+        id: "qwen/max",
+        name: "Qwen Max",
         variants: {
           default: {},
           high: {},
           "very-high": {},
         },
       },
-      "claude-haiku": {
-        id: "claude-haiku",
-        name: "Claude Haiku",
+      "qwen-flash": {
+        id: "qwen-flash",
+        name: "Qwen Flash",
       },
     },
   },
   {
-    id: "openai",
-    name: "OpenAI",
+    id: "deepseek",
+    name: "DeepSeek",
     models: {
-      "gpt-5": {
-        id: "gpt-5",
-        name: "GPT-5",
+      "deepseek-v4-flash": {
+        id: "deepseek-v4-flash",
+        name: "DeepSeek V4 Flash",
         variants: {
           minimal: {},
           low: {},
@@ -51,7 +51,7 @@ describe("acp config options", () => {
     expect(
       buildModelSelectOption({
         providers,
-        currentModel: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+        currentModel: { providerID: "alibaba", modelID: "qwen/max" },
         currentVariant: "high",
       }),
     ).toEqual({
@@ -59,11 +59,11 @@ describe("acp config options", () => {
       name: "Model",
       category: "model",
       type: "select",
-      currentValue: "anthropic/claude/sonnet-4",
+      currentValue: "alibaba/qwen/max",
       options: [
-        { value: "anthropic/claude-haiku", name: "Anthropic/Claude Haiku" },
-        { value: "anthropic/claude/sonnet-4", name: "Anthropic/Claude Sonnet 4" },
-        { value: "openai/gpt-5", name: "OpenAI/GPT-5" },
+        { value: "alibaba/qwen-flash", name: "Alibaba/Qwen Flash" },
+        { value: "alibaba/qwen/max", name: "Alibaba/Qwen Max" },
+        { value: "deepseek/deepseek-v4-flash", name: "DeepSeek/DeepSeek V4 Flash" },
       ],
     })
   })
@@ -71,20 +71,20 @@ describe("acp config options", () => {
   test("includes variant ids in the model option only when requested", () => {
     const option = buildModelSelectOption({
       providers,
-      currentModel: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+      currentModel: { providerID: "alibaba", modelID: "qwen/max" },
       currentVariant: "high",
       includeVariants: true,
     })
 
-    expect(option.currentValue).toBe("anthropic/claude/sonnet-4/high")
+    expect(option.currentValue).toBe("alibaba/qwen/max/high")
     if (option.type !== "select") throw new Error("expected select option")
     expect(option.options).toContainEqual({
-      value: "anthropic/claude/sonnet-4/high",
-      name: "Anthropic/Claude Sonnet 4 (High)",
+      value: "alibaba/qwen/max/high",
+      name: "Alibaba/Qwen Max (High)",
     })
     expect(option.options).not.toContainEqual({
-      value: "anthropic/claude/sonnet-4/default",
-      name: "Anthropic/Claude Sonnet 4 (Default)",
+      value: "alibaba/qwen/max/default",
+      name: "Alibaba/Qwen Max (Default)",
     })
   })
 
@@ -150,7 +150,7 @@ describe("acp config options", () => {
   test("builds full config options with model, effort, and mode in stable order", () => {
     const options = buildConfigOptions({
       providers,
-      currentModel: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+      currentModel: { providerID: "alibaba", modelID: "qwen/max" },
       currentVariant: "very-high",
       modes: [
         { id: "build", name: "Build" },
@@ -168,70 +168,70 @@ describe("acp config options", () => {
     expect(
       buildConfigOptions({
         providers,
-        currentModel: { providerID: "anthropic", modelID: "claude-haiku" },
+        currentModel: { providerID: "alibaba", modelID: "qwen-flash" },
       }).map((option) => option.id),
     ).toEqual(["model"])
   })
 
   test("parses provider/model selections", () => {
-    expect(parseModelSelection("openai/gpt-5", providers)).toEqual({
-      model: { providerID: "openai", modelID: "gpt-5" },
+    expect(parseModelSelection("deepseek/deepseek-v4-flash", providers)).toEqual({
+      model: { providerID: "deepseek", modelID: "deepseek-v4-flash" },
     })
   })
 
   test("parses provider/model/variant selections when the base model exposes that variant", () => {
-    expect(parseModelSelection("openai/gpt-5/low", providers)).toEqual({
-      model: { providerID: "openai", modelID: "gpt-5" },
+    expect(parseModelSelection("deepseek/deepseek-v4-flash/low", providers)).toEqual({
+      model: { providerID: "deepseek", modelID: "deepseek-v4-flash" },
       variant: "low",
     })
   })
 
   test("prefers exact slash-containing model ids before treating the tail as a variant", () => {
-    expect(parseModelSelection("anthropic/claude/sonnet-4", providers)).toEqual({
-      model: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+    expect(parseModelSelection("alibaba/qwen/max", providers)).toEqual({
+      model: { providerID: "alibaba", modelID: "qwen/max" },
     })
   })
 
   test("parses trailing variants for slash-containing model ids", () => {
-    expect(parseModelSelection("anthropic/claude/sonnet-4/high", providers)).toEqual({
-      model: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+    expect(parseModelSelection("alibaba/qwen/max/high", providers)).toEqual({
+      model: { providerID: "alibaba", modelID: "qwen/max" },
       variant: "high",
     })
   })
 
   test("keeps unknown trailing segments in the model id when they are not valid variants", () => {
-    expect(parseModelSelection("anthropic/claude/sonnet-4/missing", providers)).toEqual({
-      model: { providerID: "anthropic", modelID: "claude/sonnet-4/missing" },
+    expect(parseModelSelection("alibaba/qwen/max/missing", providers)).toEqual({
+      model: { providerID: "alibaba", modelID: "qwen/max/missing" },
     })
   })
 
   test("formats current model ids with and without selected variants", () => {
     expect(
       formatCurrentModelId({
-        model: { providerID: "openai", modelID: "gpt-5" },
+        model: { providerID: "deepseek", modelID: "deepseek-v4-flash" },
         variant: "low",
         variants: ["minimal", "low"],
       }),
-    ).toBe("openai/gpt-5")
+    ).toBe("deepseek/deepseek-v4-flash")
     expect(
       formatCurrentModelId({
-        model: { providerID: "openai", modelID: "gpt-5" },
+        model: { providerID: "deepseek", modelID: "deepseek-v4-flash" },
         variant: "low",
         variants: ["minimal", "low"],
         includeVariant: true,
       }),
-    ).toBe("openai/gpt-5/low")
+    ).toBe("deepseek/deepseek-v4-flash/low")
   })
 
   test("formats current model ids with variant fallback", () => {
     expect(
       formatCurrentModelId({
-        model: { providerID: "anthropic", modelID: "claude/sonnet-4" },
+        model: { providerID: "alibaba", modelID: "qwen/max" },
         variant: "missing",
         variants: ["default", "high"],
         includeVariant: true,
       }),
-    ).toBe("anthropic/claude/sonnet-4/default")
+    ).toBe("alibaba/qwen/max/default")
   })
 
   test("formats variant names for display", () => {

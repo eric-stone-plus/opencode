@@ -5,7 +5,7 @@ import type { RedactOptions, RequestSnapshot, ResponseSnapshot } from "./types.j
 
 export type { RedactOptions } from "./types.js"
 
-export const DEFAULT_REQUEST_HEADERS: ReadonlyArray<string> = ["content-type", "accept", "openai-beta"]
+export const DEFAULT_REQUEST_HEADERS: ReadonlyArray<string> = ["content-type", "accept"]
 export const DEFAULT_RESPONSE_HEADERS: ReadonlyArray<string> = ["content-type"]
 
 const identity = <T>(value: T) => value

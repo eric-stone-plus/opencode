@@ -149,14 +149,6 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelsDev") {}
 
-// Strip OpenCode Zen free models ("opencode", "opencode-go"); harness-only fork.
-// `delete` on a missing key is a no-op, so upstream data without them is fine.
-const stripZenProviders = (data: Record<string, Provider>) => {
-  delete data.opencode
-  delete data["opencode-go"]
-  return data
-}
-
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -215,7 +207,11 @@ const layer = Layer.effect(
     )
 
     const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
-      const text = yield* fetchApi()
+      const registry = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+      )(yield* fetchApi())
+      // Keep the on-disk cache as small as the embedded snapshot so a refresh never makes startup slower.
+      const text = JSON.stringify(ModelsDev.restrict(registry))
       const tempfile = `${filepath}.${process.pid}.${Date.now()}.tmp`
       yield* fs.writeWithDirs(tempfile, text).pipe(
         Effect.andThen(fs.rename(tempfile, filepath)),
@@ -226,7 +222,6 @@ const layer = Layer.effect(
           }),
         ),
       )
-      return text
     })
 
     // Fork policy: the registry is never fetched implicitly. Runtime data comes only from the
@@ -235,9 +230,9 @@ const layer = Layer.effect(
     // config npm/baseURL regardless of what the registry says (see provider.ts).
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
-      if (fromDisk) return stripZenProviders(fromDisk)
+      if (fromDisk) return ModelsDev.restrict(fromDisk)
       const snapshot = yield* loadSnapshot
-      if (snapshot) return stripZenProviders(snapshot)
+      if (snapshot) return ModelsDev.restrict(snapshot)
       return {}
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 

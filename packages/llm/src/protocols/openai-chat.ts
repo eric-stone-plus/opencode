@@ -475,8 +475,8 @@ const finishEvents = (state: ParserState): ReadonlyArray<LLMEvent> => {
 /**
  * The OpenAI Chat protocol — request body construction, body schema, and the
  * streaming-event state machine. Reused by every route that speaks OpenAI Chat
- * over HTTP+SSE: native OpenAI, DeepSeek, TogetherAI, Cerebras, Baseten,
- * Fireworks, DeepInfra, and (once added) Azure OpenAI Chat.
+ * over HTTP+SSE: native OpenAI-style endpoints and OpenAI-compatible providers
+ * such as DeepSeek.
  */
 export const protocol = Protocol.make({
   id: ADAPTER,

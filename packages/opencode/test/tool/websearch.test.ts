@@ -38,9 +38,9 @@ describe("websearch provider", () => {
   })
 
   test("is enabled only with explicit websearch provider flags", () => {
-    expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: false })).toBe(false)
-    expect(webSearchEnabled(ProviderV2.ID.openai, { exa: true, parallel: false })).toBe(true)
-    expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: true })).toBe(true)
+    expect(webSearchEnabled(ProviderV2.ID.make("deepseek"), { exa: false, parallel: false })).toBe(false)
+    expect(webSearchEnabled(ProviderV2.ID.make("deepseek"), { exa: true, parallel: false })).toBe(true)
+    expect(webSearchEnabled(ProviderV2.ID.make("deepseek"), { exa: false, parallel: true })).toBe(true)
   })
 
   test("uses branded labels", () => {

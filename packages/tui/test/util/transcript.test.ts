@@ -4,21 +4,21 @@ import type { AssistantMessage, Part, Provider, UserMessage } from "@opencode-ai
 
 const providers: Provider[] = [
   {
-    id: "anthropic",
-    name: "Anthropic",
+    id: "deepseek",
+    name: "DeepSeek",
     source: "api",
     env: [],
     options: {},
     models: {
-      "claude-sonnet-4-20250514": {
-        id: "claude-sonnet-4-20250514",
-        providerID: "anthropic",
+      "deepseek-flash": {
+        id: "deepseek-flash",
+        providerID: "deepseek",
         api: {
-          id: "claude-sonnet-4-20250514",
-          url: "https://example.com/claude-sonnet-4-20250514",
-          npm: "@ai-sdk/anthropic",
+          id: "deepseek-flash",
+          url: "https://example.com/deepseek-flash",
+          npm: "@ai-sdk/openai-compatible",
         },
-        name: "Claude Sonnet 4",
+        name: "DeepSeek Flash",
         capabilities: {
           temperature: true,
           reasoning: true,
@@ -68,8 +68,8 @@ describe("transcript", () => {
       sessionID: "ses_123",
       role: "assistant",
       agent: "build",
-      modelID: "claude-sonnet-4-20250514",
-      providerID: "anthropic",
+      modelID: "deepseek-flash",
+      providerID: "deepseek",
       mode: "",
       parentID: "msg_parent",
       path: { cwd: "/test", root: "/test" },
@@ -80,12 +80,12 @@ describe("transcript", () => {
 
     test("includes metadata when enabled", () => {
       const result = formatAssistantHeader(baseMsg, true)
-      expect(result).toBe("## Assistant (Build · claude-sonnet-4-20250514 · 5.4s)\n\n")
+      expect(result).toBe("## Assistant (Build · deepseek-flash · 5.4s)\n\n")
     })
 
     test("uses model display name when available", () => {
       const result = formatAssistantHeader(baseMsg, true, providers)
-      expect(result).toBe("## Assistant (Build · Claude Sonnet 4 · 5.4s)\n\n")
+      expect(result).toBe("## Assistant (Build · DeepSeek Flash · 5.4s)\n\n")
     })
 
     test("excludes metadata when disabled", () => {
@@ -96,7 +96,7 @@ describe("transcript", () => {
     test("handles missing completed time", () => {
       const msg = { ...baseMsg, time: { created: 1000000 } }
       const result = formatAssistantHeader(msg as AssistantMessage, true)
-      expect(result).toBe("## Assistant (Build · claude-sonnet-4-20250514)\n\n")
+      expect(result).toBe("## Assistant (Build · deepseek-flash)\n\n")
     })
 
     test("titlecases agent name", () => {
@@ -263,7 +263,7 @@ describe("transcript", () => {
         sessionID: "ses_123",
         role: "user",
         agent: "build",
-        model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+        model: { providerID: "deepseek", modelID: "deepseek-flash" },
         time: { created: 1000000 },
       }
       const parts: Part[] = [{ id: "p1", sessionID: "ses_123", messageID: "msg_123", type: "text", text: "Hello" }]
@@ -278,8 +278,8 @@ describe("transcript", () => {
         sessionID: "ses_123",
         role: "assistant",
         agent: "build",
-        modelID: "claude-sonnet-4-20250514",
-        providerID: "anthropic",
+        modelID: "deepseek-flash",
+        providerID: "deepseek",
         mode: "",
         parentID: "msg_parent",
         path: { cwd: "/test", root: "/test" },
@@ -289,7 +289,7 @@ describe("transcript", () => {
       }
       const parts: Part[] = [{ id: "p1", sessionID: "ses_123", messageID: "msg_123", type: "text", text: "Hi there" }]
       const result = formatMessage(msg, parts, options)
-      expect(result).toContain("## Assistant (Build · Claude Sonnet 4 · 5.4s)")
+      expect(result).toContain("## Assistant (Build · DeepSeek Flash · 5.4s)")
       expect(result).toContain("Hi there")
     })
   })
@@ -308,7 +308,7 @@ describe("transcript", () => {
             sessionID: "ses_abc123",
             role: "user" as const,
             agent: "build",
-            model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+            model: { providerID: "deepseek", modelID: "deepseek-flash" },
             time: { created: 1000000000000 },
           },
           parts: [{ id: "p1", sessionID: "ses_abc123", messageID: "msg_1", type: "text" as const, text: "Hello" }],
@@ -319,8 +319,8 @@ describe("transcript", () => {
             sessionID: "ses_abc123",
             role: "assistant" as const,
             agent: "build",
-            modelID: "claude-sonnet-4-20250514",
-            providerID: "anthropic",
+            modelID: "deepseek-flash",
+            providerID: "deepseek",
             mode: "",
             parentID: "msg_1",
             path: { cwd: "/test", root: "/test" },
@@ -344,7 +344,7 @@ describe("transcript", () => {
       expect(result).toContain("**Session ID:** ses_abc123")
       expect(result).toContain("## User")
       expect(result).toContain("Hello")
-      expect(result).toContain("## Assistant (Build · Claude Sonnet 4 · 0.5s)")
+      expect(result).toContain("## Assistant (Build · DeepSeek Flash · 0.5s)")
       expect(result).toContain("Hi!")
       expect(result).toContain("---")
     })
@@ -356,7 +356,7 @@ describe("transcript", () => {
           sessionID: "ses_abc123",
           role: "user" as const,
           agent: "build",
-          model: { providerID: "anthropic", modelID: "claude" },
+          model: { providerID: "deepseek", modelID: "flash" },
           time: { created },
         },
         parts: parts.map((text, index) => ({
@@ -390,8 +390,8 @@ describe("transcript", () => {
             sessionID: "ses_abc123",
             role: "assistant" as const,
             agent: "build",
-            modelID: "claude-sonnet-4-20250514",
-            providerID: "anthropic",
+            modelID: "deepseek-flash",
+            providerID: "deepseek",
             mode: "",
             parentID: "msg_0",
             path: { cwd: "/test", root: "/test" },
@@ -409,7 +409,7 @@ describe("transcript", () => {
         assistantMetadata: true,
       })
 
-      expect(result).toContain("## Assistant (Build · claude-sonnet-4-20250514 · 0.5s)")
+      expect(result).toContain("## Assistant (Build · deepseek-flash · 0.5s)")
     })
 
     test("formats transcript without assistant metadata", () => {
@@ -425,8 +425,8 @@ describe("transcript", () => {
             sessionID: "ses_abc123",
             role: "assistant" as const,
             agent: "build",
-            modelID: "claude-sonnet-4-20250514",
-            providerID: "anthropic",
+            modelID: "deepseek-flash",
+            providerID: "deepseek",
             mode: "",
             parentID: "msg_0",
             path: { cwd: "/test", root: "/test" },
@@ -443,7 +443,7 @@ describe("transcript", () => {
 
       expect(result).toContain("## Assistant\n\n")
       expect(result).not.toContain("Build")
-      expect(result).not.toContain("claude-sonnet-4-20250514")
+      expect(result).not.toContain("deepseek-flash")
     })
   })
 })

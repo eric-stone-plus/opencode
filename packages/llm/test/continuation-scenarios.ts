@@ -2,7 +2,7 @@ import { LLM, Message, ToolCallPart, ToolDefinition, ToolResultPart, type Conten
 
 export const basicContinuation = ["system", "user-text", "assistant-text", "user-follow-up"] as const
 export const toolContinuation = ["tool-call", "tool-result"] as const
-export const reasoningContinuation = ["assistant-reasoning", "encrypted-reasoning"] as const
+export const reasoningContinuation = ["assistant-reasoning"] as const
 export const mediaContinuation = ["user-image"] as const
 export const maximalContinuation = [
   ...basicContinuation,
@@ -12,13 +12,6 @@ export const maximalContinuation = [
 ] as const
 
 export type ContinuationFeature = (typeof maximalContinuation)[number]
-
-export const nativeOpenAIResponsesContinuation = [
-  ...basicContinuation,
-  ...toolContinuation,
-  "encrypted-reasoning",
-  ...mediaContinuation,
-] as const satisfies ReadonlyArray<ContinuationFeature>
 
 export const nativeAnthropicMessagesContinuation = [
   ...basicContinuation,
@@ -60,17 +53,6 @@ export function continuationRequest(input: {
       text: "I inspected the previous turn.",
       providerMetadata: { anthropic: { signature: "sig_continuation_1" } },
     })
-  if (features.has("encrypted-reasoning"))
-    firstAssistant.push({
-      type: "reasoning",
-      text: "I inspected the previous turn.",
-      providerMetadata: {
-        openai: {
-          itemId: "rs_continuation_1",
-          reasoningEncryptedContent: "encrypted-continuation-state",
-        },
-      },
-    })
   if (features.has("assistant-text")) firstAssistant.push({ type: "text", text: "It shows a small test image." })
   if (firstAssistant.length > 0) messages.push(Message.assistant(firstAssistant))
 
@@ -96,9 +78,6 @@ export function continuationRequest(input: {
     messages,
     tools: features.has("tool-call") ? [continuationTool] : [],
     cache: "none",
-    providerOptions: features.has("encrypted-reasoning")
-      ? { openai: { store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
-      : undefined,
     generation: { maxTokens: 80, temperature: 0 },
   })
 }

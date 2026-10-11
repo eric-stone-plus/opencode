@@ -1,30 +1,29 @@
 import { Config, Effect, Formatter, Layer, Schema, Stream } from "effect"
 import { LLM, LLMClient, Message, ProviderID, Tool, ToolRuntime } from "@opencode-ai/llm"
 import { Route, Auth, Endpoint, Framing, Protocol, RequestExecutor, WebSocketExecutor } from "@opencode-ai/llm/route"
-import { OpenAI } from "@opencode-ai/llm/providers"
+import { OpenAICompatible } from "@opencode-ai/llm/providers"
 
 /**
  * A runnable walkthrough of the LLM package use-site API.
  *
- * Run from `packages/llm` with an OpenAI key in the environment:
+ * Run from `packages/llm` with a DeepSeek key in the environment:
  *
- *   OPENAI_API_KEY=... bun example/tutorial.ts
+ *   DEEPSEEK_API_KEY=... bun example/tutorial.ts
  *
  * The file is intentionally written as a normal TypeScript program. You can
  * hover imports and local values to see how the public API is typed.
  */
 
-const apiKey = Config.redacted("OPENAI_API_KEY")
+const apiKey = Config.redacted("DEEPSEEK_API_KEY")
 
 // 1. Pick a model. The provider helper records provider identity, protocol
 // choice, capabilities, deployment options, authentication, and defaults.
-const model = OpenAI.configure({
-  apiKey,
-  generation: { maxTokens: 160 },
-  providerOptions: {
-    openai: { store: false },
-  },
-}).model("gpt-4o-mini")
+const model = OpenAICompatible.deepseek
+  .configure({
+    apiKey,
+    generation: { maxTokens: 160 },
+  })
+  .model("deepseek-chat")
 
 // 2. Build a provider-neutral request. This is useful when reusing one request
 // across generate and stream examples.
@@ -34,8 +33,7 @@ const model = OpenAI.configure({
 //   - `generation`: common controls such as max tokens, temperature, topP/topK,
 //     penalties, seed, and stop sequences.
 //   - `providerOptions`: namespaced provider-native behavior. For example,
-//     OpenAI cache keys and store behavior, Anthropic thinking, Gemini thinking
-//     config, or OpenRouter routing/reasoning.
+//     Anthropic thinking or the OpenAI Chat reasoning effort.
 //   - `http`: last-resort serializable overlays for final request body, headers,
 //     and query params. Prefer typed `providerOptions` when a field is stable.
 //
@@ -45,9 +43,6 @@ const request = LLM.request({
   system: "You are concise and practical.",
   prompt: "Tell me a joke",
   generation: { maxTokens: 80, temperature: 0.7 },
-  providerOptions: {
-    openai: { promptCacheKey: "tutorial-joke" },
-  },
 })
 
 // `http` is intentionally not needed for normal calls. This shows the shape for

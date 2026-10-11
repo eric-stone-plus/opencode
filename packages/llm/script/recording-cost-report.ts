@@ -55,28 +55,14 @@ const walk = async (dir: string): Promise<ReadonlyArray<string>> =>
     )
 
 const providerFromUrl = (url: string) => {
-  if (url.includes("api.openai.com")) return "openai"
   if (url.includes("api.anthropic.com")) return "anthropic"
-  if (url.includes("generativelanguage.googleapis.com")) return "google"
-  if (url.includes("bedrock")) return "amazon-bedrock"
-  if (url.includes("openrouter.ai")) return "openrouter"
-  if (url.includes("api.x.ai")) return "xai"
-  if (url.includes("api.groq.com")) return "groq"
   if (url.includes("api.deepseek.com")) return "deepseek"
-  if (url.includes("api.together.xyz")) return "togetherai"
   return "unknown"
 }
 
 const providerAliases: Record<string, ReadonlyArray<string>> = {
-  openai: ["openai"],
   anthropic: ["anthropic"],
-  google: ["google"],
-  "amazon-bedrock": ["amazon-bedrock"],
-  openrouter: ["openrouter", "openai", "anthropic", "google"],
-  xai: ["xai"],
-  groq: ["groq"],
   deepseek: ["deepseek"],
-  togetherai: ["togetherai"],
 }
 
 const modelAliases = (model: string) => [
@@ -85,9 +71,6 @@ const modelAliases = (model: string) => [
   model.replace(/-\d{8}$/, ""),
   model.replace(/-\d{4}-\d{2}-\d{2}$/, ""),
   model.replace(/-\d{4}-\d{2}-\d{2}$/, "").replace(/-\d{8}$/, ""),
-  model.replace(/^openai\//, ""),
-  model.replace(/^anthropic\//, ""),
-  model.replace(/^google\//, ""),
 ]
 
 const pricingFor = (models: JsonRecord, provider: string, model: string) => {

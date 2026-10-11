@@ -90,7 +90,7 @@ Every field is optional.
 
   "agent": {
     "my-agent": {
-      "model": "anthropic/claude-sonnet-4-6",
+      "model": "deepseek/deepseek-flash",
       "mode": "subagent",
       "description": "...",
       "permission": { "edit": "deny" }
@@ -102,10 +102,10 @@ Every field is optional.
   },
 
   "provider": {
-    "anthropic": { "options": { "apiKey": "..." } }
+    "deepseek": { "options": { "apiKey": "..." } }
   },
-  "disabled_providers": ["openai"],
-  "enabled_providers": ["anthropic"],
+  "disabled_providers": ["alibaba"],
+  "enabled_providers": ["deepseek"],
 
   "mcp": {
     "playwright": {
@@ -122,7 +122,7 @@ Every field is optional.
   },
 
   "plugin": [
-    "opencode-gemini-auth",
+    "opencode-baz",
     "opencode-foo@1.2.3",
     "./local-plugin.ts",
     ["opencode-bar", { "option": "value" }]
@@ -149,7 +149,7 @@ Every field is optional.
 
 Shape notes worth being explicit about:
 
-- `model` always carries a provider prefix: `"anthropic/claude-sonnet-4-6"`.
+- `model` always carries a provider prefix: `"deepseek/deepseek-flash"`.
 - `skills` is an object with `paths` and/or `urls`, not an array.
 - `references` is an object keyed by alias. Each value is a local path, Git repository, or string shorthand.
 - `agent` is an object keyed by agent name, not an array.
@@ -233,7 +233,7 @@ Two ways to define an agent. Use the file form for anything non-trivial.
     "my-reviewer": {
       "description": "Reviews PRs for style violations.",
       "mode": "subagent",
-      "model": "anthropic/claude-sonnet-4-6",
+      "model": "deepseek/deepseek-flash",
       "permission": { "edit": "deny", "bash": "ask" },
       "prompt": "You are a strict PR reviewer..."
     }
@@ -251,7 +251,7 @@ Two ways to define an agent. Use the file form for anything non-trivial.
 ---
 description: Reviews PRs for style violations.
 mode: subagent
-model: anthropic/claude-sonnet-4-6
+model: deepseek/deepseek-flash
 permission:
   edit: deny
   bash: ask
@@ -295,7 +295,7 @@ Frontmatter:
 ---
 description: One sentence describing what the command does.
 agent: build
-model: anthropic/claude-sonnet-4-6
+model: deepseek/deepseek-flash
 ---
 
 (command body in markdown: the prompt opencode runs, with $ARGUMENTS for the user's input)
@@ -311,7 +311,7 @@ model: anthropic/claude-sonnet-4-6
 
 ```json
 "plugin": [
-  "opencode-gemini-auth",            // npm spec, latest
+  "opencode-baz",                    // npm spec, latest
   "opencode-foo@1.2.3",              // npm spec, pinned
   "./local-plugin.ts",               // file path, relative to the declaring config
   "file:///abs/path/plugin.js",      // file URL

@@ -58,8 +58,8 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps configured model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
-      const providerID = ProviderV2.ID.anthropic
-      const modelID = ModelV2.ID.make("alpha-gpt-next")
+      const providerID = ProviderV2.ID.make("deepseek")
+      const modelID = ModelV2.ID.make("alpha-next")
       const config = Config.Service.of({
         entries: () =>
           Effect.succeed([
@@ -67,10 +67,10 @@ describe("ConfigProviderPlugin.Plugin", () => {
               type: "document",
               info: decode({
                 providers: {
-                  anthropic: {
-                    api: { type: "aisdk", package: "@ai-sdk/openai", url: "https://anthropic.test/v1" },
+                  deepseek: {
+                    api: { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://deepseek.test/v1" },
                     models: {
-                      "alpha-gpt-next": {
+                      "alpha-next": {
                         variants: [
                           {
                             id: "high",
@@ -109,8 +109,8 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps layered model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
-      const providerID = ProviderV2.ID.anthropic
-      const modelID = ModelV2.ID.make("alpha-gpt-next")
+      const providerID = ProviderV2.ID.make("deepseek")
+      const modelID = ModelV2.ID.make("alpha-next")
       const config = Config.Service.of({
         entries: () =>
           Effect.succeed([
@@ -118,8 +118,8 @@ describe("ConfigProviderPlugin.Plugin", () => {
               type: "document",
               info: decode({
                 providers: {
-                  anthropic: {
-                    api: { type: "aisdk", package: "@ai-sdk/openai", url: "https://anthropic.test/v1" },
+                  deepseek: {
+                    api: { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://deepseek.test/v1" },
                   },
                 },
               }),
@@ -128,9 +128,9 @@ describe("ConfigProviderPlugin.Plugin", () => {
               type: "document",
               info: decode({
                 providers: {
-                  anthropic: {
+                  deepseek: {
                     models: {
-                      "alpha-gpt-next": {
+                      "alpha-next": {
                         variants: [{ id: "high", body: { reasoningEffort: "high" } }],
                       },
                     },

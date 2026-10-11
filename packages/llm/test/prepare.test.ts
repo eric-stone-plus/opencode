@@ -47,13 +47,13 @@ describe("request option precedence", () => {
   it.effect("prepares bodies with route defaults, model defaults, and call options in order", () =>
     Effect.gen(function* () {
       const route = OpenAIChat.route.with({
-        endpoint: { baseURL: "https://api.openai.test/v1/" },
+        endpoint: { baseURL: "https://api.example.test/v1/" },
         auth: Auth.bearer("test"),
         generation: { maxTokens: 10, temperature: 1, stop: ["route"] },
         providerOptions: { openai: { store: false, reasoningEffort: "low" } },
       })
       const model = route.model({
-        id: "gpt-4o-mini",
+        id: "deepseek-chat",
         defaults: {
           generation: { maxTokens: 20, temperature: 0.5, frequencyPenalty: 0.25, stop: ["model"] },
           providerOptions: { openai: { reasoningEffort: "medium" } },
@@ -69,7 +69,7 @@ describe("request option precedence", () => {
       )
 
       expect(prepared.body).toMatchObject({
-        model: "gpt-4o-mini",
+        model: "deepseek-chat",
         stream: true,
         max_tokens: 30,
         temperature: 0.5,
@@ -87,7 +87,7 @@ describe("request option precedence", () => {
       LLM.request({
         model: OpenAIChat.route
           .with({
-            endpoint: { baseURL: "https://api.openai.test/v1/" },
+            endpoint: { baseURL: "https://api.example.test/v1/" },
             auth: Auth.bearer("fresh-key"),
             http: {
               body: { metadata: { route: true, shared: "route" }, value: "route" },
@@ -96,7 +96,7 @@ describe("request option precedence", () => {
             },
           })
           .model({
-            id: "gpt-4o-mini",
+            id: "deepseek-chat",
             defaults: {
               http: {
                 body: { metadata: { model: true, shared: "model" }, value: "model" },
@@ -117,7 +117,7 @@ describe("request option precedence", () => {
         dynamicResponse((input) =>
           Effect.gen(function* () {
             const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.url).toBe("https://api.openai.test/v1/chat/completions?route=1&shared=model&model=1&request=1")
+            expect(web.url).toBe("https://api.example.test/v1/chat/completions?route=1&shared=model&model=1&request=1")
             expect(web.headers.get("authorization")).toBe("Bearer fresh-key")
             expect(web.headers.get("x-route")).toBe("route")
             expect(web.headers.get("x-model")).toBe("model")
@@ -139,13 +139,13 @@ describe("request option precedence", () => {
   it.effect("rejects raw body overlays for protocol-owned roots", () =>
     Effect.gen(function* () {
       const model = OpenAIChat.route
-        .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-        .model({ id: "gpt-4o-mini" })
+        .with({ endpoint: { baseURL: "https://api.example.test/v1/" }, auth: Auth.bearer("test") })
+        .model({ id: "deepseek-chat" })
       const error = yield* LLMClient.prepare(
         LLM.request({
           model,
           prompt: "Say hello.",
-          http: { body: { model: "gpt-5", messages: [], tools: [] } },
+          http: { body: { model: "deepseek-reasoner", messages: [], tools: [] } },
         }),
       ).pipe(Effect.flip)
 

@@ -133,12 +133,12 @@ test("new session does not inherit the current session prompt draft", async () =
   await mock.module("@opentui/core", () => ({ ...core, createCliRenderer: async () => setup.renderer }))
   const events = createEventSource()
   const provider = {
-    id: "anthropic",
-    name: "Anthropic",
+    id: "deepseek",
+    name: "DeepSeek",
     models: {
-      "claude-sonnet-4-20250514": {
-        id: "claude-sonnet-4-20250514",
-        name: "Claude Sonnet 4",
+      "deepseek-flash": {
+        id: "deepseek-flash",
+        name: "DeepSeek Flash",
         capabilities: { reasoning: true },
       },
     },
@@ -154,9 +154,9 @@ test("new session does not inherit the current session prompt draft", async () =
   }
   const calls = createFetch((url) => {
     if (url.pathname === "/config/providers")
-      return json({ providers: [provider], default: { anthropic: "claude-sonnet-4-20250514" } })
+      return json({ providers: [provider], default: { deepseek: "deepseek-flash" } })
     if (url.pathname === "/provider")
-      return json({ all: [provider], default: { anthropic: "claude-sonnet-4-20250514" }, connected: ["anthropic"] })
+      return json({ all: [provider], default: { deepseek: "deepseek-flash" }, connected: ["deepseek"] })
     if (url.pathname === "/session") return json([session])
     if (url.pathname === "/session/dummy") return json(session)
     if (url.pathname === "/session/dummy/message") return json([])

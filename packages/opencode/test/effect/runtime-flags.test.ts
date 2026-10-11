@@ -24,7 +24,6 @@ describe("RuntimeFlags", () => {
         Effect.provide(
           fromConfig({
             OPENCODE_PURE: "true",
-            OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
             OPENCODE_AUTO_SHARE: "true",
             OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true",
             OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
@@ -41,7 +40,6 @@ describe("RuntimeFlags", () => {
 
       expect(flags.pure).toBe(true)
       expect(flags.autoShare).toBe(true)
-      expect(flags.disableDefaultPlugins).toBe(true)
       expect(flags.disableEmbeddedWebUi).toBe(true)
       expect(flags.disableExternalSkills).toBe(true)
       expect(flags.disableLspDownload).toBe(true)
@@ -58,8 +56,6 @@ describe("RuntimeFlags", () => {
       expect(flags.experimentalEventSystem).toBe(true)
       expect(flags.experimentalWorkspaces).toBe(true)
       expect(flags.experimentalIconDiscovery).toBe(true)
-      expect(flags.experimentalNativeLlm).toBe(false)
-      expect(flags.experimentalWebSockets).toBe(false)
       expect(flags.client).toBe("desktop")
     }),
   )
@@ -78,37 +74,16 @@ describe("RuntimeFlags", () => {
     }),
   )
 
-  it.effect("enables native LLM via dedicated flag only", () =>
-    Effect.gen(function* () {
-      const explicit = yield* readFlags.pipe(Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL_NATIVE_LLM: "true" })))
-      const umbrella = yield* readFlags.pipe(Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL: "true" })))
-
-      expect(explicit.experimentalNativeLlm).toBe(true)
-      expect(umbrella.experimentalNativeLlm).toBe(false)
-    }),
-  )
-
-  it.effect("enables WebSockets via dedicated flag only", () =>
-    Effect.gen(function* () {
-      const explicit = yield* readFlags.pipe(Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL_WEBSOCKETS: "true" })))
-      const umbrella = yield* readFlags.pipe(Effect.provide(fromConfig({ OPENCODE_EXPERIMENTAL: "true" })))
-
-      expect(explicit.experimentalWebSockets).toBe(true)
-      expect(umbrella.experimentalWebSockets).toBe(false)
-    }),
-  )
-
   it.effect("layer accepts partial test overrides and fills defaults from Config definitions", () =>
     Effect.gen(function* () {
       const flags = yield* readFlags.pipe(
-        Effect.provide(RuntimeFlags.layer({ disableDefaultPlugins: true, bashDefaultTimeoutMs: 1_000 })),
+        Effect.provide(RuntimeFlags.layer({ disableExternalSkills: true, bashDefaultTimeoutMs: 1_000 })),
       )
 
       expect(flags.pure).toBe(false)
       expect(flags.autoShare).toBe(false)
-      expect(flags.disableDefaultPlugins).toBe(true)
       expect(flags.disableEmbeddedWebUi).toBe(false)
-      expect(flags.disableExternalSkills).toBe(false)
+      expect(flags.disableExternalSkills).toBe(true)
       expect(flags.disableLspDownload).toBe(false)
       expect(flags.disableClaudeCodePrompt).toBe(false)
       expect(flags.disableClaudeCodeSkills).toBe(false)
@@ -341,7 +316,6 @@ describe("RuntimeFlags", () => {
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
               OPENCODE_PURE: "true",
-              OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
               OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
               OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
               OPENCODE_EXPERIMENTAL: "true",
@@ -354,7 +328,6 @@ describe("RuntimeFlags", () => {
       )
 
       expect(flags.pure).toBe(false)
-      expect(flags.disableDefaultPlugins).toBe(false)
       expect(flags.disableEmbeddedWebUi).toBe(false)
       expect(flags.disableExternalSkills).toBe(false)
       expect(flags.disableLspDownload).toBe(false)

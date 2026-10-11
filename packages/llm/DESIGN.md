@@ -1,5 +1,9 @@
 # AI Library Design
 
+> Fork note: this checkout supports only the Alibaba, DeepSeek, Zhipu, and Xiaomi MiMo vendors. Examples below that
+> use other vendors (OpenAI, Azure, Bedrock, Gemini, Cloudflare, GitHub Copilot, OpenRouter, xAI) are historical design
+> sketches; those providers and protocols no longer exist in this package. See `README.md` for the current surface.
+
 > Discussion draft. This document describes the intended replacement for the
 > current private `@opencode-ai/llm` API. Names and exact TypeScript signatures
 > are illustrative until implementation, but the domain boundaries and defaults

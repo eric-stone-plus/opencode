@@ -56,8 +56,6 @@ const TOP_LEVEL = [
   "stats",
   "export",
   "import",
-  "github",
-  "pr",
   "session",
   "plugin",
   "db",
@@ -78,8 +76,6 @@ const SUBCOMMANDS = [
   ["agent", "list"],
   ["session", "list"],
   ["session", "delete"],
-  ["github", "install"],
-  ["github", "run"],
   ["db", "path"],
 ] as const
 

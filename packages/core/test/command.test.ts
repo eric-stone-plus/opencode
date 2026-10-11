@@ -20,8 +20,8 @@ describe("CommandV2", () => {
         editor.update("review", (command) => {
           command.template = "Second"
           command.model = {
-            id: ModelV2.ID.make("claude"),
-            providerID: ProviderV2.ID.make("anthropic"),
+            id: ModelV2.ID.make("deepseek-flash"),
+            providerID: ProviderV2.ID.make("deepseek"),
             variant: ModelV2.VariantID.make("high"),
           }
         })
@@ -33,8 +33,8 @@ describe("CommandV2", () => {
           template: "Second",
           description: "Review code",
           model: {
-            id: ModelV2.ID.make("claude"),
-            providerID: ProviderV2.ID.make("anthropic"),
+            id: ModelV2.ID.make("deepseek-flash"),
+            providerID: ProviderV2.ID.make("deepseek"),
             variant: ModelV2.VariantID.make("high"),
           },
         }),
@@ -45,8 +45,8 @@ describe("CommandV2", () => {
           template: "Second",
           description: "Review code",
           model: {
-            id: ModelV2.ID.make("claude"),
-            providerID: ProviderV2.ID.make("anthropic"),
+            id: ModelV2.ID.make("deepseek-flash"),
+            providerID: ProviderV2.ID.make("deepseek"),
             variant: ModelV2.VariantID.make("high"),
           },
         }),

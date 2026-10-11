@@ -37,18 +37,15 @@ export function normalizeVariantStore(value: unknown): VariantStore {
 // Semantic effort ranking for known ladder names. Variant maps are built in
 // ascending tier order by the provider ladders (transform.ts), but
 // config-declared maps and persisted lists may come in any order — rank by
-// name first. "default" is groq's upper tier ("none" | "default"); "thinking"
-// is minimax-m3's enabled tier ("none" = disabled, "thinking" = adaptive).
+// name first.
 const EFFORT_RANK: Record<string, number> = {
   none: 0,
   off: 0,
-  default: 1,
   minimal: 1,
   low: 2,
   medium: 3,
   mid: 3,
   high: 4,
-  thinking: 4.5,
   xhigh: 5,
   max: 6,
 }

@@ -34,9 +34,9 @@ import { ProviderFailureClassification } from "./errors"
  *
  * **Semantics by provider**:
  *
- * - OpenAI Chat / Responses / Gemini / Bedrock: provider reports inclusive
- *   `inputTokens` and an inclusive `outputTokens`; mapper subtracts to
- *   derive the breakdown.
+ * - OpenAI Chat (including DeepSeek and other OpenAI-compatible providers):
+ *   provider reports inclusive `inputTokens` and an inclusive `outputTokens`;
+ *   mapper subtracts to derive the breakdown.
  * - Anthropic: provider reports the breakdown natively (`input_tokens` is
  *   non-cached only); mapper sums to derive the inclusive `inputTokens`.
  *   Anthropic does *not* break extended-thinking out of `output_tokens`, so

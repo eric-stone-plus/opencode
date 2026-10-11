@@ -16,7 +16,9 @@ const makeDb = EffectDrizzleSqlite.makeWithDefaults()
 
 const createTables = (db: EffectDrizzleSqlite.EffectSQLiteDatabase) =>
   Effect.gen(function* () {
-    yield* db.run(sql`CREATE TABLE session (id text PRIMARY KEY, cost real NOT NULL DEFAULT 0, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0)`)
+    yield* db.run(
+      sql`CREATE TABLE session (id text PRIMARY KEY, cost real NOT NULL DEFAULT 0, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0)`,
+    )
     yield* db.run(
       sql`CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, data text NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0)`,
     )
@@ -106,7 +108,7 @@ const seedUsageHistory = Effect.gen(function* () {
       assistantData({ providerID: "demo-pricing", modelID: "demo-model", cost: 0.42, tokens: t2 }),
     )})`,
   )
-  // A preserved nonzero step cost, e.g. Copilot nanoAiu billing.
+  // A preserved nonzero step cost.
   yield* db.run(
     sql`INSERT INTO part (id, message_id, session_id, data) VALUES (${"p2"}, ${"m2"}, ${"s1"}, ${JSON.stringify(
       stepFinishData({ cost: 0.42, tokens: t2 }),
@@ -382,7 +384,11 @@ describe("PricingBackfill", () => {
           )})`,
         )
         const throwing = (input: { providerID: string; modelID: string }) =>
-          input.modelID === "demo-boom" ? Effect.sync(() => { throw new Error("resolver contract violation") }) : resolve(input)
+          input.modelID === "demo-boom"
+            ? Effect.sync(() => {
+                throw new Error("resolver contract violation")
+              })
+            : resolve(input)
         const summary = yield* PricingBackfill.run({ db, resolve: throwing, apply: true })
         const costs = yield* readCosts(db)
         expect(costs.parts.find((row) => row.id === "p1")?.cost).toBeCloseTo(expectedT2, 12)
@@ -413,7 +419,9 @@ describe("PricingBackfill", () => {
             )})`,
           )
         }
-        yield* db.run(sql`CREATE TRIGGER poison BEFORE UPDATE ON part WHEN NEW.session_id = 's2' BEGIN SELECT RAISE(ABORT, 'poison'); END`)
+        yield* db.run(
+          sql`CREATE TRIGGER poison BEFORE UPDATE ON part WHEN NEW.session_id = 's2' BEGIN SELECT RAISE(ABORT, 'poison'); END`,
+        )
         const summary = yield* PricingBackfill.run({ db, resolve, apply: true })
         expect(summary.failed).toEqual(["s2"])
         const costs = yield* readCosts(db)

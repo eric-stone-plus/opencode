@@ -76,6 +76,10 @@ const providerLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
 
 const list = Provider.use.list()
 
+const deepseek = ProviderV2.ID.make("deepseek")
+const xiaomi = ProviderV2.ID.make("xiaomi")
+const zhipuai = ProviderV2.ID.make("zhipuai")
+
 const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
 
 const languageAuthorization = (language: unknown) =>
@@ -109,24 +113,23 @@ const alphaProviderConfig = {
 it.instance(
   "declared provider takes its key from env variable",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.anthropic].key).toBe("test-api-key")
-    expect(providers[ProviderV2.ID.anthropic].options.headers["anthropic-beta"]).toBeDefined()
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[deepseek].key).toBe("test-api-key")
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
-// Fork policy: env keys, auth.json entries and autoload loaders never activate a provider that the
-// config `provider` block does not declare.
+// Fork policy: env keys and auth.json entries never activate a provider that the config `provider`
+// block does not declare.
 it.instance(
   "env variable API keys never activate undeclared providers",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
-    yield* setProcessEnv("OPENROUTER_API_KEY", "test-openrouter-key")
-    yield* setProcessEnv("GEMINI_API_KEY", "test-gemini-key")
-    yield* setProcessEnv("GOOGLE_GENERATIVE_AI_API_KEY", "test-gemini-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
+    yield* setProcessEnv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    yield* setProcessEnv("ZHIPU_API_KEY", "test-zhipu-key")
+    yield* setProcessEnv("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
     expect(Object.keys(providers)).toEqual(["custom-provider"])
   }),
@@ -147,8 +150,8 @@ it.instance(
 it.instance(
   "env variable API keys activate nothing when no provider is declared",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
-    yield* setProcessEnv("OPENROUTER_API_KEY", "test-openrouter-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
+    yield* setProcessEnv("XIAOMI_API_KEY", "test-xiaomi-key")
     expect(yield* list).toEqual({})
     const error = yield* Provider.use.defaultModel().pipe(Effect.flip)
     expect(error).toBeInstanceOf(Provider.NoProvidersError)
@@ -161,8 +164,8 @@ it.instance(
     yield* setProcessEnv(
       "OPENCODE_AUTH_CONTENT",
       JSON.stringify({
-        openrouter: { type: "api", key: "sk-or" },
-        anthropic: { type: "api", key: "sk-ant" },
+        xiaomi: { type: "api", key: "sk-xiaomi" },
+        deepseek: { type: "api", key: "sk-deepseek" },
         "custom-provider": { type: "api", key: "sk-custom" },
       }),
     )
@@ -187,83 +190,83 @@ it.instance(
   "provider loaded from config with apiKey option",
   Effect.gen(function* () {
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
+    expect(providers[deepseek]).toBeDefined()
   }),
-  { config: { provider: { anthropic: { options: { apiKey: "config-api-key" } } } } },
+  { config: { provider: { deepseek: { options: { apiKey: "config-api-key" } } } } },
 )
 
 it.instance(
   "disabled_providers excludes provider",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeUndefined()
+    expect(providers[deepseek]).toBeUndefined()
   }),
-  { config: { disabled_providers: ["anthropic"] } },
+  { config: { disabled_providers: ["deepseek"] } },
 )
 
 it.instance(
   "enabled_providers restricts to only listed providers",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
-    yield* setProcessEnv("OPENAI_API_KEY", "test-openai-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
+    yield* setProcessEnv("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[xiaomi]).toBeUndefined()
   }),
-  { config: { enabled_providers: ["anthropic"], provider: { anthropic: {}, openai: {} } } },
+  { config: { enabled_providers: ["deepseek"], provider: { deepseek: {}, xiaomi: {} } } },
 )
 
 it.instance(
   "enabled_providers cannot activate a provider the config does not declare",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
-    yield* setProcessEnv("OPENAI_API_KEY", "test-openai-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
+    yield* setProcessEnv("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[xiaomi]).toBeUndefined()
   }),
-  { config: { enabled_providers: ["anthropic", "openai"], provider: { anthropic: {} } } },
+  { config: { enabled_providers: ["deepseek", "xiaomi"], provider: { deepseek: {} } } },
 )
 
 it.instance(
   "model whitelist filters models for provider",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    const models = Object.keys(providers[ProviderV2.ID.anthropic].models)
-    expect(models).toContain("claude-sonnet-4-6")
+    expect(providers[deepseek]).toBeDefined()
+    const models = Object.keys(providers[deepseek].models)
+    expect(models).toContain("deepseek-v4-flash")
     expect(models.length).toBe(1)
   }),
-  { config: { provider: { anthropic: { whitelist: ["claude-sonnet-4-6"] } } } },
+  { config: { provider: { deepseek: { whitelist: ["deepseek-v4-flash"] } } } },
 )
 
 it.instance(
   "model blacklist excludes specific models",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    const models = Object.keys(providers[ProviderV2.ID.anthropic].models)
-    expect(models).not.toContain("claude-sonnet-4-20250514")
+    expect(providers[deepseek]).toBeDefined()
+    const models = Object.keys(providers[deepseek].models)
+    expect(models).not.toContain("deepseek-v4-pro")
   }),
-  { config: { provider: { anthropic: { blacklist: ["claude-sonnet-4-20250514"] } } } },
+  { config: { provider: { deepseek: { blacklist: ["deepseek-v4-pro"] } } } },
 )
 
 it.instance(
   "custom model alias via config",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.anthropic].models["my-alias"]).toBeDefined()
-    expect(providers[ProviderV2.ID.anthropic].models["my-alias"].name).toBe("My Custom Alias")
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[deepseek].models["my-alias"]).toBeDefined()
+    expect(providers[deepseek].models["my-alias"].name).toBe("My Custom Alias")
   }),
   {
     config: {
       provider: {
-        anthropic: { models: { "my-alias": { id: "claude-sonnet-4-20250514", name: "My Custom Alias" } } },
+        deepseek: { models: { "my-alias": { id: "deepseek-v4-pro", name: "My Custom Alias" } } },
       },
     },
   },
@@ -364,37 +367,37 @@ it.instance(
 it.instance(
   "env variable takes precedence, config merges options",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "env-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "env-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
+    expect(providers[deepseek]).toBeDefined()
     // Config options should be merged
-    expect(providers[ProviderV2.ID.anthropic].options.timeout).toBe(60000)
-    expect(providers[ProviderV2.ID.anthropic].options.headerTimeout).toBe(10000)
-    expect(providers[ProviderV2.ID.anthropic].options.chunkTimeout).toBe(15000)
+    expect(providers[deepseek].options.timeout).toBe(60000)
+    expect(providers[deepseek].options.headerTimeout).toBe(10000)
+    expect(providers[deepseek].options.chunkTimeout).toBe(15000)
   }),
-  { config: { provider: { anthropic: { options: { timeout: 60000, headerTimeout: 10000, chunkTimeout: 15000 } } } } },
+  { config: { provider: { deepseek: { options: { timeout: 60000, headerTimeout: 10000, chunkTimeout: 15000 } } } } },
 )
 
 it.instance(
   "getModel returns model for valid provider/model",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const provider = yield* Provider.Service
-    const model = yield* provider.getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-sonnet-4-6"))
+    const model = yield* provider.getModel(deepseek, ModelV2.ID.make("deepseek-v4-flash"))
     expect(model).toBeDefined()
-    expect(String(model.providerID)).toBe("anthropic")
-    expect(String(model.id)).toBe("claude-sonnet-4-6")
+    expect(String(model.providerID)).toBe("deepseek")
+    expect(String(model.id)).toBe("deepseek-v4-flash")
     const language = yield* provider.getLanguage(model)
     expect(language).toBeDefined()
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance("getModel throws ModelNotFoundError for invalid model", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const exit = yield* Provider.use
-      .getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("nonexistent-model"))
+      .getModel(deepseek, ModelV2.ID.make("nonexistent-model"))
       .pipe(Effect.exit)
     expect(exit._tag).toBe("Failure")
   }),
@@ -412,21 +415,21 @@ it.instance("getModel throws ModelNotFoundError for invalid provider", () =>
 // Pure synchronous unit tests — no Effect runtime needed.
 
 test("parseModel correctly parses provider/model string", () => {
-  const result = Provider.parseModel("anthropic/claude-sonnet-4")
-  expect(String(result.providerID)).toBe("anthropic")
-  expect(String(result.modelID)).toBe("claude-sonnet-4")
+  const result = Provider.parseModel("deepseek/deepseek-v4-flash")
+  expect(String(result.providerID)).toBe("deepseek")
+  expect(String(result.modelID)).toBe("deepseek-v4-flash")
 })
 
 test("parseModel handles model IDs with slashes", () => {
-  const result = Provider.parseModel("openrouter/anthropic/claude-3-opus")
-  expect(String(result.providerID)).toBe("openrouter")
-  expect(String(result.modelID)).toBe("anthropic/claude-3-opus")
+  const result = Provider.parseModel("alibaba-cn/siliconflow/deepseek-r1-0528")
+  expect(String(result.providerID)).toBe("alibaba-cn")
+  expect(String(result.modelID)).toBe("siliconflow/deepseek-r1-0528")
 })
 
 it.instance(
   "defaultModel returns a declared model when no config model is set",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const model = yield* Provider.use.defaultModel()
     expect(String(model.providerID)).toBe("custom-provider")
     expect(String(model.modelID)).toBe("custom-model")
@@ -474,18 +477,18 @@ it.instance(
 it.instance(
   "defaultModel respects config model setting",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const model = yield* Provider.use.defaultModel()
-    expect(String(model.providerID)).toBe("anthropic")
-    expect(String(model.modelID)).toBe("claude-sonnet-4-20250514")
+    expect(String(model.providerID)).toBe("deepseek")
+    expect(String(model.modelID)).toBe("deepseek-v4-pro")
   }),
-  { config: { model: "anthropic/claude-sonnet-4-20250514" } },
+  { config: { model: "deepseek/deepseek-v4-pro" } },
 )
 
 it.instance(
   "defaultModel never falls back to env-keyed providers when none are declared",
   Effect.gen(function* () {
-    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    yield* setProcessEnv("DEEPSEEK_API_KEY", "test-api-key")
     const error = yield* Provider.use.defaultModel().pipe(Effect.flip)
     expect(error).toBeInstanceOf(Provider.NoProvidersError)
   }),
@@ -506,18 +509,18 @@ it.instance(
   "provider with baseURL from config",
   Effect.gen(function* () {
     const providers = yield* list
-    expect(providers[ProviderV2.ID.make("custom-openai")]).toBeDefined()
-    expect(providers[ProviderV2.ID.make("custom-openai")].options.baseURL).toBe("https://custom.openai.com/v1")
+    expect(providers[ProviderV2.ID.make("custom-gateway")]).toBeDefined()
+    expect(providers[ProviderV2.ID.make("custom-gateway")].options.baseURL).toBe("https://custom.gateway.example.com/v1")
   }),
   {
     config: {
       provider: {
-        "custom-openai": {
-          name: "Custom OpenAI",
+        "custom-gateway": {
+          name: "Custom Gateway",
           npm: "@ai-sdk/openai-compatible",
           env: [],
-          models: { "gpt-4": { name: "GPT-4", tool_call: true, limit: { context: 128000, output: 4096 } } },
-          options: { apiKey: "test-key", baseURL: "https://custom.openai.com/v1" },
+          models: { "model-4": { name: "Model 4", tool_call: true, limit: { context: 128000, output: 4096 } } },
+          options: { apiKey: "test-key", baseURL: "https://custom.gateway.example.com/v1" },
         },
       },
     },
@@ -553,15 +556,15 @@ it.instance(
   "model options are merged from existing model",
   Effect.gen(function* () {
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.options.customOption).toBe("custom-value")
   }),
   {
     config: {
       provider: {
-        anthropic: {
+        deepseek: {
           options: { apiKey: "test-api-key" },
-          models: { "claude-sonnet-4-6": { options: { customOption: "custom-value" } } },
+          models: { "deepseek-v4-flash": { options: { customOption: "custom-value" } } },
         },
       },
     },
@@ -572,28 +575,28 @@ it.instance(
   "provider removed when all models filtered out",
   Effect.gen(function* () {
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeUndefined()
+    expect(providers[deepseek]).toBeUndefined()
   }),
-  { config: { provider: { anthropic: { options: { apiKey: "test-api-key" }, whitelist: ["nonexistent-model"] } } } },
+  { config: { provider: { deepseek: { options: { apiKey: "test-api-key" }, whitelist: ["nonexistent-model"] } } } },
 )
 
 it.instance(
   "getModel uses realIdByKey for aliased models",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic].models["my-sonnet"]).toBeDefined()
+    expect(providers[deepseek].models["my-flash"]).toBeDefined()
 
-    const model = yield* Provider.use.getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("my-sonnet"))
+    const model = yield* Provider.use.getModel(deepseek, ModelV2.ID.make("my-flash"))
     expect(model).toBeDefined()
-    expect(String(model.id)).toBe("my-sonnet")
-    expect(model.name).toBe("My Sonnet Alias")
+    expect(String(model.id)).toBe("my-flash")
+    expect(model.name).toBe("My Flash Alias")
   }),
   {
     config: {
       provider: {
-        anthropic: {
-          models: { "my-sonnet": { id: "claude-sonnet-4-20250514", name: "My Sonnet Alias" } },
+        deepseek: {
+          models: { "my-flash": { id: "deepseek-v4-pro", name: "My Flash Alias" } },
         },
       },
     },
@@ -648,17 +651,17 @@ it.instance(
 it.instance(
   "model inherits properties from existing database model",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
-    expect(model.name).toBe("Custom Name for Sonnet")
+    const model = providers[deepseek].models["deepseek-chat"]
+    expect(model.name).toBe("Custom Name for Chat")
     expect(model.capabilities.toolcall).toBe(true)
     expect(model.capabilities.attachment).toBe(true)
     expect(model.limit.context).toBeGreaterThan(0)
   }),
   {
     config: {
-      provider: { anthropic: { models: { "claude-sonnet-4-6": { name: "Custom Name for Sonnet" } } } },
+      provider: { deepseek: { models: { "deepseek-chat": { name: "Custom Name for Chat" } } } },
     },
   },
 )
@@ -666,16 +669,16 @@ it.instance(
 it.instance(
   "model config preserves explicitly empty models.dev variants",
   Effect.gen(function* () {
-    yield* set("OPENAI_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.openai].models["custom-gpt-chat"]
-    expect(model.name).toBe("Custom GPT Chat")
+    const model = providers[deepseek].models["custom-reasoner"]
+    expect(model.name).toBe("Custom Reasoner")
     expect(model.variants).toEqual({})
   }),
   {
     config: {
       provider: {
-        openai: { models: { "custom-gpt-chat": { id: "gpt-5-chat-latest", name: "Custom GPT Chat" } } },
+        deepseek: { models: { "custom-reasoner": { id: "deepseek-reasoner", name: "Custom Reasoner" } } },
       },
     },
   },
@@ -684,18 +687,19 @@ it.instance(
 it.instance(
   "model config regenerates variants when overriding the provider package",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
-    expect(model.variants?.low).toEqual({ reasoningEffort: "low" })
-    expect(model.variants?.max).toBeUndefined()
+    const model = providers[deepseek].models["deepseek-v4-flash"]
+    expect(model.variants?.high).toEqual({ thinking: { type: "enabled", budgetTokens: 16000 } })
+    expect(model.variants?.max).toEqual({ thinking: { type: "enabled", budgetTokens: 31999 } })
+    expect(model.variants?.low).toBeUndefined()
   }),
   {
     config: {
       provider: {
-        anthropic: {
-          npm: "@ai-sdk/openai-compatible",
-          models: { "claude-sonnet-4-6": { name: "Claude via OpenAI" } },
+        deepseek: {
+          npm: "@ai-sdk/anthropic",
+          models: { "deepseek-v4-flash": { name: "Flash via the Anthropic transport" } },
         },
       },
     },
@@ -705,18 +709,18 @@ it.instance(
 it.instance(
   "disabled_providers prevents loading even with env var",
   Effect.gen(function* () {
-    yield* set("OPENAI_API_KEY", "test-openai-key")
+    yield* set("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
+    expect(providers[xiaomi]).toBeUndefined()
   }),
-  { config: { disabled_providers: ["openai"] } },
+  { config: { disabled_providers: ["xiaomi"] } },
 )
 
 it.instance(
   "enabled_providers with empty array allows no providers",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    yield* set("OPENAI_API_KEY", "test-openai-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
+    yield* set("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
     expect(Object.keys(providers).length).toBe(0)
   }),
@@ -726,20 +730,20 @@ it.instance(
 it.instance(
   "whitelist and blacklist can be combined",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    const models = Object.keys(providers[ProviderV2.ID.anthropic].models)
-    expect(models).toContain("claude-sonnet-4-6")
-    expect(models).not.toContain("claude-opus-4-6")
+    expect(providers[deepseek]).toBeDefined()
+    const models = Object.keys(providers[deepseek].models)
+    expect(models).toContain("deepseek-v4-flash")
+    expect(models).not.toContain("deepseek-v4-pro")
     expect(models.length).toBe(1)
   }),
   {
     config: {
       provider: {
-        anthropic: {
-          whitelist: ["claude-sonnet-4-6", "claude-opus-4-6"],
-          blacklist: ["claude-opus-4-6"],
+        deepseek: {
+          whitelist: ["deepseek-v4-flash", "deepseek-v4-pro"],
+          blacklist: ["deepseek-v4-pro"],
         },
       },
     },
@@ -802,63 +806,10 @@ it.instance(
 )
 
 it.instance(
-  "zero registry cost is filled from the canonical model match",
-  Effect.gen(function* () {
-    const providers = yield* list
-    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
-    expect(model.cost.input).toBe(2)
-    expect(model.cost.output).toBe(6)
-    expect(model.cost.cache.read).toBe(0.25)
-    expect(model.cost.cache.write).toBe(2.5)
-  }),
-  {
-    config: {
-      provider: {
-        "demo-pricing": {
-          name: "Demo Pricing",
-          env: ["DEMO_PRICING_API_KEY"],
-          models: {
-            "demo-zero": { name: "Demo Zero", tool_call: true, limit: { context: 200000, output: 32000 } },
-          },
-          options: { apiKey: "test" },
-        },
-      },
-    },
-  },
-)
-
-it.instance(
-  "zero cost for a provider missing from the registry is filled cross-provider",
-  Effect.gen(function* () {
-    const providers = yield* list
-    const model = providers[ProviderV2.ID.make("demo-xplan")].models["demo-zero"]
-    expect(model.cost.input).toBe(2)
-    expect(model.cost.output).toBe(6)
-    expect(model.cost.cache.read).toBe(0.25)
-    expect(model.cost.cache.write).toBe(2.5)
-  }),
-  {
-    config: {
-      provider: {
-        "demo-xplan": {
-          name: "Demo XPlan",
-          npm: "@ai-sdk/openai-compatible",
-          env: [],
-          models: {
-            "demo-zero": { name: "Demo Zero", tool_call: true, limit: { context: 200000, output: 32000 } },
-          },
-          options: { apiKey: "test" },
-        },
-      },
-    },
-  },
-)
-
-it.instance(
   "config-declared cost wins over the canonical match",
   Effect.gen(function* () {
     const providers = yield* list
-    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
+    const model = providers[ProviderV2.ID.make("xiaomi-token-plan-cn")].models["mimo-v2.6-pro"]
     expect(model.cost.input).toBe(5)
     expect(model.cost.output).toBe(15)
     expect(model.cost.cache.read).toBe(2.5)
@@ -867,12 +818,13 @@ it.instance(
   {
     config: {
       provider: {
-        "demo-pricing": {
-          name: "Demo Pricing",
-          env: ["DEMO_PRICING_API_KEY"],
+        "xiaomi-token-plan-cn": {
+          name: "Xiaomi Token Plan CN",
+          npm: "@ai-sdk/openai-compatible",
+          env: [],
           models: {
-            "demo-zero": {
-              name: "Demo Zero",
+            "mimo-v2.6-pro": {
+              name: "MiMo V2.6 Pro",
               tool_call: true,
               limit: { context: 200000, output: 32000 },
               cost: { input: 5, output: 15, cache_read: 2.5, cache_write: 7.5 },
@@ -943,7 +895,7 @@ it.instance(
   "config-declared explicit zero cost is preserved verbatim",
   Effect.gen(function* () {
     const providers = yield* list
-    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-zero"]
+    const model = providers[ProviderV2.ID.make("xiaomi-token-plan-cn")].models["mimo-v2.6-pro"]
     // An explicit zero cost object is a decision, not a missing price: the
     // matcher must not overwrite it with a registry match.
     expect(model.cost.input).toBe(0)
@@ -954,12 +906,13 @@ it.instance(
   {
     config: {
       provider: {
-        "demo-pricing": {
-          name: "Demo Pricing",
-          env: ["DEMO_PRICING_API_KEY"],
+        "xiaomi-token-plan-cn": {
+          name: "Xiaomi Token Plan CN",
+          npm: "@ai-sdk/openai-compatible",
+          env: [],
           models: {
-            "demo-zero": {
-              name: "Demo Zero",
+            "mimo-v2.6-pro": {
+              name: "MiMo V2.6 Pro",
               tool_call: true,
               limit: { context: 200000, output: 32000 },
               cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
@@ -976,24 +929,24 @@ it.instance(
   "registry tiers survive the config merge when config declares no cost",
   Effect.gen(function* () {
     const providers = yield* list
-    const model = providers[ProviderV2.ID.make("demo-pricing")].models["demo-tiered"]
-    expect(model.cost.input).toBe(1)
-    expect(model.cost.output).toBe(2)
-    expect(model.cost.cache.read).toBe(0.1)
-    expect(model.cost.cache.write).toBe(0.2)
+    const model = providers[ProviderV2.ID.make("alibaba")].models["qwen3.6-plus"]
+    expect(model.cost.input).toBe(0.5)
+    expect(model.cost.output).toBe(3)
+    expect(model.cost.cache.read).toBe(0.05)
+    expect(model.cost.cache.write).toBe(0.625)
     // context_over_200k is folded into an appended 200k context tier (same
     // projection as plugin/models-dev.ts), not a separate experimental field.
     expect(model.cost.tiers).toEqual([
       {
-        input: 0.5,
-        output: 1,
-        cache: { read: 0.05, write: 0.1 },
-        tier: { type: "context", size: 200000 },
+        input: 2,
+        output: 6,
+        cache: { read: 0.2, write: 2.5 },
+        tier: { type: "context", size: 256000 },
       },
       {
-        input: 0.4,
-        output: 0.8,
-        cache: { read: 0.04, write: 0.08 },
+        input: 2,
+        output: 6,
+        cache: { read: 0.2, write: 2.5 },
         tier: { type: "context", size: 200000 },
       },
     ])
@@ -1002,11 +955,9 @@ it.instance(
   {
     config: {
       provider: {
-        "demo-pricing": {
-          name: "Demo Pricing",
-          env: ["DEMO_PRICING_API_KEY"],
+        alibaba: {
           models: {
-            "demo-tiered": { name: "Demo Tiered", tool_call: true, limit: { context: 200000, output: 32000 } },
+            "qwen3.6-plus": { name: "Qwen3.6 Plus", tool_call: true, limit: { context: 1000000, output: 65536 } },
           },
           options: { apiKey: "test" },
         },
@@ -1020,15 +971,15 @@ const smallModelProvider = {
   npm: "@ai-sdk/openai-compatible",
   models: {
     "big-model": { family: "big", release_date: "2026-01-01" },
-    "new-flash": { family: "gemini-flash", release_date: "2026-01-01" },
-    "claude-haiku": { family: "claude-haiku", release_date: "2026-06-01" },
-    "gpt-5-nano": { family: "gpt-nano", release_date: "2026-06-01" },
+    "new-flash": { family: "deepseek-flash", release_date: "2026-01-01" },
+    "mini-model": { family: "mimo-mini", release_date: "2026-06-01" },
+    "nano-model": { family: "qwen-nano", release_date: "2026-06-01" },
   },
   options: { apiKey: "test-key" },
 }
 
 // Fork policy: no family heuristic and no plugin override. Without an explicit small_model the
-// caller must use the session's own model, so a "flash"/"haiku"/"nano" sibling is never picked.
+// caller must use the session's own model, so a "flash"/"mini"/"nano" sibling is never picked.
 it.instance(
   "getSmallModel never infers a small model from model families",
   Effect.gen(function* () {
@@ -1041,11 +992,11 @@ it.instance(
 it.instance(
   "getSmallModel never infers a small model for env-keyed registry providers",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const model = yield* Provider.use.getSmallModel(ProviderV2.ID.anthropic)
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
+    const model = yield* Provider.use.getSmallModel(deepseek)
     expect(model).toBeUndefined()
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance(
@@ -1081,44 +1032,45 @@ it.instance(
 it.instance(
   "getSmallModel ignores a small_model on an undeclared provider even when its key is in env",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const model = yield* Provider.use.getSmallModel(ProviderV2.ID.make("test-provider"))
     expect(model).toBeUndefined()
   }),
-  { config: { small_model: "anthropic/claude-haiku-4-5", provider: { "test-provider": smallModelProvider } } },
+  { config: { small_model: "deepseek/deepseek-v4-flash", provider: { "test-provider": smallModelProvider } } },
 )
 
-test("provider.sort prioritizes preferred models", () => {
+test("provider.sort puts latest aliases first and orders the rest by id descending", () => {
   const models = [
-    { id: "random-model", name: "Random" },
-    { id: "claude-sonnet-4-latest", name: "Claude Sonnet 4" },
-    { id: "gpt-5-turbo", name: "GPT-5 Turbo" },
-    { id: "other-model", name: "Other" },
+    { id: "qwen-max", name: "Qwen Max" },
+    { id: "mimo-v2-flash", name: "MiMo Flash" },
+    { id: "qwen-plus-latest", name: "Qwen Plus Latest" },
+    { id: "qwen-plus", name: "Qwen Plus" },
   ] as any[]
 
-  const sorted = Provider.sort(models)
-  expect(sorted[0].id).toContain("sonnet-4")
-  expect(sorted[0].id).toContain("latest")
-  expect(sorted[sorted.length - 1].id).not.toContain("gpt-5")
-  expect(sorted[sorted.length - 1].id).not.toContain("sonnet-4")
+  expect(Provider.sort(models).map((model) => model.id)).toEqual([
+    "qwen-plus-latest",
+    "qwen-plus",
+    "qwen-max",
+    "mimo-v2-flash",
+  ])
 })
 
 it.instance(
   "multiple providers can be configured simultaneously",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-anthropic-key")
-    yield* set("OPENAI_API_KEY", "test-openai-key")
+    yield* set("DEEPSEEK_API_KEY", "test-deepseek-key")
+    yield* set("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.openai]).toBeDefined()
-    expect(providers[ProviderV2.ID.anthropic].options.timeout).toBe(30000)
-    expect(providers[ProviderV2.ID.openai].options.timeout).toBe(60000)
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[xiaomi]).toBeDefined()
+    expect(providers[deepseek].options.timeout).toBe(30000)
+    expect(providers[xiaomi].options.timeout).toBe(60000)
   }),
   {
     config: {
       provider: {
-        anthropic: { options: { timeout: 30000 } },
-        openai: { options: { timeout: 60000 } },
+        deepseek: { options: { timeout: 30000 } },
+        xiaomi: { options: { timeout: 60000 } },
       },
     },
   },
@@ -1152,15 +1104,15 @@ it.instance(
 it.instance(
   "model alias name defaults to alias key when id differs",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic].models["sonnet"].name).toBe("sonnet")
+    expect(providers[deepseek].models["flash"].name).toBe("flash")
   }),
   {
     config: {
       provider: {
-        anthropic: {
-          models: { sonnet: { id: "claude-sonnet-4-20250514" } },
+        deepseek: {
+          models: { flash: { id: "deepseek-v4-pro" } },
         },
       },
     },
@@ -1218,17 +1170,17 @@ it.instance(
 it.instance(
   "model cost overrides existing cost values",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-20250514"]
+    const model = providers[deepseek].models["deepseek-v4-pro"]
     expect(model.cost.input).toBe(999)
     expect(model.cost.output).toBe(888)
   }),
   {
     config: {
       provider: {
-        anthropic: {
-          models: { "claude-sonnet-4-20250514": { cost: { input: 999, output: 888 } } },
+        deepseek: {
+          models: { "deepseek-v4-pro": { cost: { input: 999, output: 888 } } },
         },
       },
     },
@@ -1275,24 +1227,24 @@ it.instance(
 it.instance(
   "disabled_providers and enabled_providers interaction",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-anthropic")
-    yield* set("OPENAI_API_KEY", "test-openai")
-    yield* set("GOOGLE_GENERATIVE_AI_API_KEY", "test-google")
+    yield* set("DEEPSEEK_API_KEY", "test-deepseek")
+    yield* set("XIAOMI_API_KEY", "test-xiaomi")
+    yield* set("ZHIPU_API_KEY", "test-zhipu")
     const providers = yield* list
-    // anthropic: in enabled, not in disabled = allowed
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    // openai: in enabled, but also in disabled = NOT allowed
-    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
-    // google: not in enabled = NOT allowed (even though not disabled)
-    expect(providers[ProviderV2.ID.google]).toBeUndefined()
+    // deepseek: in enabled, not in disabled = allowed
+    expect(providers[deepseek]).toBeDefined()
+    // xiaomi: in enabled, but also in disabled = NOT allowed
+    expect(providers[xiaomi]).toBeUndefined()
+    // zhipuai: not in enabled = NOT allowed (even though not disabled)
+    expect(providers[zhipuai]).toBeUndefined()
   }),
   {
     // enabled_providers takes precedence — only these are considered
     // Then disabled_providers filters from the enabled set
     config: {
-      enabled_providers: ["anthropic", "openai"],
-      disabled_providers: ["openai"],
-      provider: { anthropic: {}, openai: {}, google: {} },
+      enabled_providers: ["deepseek", "xiaomi"],
+      disabled_providers: ["xiaomi"],
+      provider: { deepseek: {}, xiaomi: {}, zhipuai: {} },
     },
   },
 )
@@ -1397,14 +1349,14 @@ it.instance(
 
 it.instance("getModel returns consistent results", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const model1 = yield* Provider.use.getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-sonnet-4-6"))
-    const model2 = yield* Provider.use.getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-sonnet-4-6"))
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
+    const model1 = yield* Provider.use.getModel(deepseek, ModelV2.ID.make("deepseek-v4-flash"))
+    const model2 = yield* Provider.use.getModel(deepseek, ModelV2.ID.make("deepseek-v4-flash"))
     expect(model1.providerID).toEqual(model2.providerID)
     expect(model1.id).toEqual(model2.id)
     expect(model1).toEqual(model2)
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance(
@@ -1429,37 +1381,37 @@ it.instance(
 
 it.instance("ModelNotFoundError includes suggestions for typos", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const error = yield* Provider.use
-      .getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-sonet-4"))
+      .getModel(deepseek, ModelV2.ID.make("deepseek-v4-flsh"))
       .pipe(Effect.flip)
     expect(error.suggestions).toBeDefined()
     expect((error.suggestions ?? []).length).toBeGreaterThan(0)
-    expect(error.message).toContain("Model not found: anthropic/claude-sonet-4")
+    expect(error.message).toContain("Model not found: deepseek/deepseek-v4-flsh")
     expect(error.message).toContain("Did you mean:")
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance("ModelNotFoundError for provider includes suggestions", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const error = yield* Provider.use
-      .getModel(ProviderV2.ID.make("antropic"), ModelV2.ID.make("claude-sonnet-4"))
+      .getModel(ProviderV2.ID.make("deepsek"), ModelV2.ID.make("deepseek-v4-flash"))
       .pipe(Effect.flip)
     expect(error.suggestions).toBeDefined()
-    expect(error.suggestions).toContain("anthropic")
+    expect(error.suggestions).toContain("deepseek")
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 // Fork policy: suggestions only ever name declared providers/models, never registry entries.
 it.instance(
   "ModelNotFoundError never suggests registry models of undeclared providers",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const error = yield* Provider.use
-      .getModel(ProviderV2.ID.anthropic, ModelV2.ID.make("claude-haiku-fake-model"))
+      .getModel(deepseek, ModelV2.ID.make("deepseek-fake-model"))
       .pipe(Effect.flip)
     if (!Provider.ModelNotFoundError.isInstance(error)) throw error
     expect(error.suggestions ?? []).toEqual([])
@@ -1488,12 +1440,12 @@ it.instance("getProvider returns undefined for nonexistent provider", () =>
 
 it.instance("getProvider returns provider info", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
-    const provider = yield* Provider.use.getProvider(ProviderV2.ID.anthropic)
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
+    const provider = yield* Provider.use.getProvider(deepseek)
     expect(provider).toBeDefined()
-    expect(String(provider?.id)).toBe("anthropic")
+    expect(String(provider?.id)).toBe("deepseek")
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance(
@@ -1522,64 +1474,15 @@ it.instance(
 it.instance(
   "provider options are deeply merged",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
     // Custom options should be merged
-    expect(providers[ProviderV2.ID.anthropic].options.timeout).toBe(30000)
-    expect(providers[ProviderV2.ID.anthropic].options.headers["X-Custom"]).toBe("custom-value")
-    // anthropic custom loader adds its own headers, they should coexist
-    expect(providers[ProviderV2.ID.anthropic].options.headers["anthropic-beta"]).toBeDefined()
+    expect(providers[deepseek].options.timeout).toBe(30000)
+    expect(providers[deepseek].options.headers["X-Custom"]).toBe("custom-value")
   }),
   {
     config: {
-      provider: { anthropic: { options: { headers: { "X-Custom": "custom-value" }, timeout: 30000 } } },
-    },
-  },
-)
-
-it.instance(
-  "hosted nvidia provider adds billing origin header",
-  Effect.gen(function* () {
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("nvidia")].options.headers).toEqual({
-      "HTTP-Referer": "https://opencode.ai/",
-      "X-Title": "opencode",
-      "X-BILLING-INVOKE-ORIGIN": "OpenCode",
-    })
-  }),
-  { config: { provider: { nvidia: { options: { apiKey: "test-api-key" } } } } },
-)
-
-it.instance(
-  "custom nvidia baseURL adds billing origin header",
-  Effect.gen(function* () {
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("nvidia")].options.headers).toEqual({
-      "HTTP-Referer": "https://opencode.ai/",
-      "X-Title": "opencode",
-      "X-BILLING-INVOKE-ORIGIN": "OpenCode",
-    })
-  }),
-  { config: { provider: { nvidia: { options: { apiKey: "test-api-key", baseURL: "http://localhost:8000/v1" } } } } },
-)
-
-it.instance(
-  "explicit nvidia billing origin header is preserved",
-  Effect.gen(function* () {
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("nvidia")].options.headers["X-BILLING-INVOKE-ORIGIN"]).toBe("CustomOrigin")
-  }),
-  {
-    config: {
-      provider: {
-        nvidia: {
-          options: {
-            apiKey: "test-api-key",
-            baseURL: "http://localhost:8000/v1",
-            headers: { "X-BILLING-INVOKE-ORIGIN": "CustomOrigin" },
-          },
-        },
-      },
+      provider: { deepseek: { options: { headers: { "X-Custom": "custom-value" }, timeout: 30000 } } },
     },
   },
 )
@@ -1587,16 +1490,16 @@ it.instance(
 it.instance(
   "custom model inherits npm package from models.dev provider config",
   Effect.gen(function* () {
-    yield* set("OPENAI_API_KEY", "test-api-key")
+    yield* set("XIAOMI_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.openai].models["my-custom-model"]
+    const model = providers[xiaomi].models["my-custom-model"]
     expect(model).toBeDefined()
-    expect(model.api.npm).toBe("@ai-sdk/openai")
+    expect(model.api.npm).toBe("@ai-sdk/openai-compatible")
   }),
   {
     config: {
       provider: {
-        openai: {
+        xiaomi: {
           models: {
             "my-custom-model": {
               name: "My Custom Model",
@@ -1613,28 +1516,28 @@ it.instance(
 it.instance(
   "custom model inherits api.url from models.dev provider",
   Effect.gen(function* () {
-    yield* set("OPENROUTER_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.openrouter]).toBeDefined()
+    expect(providers[deepseek]).toBeDefined()
 
     // New model not in database should inherit api.url from provider
-    const intellect = providers[ProviderV2.ID.openrouter].models["prime-intellect/intellect-3"]
-    expect(intellect).toBeDefined()
-    expect(intellect.api.url).toBe("https://openrouter.ai/api/v1")
+    const custom = providers[deepseek].models["custom-flash"]
+    expect(custom).toBeDefined()
+    expect(custom.api.url).toBe("https://api.deepseek.com")
 
     // Another new model should also inherit api.url
-    const deepseek = providers[ProviderV2.ID.openrouter].models["deepseek/deepseek-r1-0528"]
-    expect(deepseek).toBeDefined()
-    expect(deepseek.api.url).toBe("https://openrouter.ai/api/v1")
-    expect(deepseek.name).toBe("DeepSeek R1")
+    const r1 = providers[deepseek].models["deepseek-r1-0528"]
+    expect(r1).toBeDefined()
+    expect(r1.api.url).toBe("https://api.deepseek.com")
+    expect(r1.name).toBe("DeepSeek R1")
   }),
   {
     config: {
       provider: {
-        openrouter: {
+        deepseek: {
           models: {
-            "prime-intellect/intellect-3": {},
-            "deepseek/deepseek-r1-0528": { name: "DeepSeek R1" },
+            "custom-flash": {},
+            "deepseek-r1-0528": { name: "DeepSeek R1" },
           },
         },
       },
@@ -1644,16 +1547,16 @@ it.instance(
 
 test("mode options and cost are derived from the base model", () => {
   const provider = {
-    id: "openai",
-    name: "OpenAI",
+    id: "mode-provider",
+    name: "Mode Provider",
     env: [],
-    npm: "@ai-sdk/openai",
-    api: "https://api.openai.com/v1",
+    npm: "@ai-sdk/openai-compatible",
+    api: "https://api.example.com/v1",
     models: {
-      "gpt-5.6-sol": {
-        id: "gpt-5.6-sol",
-        name: "GPT-5.6 Sol",
-        family: "gpt",
+      "mode-model": {
+        id: "mode-model",
+        name: "Mode Model",
+        family: "mode",
         release_date: "2026-03-05",
         attachment: true,
         reasoning: true,
@@ -1702,15 +1605,15 @@ test("mode options and cost are derived from the base model", () => {
     },
   } as unknown as ModelsDev.Provider
 
-  const model = Provider.fromModelsDevProvider(provider).models["gpt-5.6-sol-fast"]
+  const model = Provider.fromModelsDevProvider(provider).models["mode-model-fast"]
   expect(model.cost.input).toEqual(5)
   expect(model.cost.output).toEqual(30)
   expect(model.cost.cache.read).toEqual(0.5)
   expect(model.cost.cache.write).toEqual(0)
   expect(model.options["serviceTier"]).toEqual("priority")
-  const pro = Provider.fromModelsDevProvider(provider).models["gpt-5.6-sol-pro"]
-  expect(pro.api.id).toEqual("gpt-5.6-sol")
-  expect(pro.options).toEqual({ reasoningMode: "pro", serviceTier: "priority" })
+  const pro = Provider.fromModelsDevProvider(provider).models["mode-model-pro"]
+  expect(pro.api.id).toEqual("mode-model")
+  expect(pro.options).toEqual({ reasoning: { mode: "pro" }, serviceTier: "priority" })
   expect(model.cost.experimentalOver200K).toBeUndefined()
   // The base model's context_over_200k arrives folded as a 200k context tier
   // (same registry projection as everywhere else).
@@ -1730,10 +1633,10 @@ test("models.dev normalization fills required response fields", () => {
     name: "Gateway",
     env: [],
     models: {
-      "gpt-5.4": {
-        id: "gpt-5.4",
-        name: "GPT-5.4",
-        family: "gpt",
+      "text-model": {
+        id: "text-model",
+        name: "Text Model",
+        family: "text",
         interleaved: "reasoning_text",
         cost: { input: 2.5, output: 15 },
         limit: { context: 1_050_000, input: 922_000, output: 128_000 },
@@ -1741,7 +1644,7 @@ test("models.dev normalization fills required response fields", () => {
     },
   } as unknown as ModelsDev.Provider
 
-  const model = Provider.fromModelsDevProvider(provider).models["gpt-5.4"]
+  const model = Provider.fromModelsDevProvider(provider).models["text-model"]
   expect(model.api.url).toBe("")
   expect(model.capabilities.temperature).toBe(false)
   expect(model.capabilities.reasoning).toBe(false)
@@ -1756,40 +1659,40 @@ test("models.dev reasoning options replace generated variants and unsupported to
     id: "reasoning",
     name: "Reasoning",
     env: [],
-    npm: "@ai-sdk/openai",
+    npm: "@ai-sdk/openai-compatible",
     models: {
       explicit: {
-        id: "gpt-5.4",
+        id: "deepseek-v4-flash",
         name: "Explicit",
         reasoning: true,
         reasoning_options: [{ type: "effort", values: ["low"] }],
         limit: { context: 128_000, output: 64_000 },
       },
       empty: {
-        id: "gpt-5.4",
+        id: "deepseek-v4-flash",
         name: "Empty",
         reasoning: true,
         reasoning_options: [],
         limit: { context: 128_000, output: 64_000 },
       },
       fallback: {
-        id: "gpt-5.4",
+        id: "deepseek-v4-flash",
         name: "Fallback",
         reasoning: true,
         reasoning_options: [{ type: "toggle" }],
         limit: { context: 128_000, output: 64_000 },
       },
       override: {
-        id: "gemini-3-pro",
+        id: "qwen-plus",
         name: "Override",
         reasoning: true,
-        reasoning_options: [{ type: "effort", values: ["high"] }],
-        provider: { npm: "@ai-sdk/google" },
+        reasoning_options: [{ type: "toggle" }],
+        provider: { npm: "@ai-sdk/alibaba" },
         limit: { context: 128_000, output: 64_000 },
         experimental: { modes: { fast: {} } },
       },
       anthropicCompatible: {
-        id: "k3",
+        id: "glm-5.3",
         name: "Anthropic Compatible",
         reasoning: true,
         reasoning_options: [{ type: "effort", values: ["max"] }],
@@ -1800,32 +1703,27 @@ test("models.dev reasoning options replace generated variants and unsupported to
   } as unknown as ModelsDev.Provider
 
   const models = Provider.fromModelsDevProvider(provider).models
-  expect(models.explicit.variants).toEqual({
-    low: {
-      reasoningEffort: "low",
-      reasoningSummary: "auto",
-      include: ["reasoning.encrypted_content"],
-    },
-  })
+  expect(models.explicit.variants).toEqual({ low: { reasoningEffort: "low" } })
   expect(models.empty.variants).toEqual({})
-  expect(Object.keys(models.fallback.variants ?? {})).toEqual(["none", "low", "medium", "high", "xhigh"])
+  expect(Object.keys(models.fallback.variants ?? {})).toEqual(["low", "medium", "high", "max"])
   expect(models.override.variants).toEqual({
-    high: { thinkingConfig: { includeThoughts: true, thinkingLevel: "high" } },
+    none: { enableThinking: false },
+    high: { enableThinking: true },
   })
   expect(models.anthropicCompatible.variants).toEqual({ max: { effort: "max" } })
-  expect(models["gemini-3-pro-fast"].variants).toEqual(models.override.variants)
+  expect(models["qwen-plus-fast"].variants).toEqual(models.override.variants)
 })
 
-test("MERGE Gateway exposes declared effort variants without model-specific handling", () => {
+test("OpenAI-compatible models expose every declared effort as a reasoningEffort variant", () => {
   const provider = {
-    id: "merge-gateway",
-    name: "MERGE Gateway",
-    env: ["MERGE_GATEWAY_API_KEY"],
-    npm: "merge-gateway-ai-sdk-provider",
+    id: "effort-gateway",
+    name: "Effort Gateway",
+    env: ["EFFORT_GATEWAY_API_KEY"],
+    npm: "@ai-sdk/openai-compatible",
     models: {
-      "openai/gpt-5.6-sol": {
-        id: "openai/gpt-5.6-sol",
-        name: "GPT-5.6 Sol",
+      "vendor/effort-model": {
+        id: "vendor/effort-model",
+        name: "Effort Model",
         reasoning: true,
         reasoning_options: [{ type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] }],
         limit: { context: 128_000, output: 64_000 },
@@ -1833,7 +1731,7 @@ test("MERGE Gateway exposes declared effort variants without model-specific hand
     },
   } as unknown as ModelsDev.Provider
 
-  expect(Provider.fromModelsDevProvider(provider).models["openai/gpt-5.6-sol"].variants).toEqual({
+  expect(Provider.fromModelsDevProvider(provider).models["vendor/effort-model"].variants).toEqual({
     none: { reasoningEffort: "none" },
     low: { reasoningEffort: "low" },
     medium: { reasoningEffort: "medium" },
@@ -1871,23 +1769,23 @@ test("public provider info omits invalid models", () => {
 
 it.instance("model variants are generated for reasoning models", () =>
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    // Claude sonnet 4 has reasoning capability
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    // deepseek-v4-flash has reasoning capability
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.capabilities.reasoning).toBe(true)
     expect(model.variants).toBeDefined()
     expect(Object.keys(model.variants!).length).toBeGreaterThan(0)
   }),
-  { config: { provider: { anthropic: {} } } },
+  { config: { provider: { deepseek: {} } } },
 )
 
 it.instance(
   "model variants can be disabled via config",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.variants).toBeDefined()
     expect(model.variants!["high"]).toBeUndefined()
     // max variant should still exist
@@ -1896,8 +1794,8 @@ it.instance(
   {
     config: {
       provider: {
-        anthropic: {
-          models: { "claude-sonnet-4-6": { variants: { high: { disabled: true } } } },
+        deepseek: {
+          models: { "deepseek-v4-flash": { variants: { high: { disabled: true } } } },
         },
       },
     },
@@ -1907,19 +1805,19 @@ it.instance(
 it.instance(
   "model variants can be customized via config",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.variants!["high"]).toBeDefined()
-    expect(model.variants!["high"].thinking.budgetTokens).toBe(20000)
+    expect(model.variants!["high"].reasoningEffort).toBe("xhigh")
   }),
   {
     config: {
       provider: {
-        anthropic: {
+        deepseek: {
           models: {
-            "claude-sonnet-4-6": {
-              variants: { high: { thinking: { type: "enabled", budgetTokens: 20000 } } },
+            "deepseek-v4-flash": {
+              variants: { high: { reasoningEffort: "xhigh" } },
             },
           },
         },
@@ -1931,9 +1829,9 @@ it.instance(
 it.instance(
   "disabled key is stripped from variant config",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.variants!["max"]).toBeDefined()
     expect(model.variants!["max"].disabled).toBeUndefined()
     expect(model.variants!["max"].customField).toBe("test")
@@ -1941,9 +1839,9 @@ it.instance(
   {
     config: {
       provider: {
-        anthropic: {
+        deepseek: {
           models: {
-            "claude-sonnet-4-6": {
+            "deepseek-v4-flash": {
               variants: { max: { disabled: false, customField: "test" } },
             },
           },
@@ -1956,18 +1854,18 @@ it.instance(
 it.instance(
   "all variants can be disabled via config",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.variants).toBeDefined()
     expect(Object.keys(model.variants!).length).toBe(0)
   }),
   {
     config: {
       provider: {
-        anthropic: {
+        deepseek: {
           models: {
-            "claude-sonnet-4-6": {
+            "deepseek-v4-flash": {
               variants: {
                 low: { disabled: true },
                 medium: { disabled: true },
@@ -1985,20 +1883,20 @@ it.instance(
 it.instance(
   "variant config merges with generated variants",
   Effect.gen(function* () {
-    yield* set("ANTHROPIC_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.anthropic].models["claude-sonnet-4-6"]
+    const model = providers[deepseek].models["deepseek-v4-flash"]
     expect(model.variants!["high"]).toBeDefined()
-    // Should have both the generated thinking config and the custom option
-    expect(model.variants!["high"].thinking).toBeDefined()
+    // Should have both the generated reasoning effort and the custom option
+    expect(model.variants!["high"].reasoningEffort).toBe("high")
     expect(model.variants!["high"].extraOption).toBe("custom-value")
   }),
   {
     config: {
       provider: {
-        anthropic: {
+        deepseek: {
           models: {
-            "claude-sonnet-4-6": { variants: { high: { extraOption: "custom-value" } } },
+            "deepseek-v4-flash": { variants: { high: { extraOption: "custom-value" } } },
           },
         },
       },
@@ -2009,17 +1907,17 @@ it.instance(
 it.instance(
   "variants filtered in second pass for database models",
   Effect.gen(function* () {
-    yield* set("OPENAI_API_KEY", "test-api-key")
+    yield* set("DEEPSEEK_API_KEY", "test-api-key")
     const providers = yield* list
-    const model = providers[ProviderV2.ID.openai].models["gpt-5"]
+    const model = providers[deepseek].models["deepseek-v4-pro"]
     expect(model.variants).toBeDefined()
     expect(model.variants!["high"]).toBeUndefined()
     // Other variants should still exist
-    expect(model.variants!["medium"]).toBeDefined()
+    expect(model.variants!["max"]).toBeDefined()
   }),
   {
     config: {
-      provider: { openai: { models: { "gpt-5": { variants: { high: { disabled: true } } } } } },
+      provider: { deepseek: { models: { "deepseek-v4-pro": { variants: { high: { disabled: true } } } } } },
     },
   },
 )
@@ -2069,173 +1967,6 @@ it.instance(
           options: { apiKey: "test-key" },
         },
       },
-    },
-  },
-)
-
-it.instance(
-  "Google Vertex: retains baseURL for custom proxy",
-  Effect.gen(function* () {
-    yield* set("GOOGLE_APPLICATION_CREDENTIALS", "test-creds")
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("vertex-proxy")]).toBeDefined()
-    expect(providers[ProviderV2.ID.make("vertex-proxy")].options.baseURL).toBe("https://my-proxy.com/v1")
-  }),
-  {
-    config: {
-      provider: {
-        "vertex-proxy": {
-          name: "Vertex Proxy",
-          npm: "@ai-sdk/google-vertex",
-          api: "https://my-proxy.com/v1",
-          env: ["GOOGLE_APPLICATION_CREDENTIALS"],
-          models: { "gemini-pro": { name: "Gemini Pro", tool_call: true } },
-          options: {
-            project: "test-project",
-            location: "us-central1",
-            baseURL: "https://my-proxy.com/v1",
-          },
-        },
-      },
-    },
-  },
-)
-
-it.instance(
-  "Google Vertex: supports OpenAI compatible models",
-  Effect.gen(function* () {
-    yield* set("GOOGLE_APPLICATION_CREDENTIALS", "test-creds")
-    const providers = yield* list
-    const model = providers[ProviderV2.ID.make("vertex-openai")].models["gpt-4"]
-    expect(model).toBeDefined()
-    expect(model.api.npm).toBe("@ai-sdk/openai-compatible")
-  }),
-  {
-    config: {
-      provider: {
-        "vertex-openai": {
-          name: "Vertex OpenAI",
-          npm: "@ai-sdk/google-vertex",
-          env: ["GOOGLE_APPLICATION_CREDENTIALS"],
-          models: {
-            "gpt-4": {
-              name: "GPT-4",
-              provider: { npm: "@ai-sdk/openai-compatible", api: "https://api.openai.com/v1" },
-            },
-          },
-          options: { project: "test-project", location: "us-central1" },
-        },
-      },
-    },
-  },
-)
-
-it.instance("Google Vertex: uses REP endpoint for Claude continental multi-regions", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("VERTEX_LOCATION", "eu")
-    const provider = yield* Provider.Service
-    const model = yield* provider.getModel(
-      ProviderV2.ID.make("google-vertex"),
-      ModelV2.ID.make("claude-sonnet-4-6@default"),
-    )
-    const language = yield* provider.getLanguage(model)
-    expect(languageBaseURL(language)).toBe(
-      "https://aiplatform.eu.rep.googleapis.com/v1/projects/test-project/locations/eu/publishers/anthropic/models",
-    )
-  }),
-  { config: { provider: { "google-vertex": {} } } },
-)
-
-it.instance("Google Vertex Anthropic: uses REP endpoint for continental multi-regions", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("VERTEX_LOCATION", "us")
-    const provider = yield* Provider.Service
-    const model = yield* provider.getModel(
-      ProviderV2.ID.make("google-vertex-anthropic"),
-      ModelV2.ID.make("claude-sonnet-4-6@default"),
-    )
-    const language = yield* provider.getLanguage(model)
-    expect(languageBaseURL(language)).toBe(
-      "https://aiplatform.us.rep.googleapis.com/v1/projects/test-project/locations/us/publishers/anthropic/models",
-    )
-  }),
-  { config: { provider: { "google-vertex-anthropic": {} } } },
-)
-
-it.instance("Google Vertex: keeps regional Claude endpoints unchanged", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("VERTEX_LOCATION", "europe-west1")
-    const provider = yield* Provider.Service
-    const model = yield* provider.getModel(
-      ProviderV2.ID.make("google-vertex"),
-      ModelV2.ID.make("claude-sonnet-4-6@default"),
-    )
-    const language = yield* provider.getLanguage(model)
-    expect(languageBaseURL(language)).toBe(
-      "https://europe-west1-aiplatform.googleapis.com/v1/projects/test-project/locations/europe-west1/publishers/anthropic/models",
-    )
-  }),
-  { config: { provider: { "google-vertex": {} } } },
-)
-
-it.instance("Google Vertex: uses REP endpoint for Gemini continental multi-regions", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("VERTEX_LOCATION", "eu")
-    const provider = yield* Provider.Service
-    const model = yield* provider.getModel(ProviderV2.ID.make("google-vertex"), ModelV2.ID.make("gemini-3.5-flash"))
-    const language = yield* provider.getLanguage(model)
-    expect(languageBaseURL(language)).toBe(
-      "https://aiplatform.eu.rep.googleapis.com/v1beta1/projects/test-project/locations/eu/publishers/google",
-    )
-  }),
-  { config: { provider: { "google-vertex": {} } } },
-)
-
-it.instance("Google Vertex: keeps regional Gemini endpoints unchanged", () =>
-  Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("VERTEX_LOCATION", "europe-west1")
-    const provider = yield* Provider.Service
-    const model = yield* provider.getModel(ProviderV2.ID.make("google-vertex"), ModelV2.ID.make("gemini-3.5-flash"))
-    const language = yield* provider.getLanguage(model)
-    expect(languageBaseURL(language)).toBe(
-      "https://europe-west1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/europe-west1/publishers/google",
-    )
-  }),
-  { config: { provider: { "google-vertex": {} } } },
-)
-
-it.instance("cloudflare-ai-gateway loads with env variables", () =>
-  Effect.gen(function* () {
-    yield* set("CLOUDFLARE_ACCOUNT_ID", "test-account")
-    yield* set("CLOUDFLARE_GATEWAY_ID", "test-gateway")
-    yield* set("CLOUDFLARE_API_TOKEN", "test-token")
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("cloudflare-ai-gateway")]).toBeDefined()
-  }),
-  { config: { provider: { "cloudflare-ai-gateway": {} } } },
-)
-
-it.instance(
-  "cloudflare-ai-gateway forwards config metadata options",
-  Effect.gen(function* () {
-    yield* set("CLOUDFLARE_ACCOUNT_ID", "test-account")
-    yield* set("CLOUDFLARE_GATEWAY_ID", "test-gateway")
-    yield* set("CLOUDFLARE_API_TOKEN", "test-token")
-    const providers = yield* list
-    expect(providers[ProviderV2.ID.make("cloudflare-ai-gateway")]).toBeDefined()
-    expect(providers[ProviderV2.ID.make("cloudflare-ai-gateway")].options.metadata).toEqual({
-      invoked_by: "test",
-      project: "opencode",
-    })
-  }),
-  {
-    config: {
-      provider: { "cloudflare-ai-gateway": { options: { metadata: { invoked_by: "test", project: "opencode" } } } },
     },
   },
 )
@@ -2321,8 +2052,8 @@ it.instance(
           '  id: "demo.provider-filter",',
           "  server: async () => ({",
           "    async config(cfg) {",
-          '      cfg.enabled_providers = ["anthropic", "openai"]',
-          '      cfg.disabled_providers = ["openai"]',
+          '      cfg.enabled_providers = ["deepseek", "xiaomi"]',
+          '      cfg.disabled_providers = ["xiaomi"]',
           "    },",
           "  }),",
           "}",
@@ -2331,13 +2062,13 @@ it.instance(
       ),
     )
 
-    yield* set("ANTHROPIC_API_KEY", "test-anthropic-key")
-    yield* set("OPENAI_API_KEY", "test-openai-key")
+    yield* set("DEEPSEEK_API_KEY", "test-deepseek-key")
+    yield* set("XIAOMI_API_KEY", "test-xiaomi-key")
     const providers = yield* list
-    expect(providers[ProviderV2.ID.anthropic]).toBeDefined()
-    expect(providers[ProviderV2.ID.openai]).toBeUndefined()
+    expect(providers[deepseek]).toBeDefined()
+    expect(providers[xiaomi]).toBeUndefined()
   }),
-  { config: { provider: { anthropic: {}, openai: {} } } },
+  { config: { provider: { deepseek: {}, xiaomi: {} } } },
 )
 
 const authFallbackConfig = (options: Record<string, unknown>) => ({
@@ -2473,17 +2204,13 @@ it.instance(
 )
 
 it.instance(
-  "autoload loaders and plugin auth never activate undeclared providers",
+  "oauth credentials never activate undeclared providers",
   Effect.gen(function* () {
-    yield* set("GOOGLE_CLOUD_PROJECT", "test-project")
-    yield* set("CLOUDFLARE_ACCOUNT_ID", "test-account")
-    yield* set("CLOUDFLARE_GATEWAY_ID", "test-gateway")
-    yield* set("CLOUDFLARE_API_TOKEN", "test-token")
     yield* setProcessEnv(
       "OPENCODE_AUTH_CONTENT",
       JSON.stringify({
-        "github-copilot": { type: "oauth", refresh: "r", access: "a", expires: 0 },
-        openai: { type: "oauth", refresh: "r", access: "a", expires: 0 },
+        deepseek: { type: "oauth", refresh: "r", access: "a", expires: 0 },
+        xiaomi: { type: "oauth", refresh: "r", access: "a", expires: 0 },
       }),
     )
     const providers = yield* list

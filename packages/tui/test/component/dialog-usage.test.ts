@@ -175,7 +175,7 @@ describe("dialog usage by-model breakdown", () => {
 
   test("is empty for a single-model session, where the session row is exact", () => {
     const rows = modelUsageRows({
-      messages: [assistant("m1", "anthropic", "opus", 1)],
+      messages: [assistant("m1", "deepseek", "flash", 1)],
       parts: { m1: [stepFinish(10, 5)] },
     })
     expect(rows).toEqual([])
@@ -183,13 +183,13 @@ describe("dialog usage by-model breakdown", () => {
 
   test("sums every step-finish receipt, not the last-step message totals", () => {
     const rows = modelUsageRows({
-      messages: [assistant("m1", "anthropic", "opus", 2), assistant("m2", "openai", "gpt", 0.5)],
+      messages: [assistant("m1", "deepseek", "flash", 2), assistant("m2", "xiaomi", "mimo", 0.5)],
       // Two steps on the expensive model, one on the cheap one.
       parts: { m1: [stepFinish(100, 10), stepFinish(200, 20)], m2: [stepFinish(5, 1)] },
     })
-    // 330 tokens for opus (not the 999+999 message.tokens last-step figure).
-    expect(rows[0]).toEqual({ label: "anthropic/opus", value: "$2.00 · 330 tokens" })
-    expect(rows[1]).toEqual({ label: "openai/gpt", value: "$0.50 · 6 tokens" })
+    // 330 tokens for flash (not the 999+999 message.tokens last-step figure).
+    expect(rows[0]).toEqual({ label: "deepseek/flash", value: "$2.00 · 330 tokens" })
+    expect(rows[1]).toEqual({ label: "xiaomi/mimo", value: "$0.50 · 6 tokens" })
   })
 
   test("orders by cost, most expensive first", () => {

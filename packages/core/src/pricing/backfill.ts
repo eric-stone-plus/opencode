@@ -36,7 +36,7 @@ export type Summary = {
 /**
  * Re-price historical usage. Per session, in one transaction:
  * - zero-cost step-finish parts with tokens are re-priced at the matched rates
- *   (nonzero recorded costs, e.g. Copilot nanoAiu, are preserved);
+ *   (nonzero recorded costs are preserved);
  * - a message's cost is written only when it records zero: it becomes the sum
  *   of its step-finish part costs, or for a legacy message without step-finish
  * parts a display-only recompute from its own tokens (the durable event log
@@ -255,7 +255,10 @@ function processSession(
     const sessionChanged = sessionCost !== session.cost
     if (apply) {
       for (const [id, data] of partUpdates)
-        yield* tx.update(PartTable).set({ data: data as typeof PartTable.$inferInsert.data }).where(eq(PartTable.id, id))
+        yield* tx
+          .update(PartTable)
+          .set({ data: data as typeof PartTable.$inferInsert.data })
+          .where(eq(PartTable.id, id))
       for (const [id, data] of messageUpdates)
         yield* tx
           .update(MessageTable)

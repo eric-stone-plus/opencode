@@ -41,18 +41,15 @@ describe("Endpoint", () => {
 
   test("path may be a function of the validated body", () => {
     const url = Endpoint.render(
-      Endpoint.path<{ readonly modelId: string }>(
-        ({ body }) => `/model/${encodeURIComponent(body.modelId)}/converse-stream`,
-        { baseURL: "https://bedrock-runtime.us-east-1.amazonaws.com" },
-      ),
+      Endpoint.path<{ readonly modelId: string }>(({ body }) => `/model/${encodeURIComponent(body.modelId)}/stream`, {
+        baseURL: "https://runtime.example.test",
+      }),
       {
         request: request(),
-        body: { modelId: "us.amazon.nova-micro-v1:0" },
+        body: { modelId: "vendor.model-v1:0" },
       },
     )
 
-    expect(url.toString()).toBe(
-      "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse-stream",
-    )
+    expect(url.toString()).toBe("https://runtime.example.test/model/vendor.model-v1%3A0/stream")
   })
 })

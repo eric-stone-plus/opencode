@@ -11,7 +11,7 @@ describe("Credential", () => {
   it.effect("stores, updates, lists, and removes credentials", () =>
     Effect.gen(function* () {
       const credentials = yield* Credential.Service
-      const integrationID = Integration.ID.make("openai")
+      const integrationID = Integration.ID.make("deepseek")
       const created = yield* credentials.create({
         integrationID,
         label: "Work",

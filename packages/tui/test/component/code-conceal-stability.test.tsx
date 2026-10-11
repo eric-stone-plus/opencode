@@ -229,7 +229,7 @@ async function runScenario(
   const style = SyntaxStyle.fromStyles({})
   const [raw, setRaw] = createSignal("")
   const codeContent = () => {
-    const text = raw().replace("[REDACTED]", "")
+    const text = raw()
     return opts.viaSummary ? reasoningSummary(text.trim()).body : text
   }
   const app = (await testRender(

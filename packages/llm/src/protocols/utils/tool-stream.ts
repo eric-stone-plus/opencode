@@ -18,9 +18,8 @@ export interface PendingTool extends ToolAccumulator {
  * Sparse parser state keyed by the provider's stream-local tool identifier.
  *
  * This key is not the final tool-call id (`call_...`). It is the id/index the
- * provider uses while streaming a partial call: OpenAI Chat / Anthropic /
- * Bedrock use numeric content indexes, while OpenAI Responses uses string
- * `item_id`s. The generic keeps each protocol internally consistent.
+ * provider uses while streaming a partial call: OpenAI Chat and Anthropic use
+ * numeric content indexes. The generic keeps each protocol internally consistent.
  */
 export type State<K extends StreamKey> = Partial<Record<K, PendingTool>>
 
@@ -63,8 +62,8 @@ const inputDelta = (tool: PendingTool, text: string) =>
     text,
   })
 
-const toolCall = (route: string, tool: PendingTool, inputOverride?: string) =>
-  parseToolInput(route, tool.name, inputOverride ?? tool.input).pipe(
+const toolCall = (route: string, tool: PendingTool) =>
+  parseToolInput(route, tool.name, tool.input).pipe(
     Effect.map(
       (input): ToolCall =>
         LLMEvent.toolCall({
@@ -99,8 +98,7 @@ export const isError = <K extends StreamKey>(result: AppendOutcome<K> | LLMError
 
 /**
  * Register a tool call whose start event arrived before any argument deltas.
- * Used by Anthropic `content_block_start`, Bedrock `contentBlockStart`, and
- * OpenAI Responses `response.output_item.added`.
+ * Used by Anthropic `content_block_start`.
  */
 export const start = <K extends StreamKey>(
   tools: State<K>,
@@ -170,24 +168,6 @@ export const finish = <K extends StreamKey>(route: string, tools: State<K>, key:
       events: [
         LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
         yield* toolCall(route, tool),
-      ],
-    }
-  })
-
-/**
- * Finalize one pending tool call with an authoritative final input string.
- * OpenAI Responses can send accumulated deltas and then repeat the completed
- * arguments on `response.output_item.done`; the final value wins.
- */
-export const finishWithInput = <K extends StreamKey>(route: string, tools: State<K>, key: K, input: string) =>
-  Effect.gen(function* () {
-    const tool = tools[key]
-    if (!tool) return { tools }
-    return {
-      tools: withoutTool(tools, key),
-      events: [
-        LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
-        yield* toolCall(route, tool, input),
       ],
     }
   })

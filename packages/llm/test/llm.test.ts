@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { CacheHint, LLM, LLMResponse } from "../src"
 import * as OpenAIChat from "../src/protocols/openai-chat"
-import * as OpenAIResponses from "../src/protocols/openai-responses"
+import * as AnthropicMessages from "../src/protocols/anthropic-messages"
 import { LLMRequest, Message, Model, ToolCallPart, ToolChoice, ToolDefinition, ToolResultPart } from "../src/schema"
 
 const chatRoute = OpenAIChat.route
-const responsesRoute = OpenAIResponses.route
+const messagesRoute = AnthropicMessages.route
 
 describe("llm constructors", () => {
   test("builds canonical schema classes from ergonomic input", () => {
@@ -91,17 +91,17 @@ describe("llm constructors", () => {
       route: chatRoute,
     })
     const updated = Model.update(base, {
-      route: responsesRoute,
+      route: messagesRoute,
       defaults: { generation: { maxTokens: 20 } },
-      compatibility: { toolSchema: "gemini" },
+      compatibility: { toolSchema: "moonshot" },
     })
     const updatedInput = Model.input(updated)
 
     expect(updated).toBeInstanceOf(Model)
     expect(String(updated.id)).toBe("fake-model")
-    expect(updated.route).toBe(responsesRoute)
+    expect(updated.route).toBe(messagesRoute)
     expect(updated.defaults?.generation).toEqual({ maxTokens: 20 })
-    expect(updated.compatibility).toEqual({ toolSchema: "gemini" })
+    expect(updated.compatibility).toEqual({ toolSchema: "moonshot" })
     expect(updatedInput.defaults).toBe(updated.defaults)
     expect(updatedInput.compatibility).toBe(updated.compatibility)
     expect(String(updatedInput.provider)).toBe("fake")
@@ -110,7 +110,7 @@ describe("llm constructors", () => {
 
   test("carries model defaults and compatibility through route model selection", () => {
     const model = chatRoute.model({
-      id: "kimi-k2",
+      id: "strict-schema-model",
       defaults: {
         limits: { context: 128_000, output: 8_192 },
         generation: { maxTokens: 1_024, stop: ["END"] },

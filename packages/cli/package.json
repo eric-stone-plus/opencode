@@ -28,6 +28,7 @@
     "solid-js": "catalog:"
   },
   "devDependencies": {
+    "@opencode-ai/schema": "workspace:*",
     "@opencode-ai/script": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

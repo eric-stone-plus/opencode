@@ -97,7 +97,7 @@ describe("resolveVariant", () => {
   })
 
   test("S8: switching agents resolves against that agent's model/variant", () => {
-    const build = { providerID: "anthropic", modelID: "claude-sonnet-4-6" }
+    const build = { providerID: "deepseek", modelID: "deepseek-flash" }
     expect(
       resolveVariant({
         selected: undefined,
@@ -214,7 +214,7 @@ describe("effectiveVariant (display-only model pin fallback)", () => {
 describe("session-scoped model", () => {
   const mimo = { providerID: "xiaomi", modelID: "mimo" }
   const qwen = { providerID: "alibaba", modelID: "qwen" }
-  const opus = { providerID: "anthropic", modelID: "opus" }
+  const flash = { providerID: "deepseek", modelID: "flash" }
   const valid = () => true
 
   test("modelScope keys sessions by ID and everything else as the draft", () => {
@@ -224,21 +224,21 @@ describe("session-scoped model", () => {
   })
 
   test("an explicit session choice wins over the agent pin and the fallback", () => {
-    expect(resolveModel({ choice: qwen, agentModel: opus, fallback: mimo, valid })).toEqual(qwen)
+    expect(resolveModel({ choice: qwen, agentModel: flash, fallback: mimo, valid })).toEqual(qwen)
     expect(resolveModel({ choice: qwen, agentModel: undefined, fallback: mimo, valid })).toEqual(qwen)
   })
 
   test("without a choice the agent pin applies, then the fallback", () => {
     for (const choice of [undefined, null]) {
-      expect(resolveModel({ choice, agentModel: opus, fallback: mimo, valid })).toEqual(opus)
+      expect(resolveModel({ choice, agentModel: flash, fallback: mimo, valid })).toEqual(flash)
       expect(resolveModel({ choice, agentModel: undefined, fallback: mimo, valid })).toEqual(mimo)
     }
   })
 
   test("invalid candidates are skipped", () => {
     const only = (model: { modelID: string }) => model.modelID === "mimo"
-    expect(resolveModel({ choice: qwen, agentModel: opus, fallback: mimo, valid: only })).toEqual(mimo)
-    expect(resolveModel({ choice: qwen, agentModel: opus, fallback: undefined, valid: only })).toBeUndefined()
+    expect(resolveModel({ choice: qwen, agentModel: flash, fallback: mimo, valid: only })).toEqual(mimo)
+    expect(resolveModel({ choice: qwen, agentModel: flash, fallback: undefined, valid: only })).toBeUndefined()
   })
 
   test("an invalid configured fallback is kept so the server reports ModelNotFound", () => {
@@ -247,10 +247,10 @@ describe("session-scoped model", () => {
       resolveModel({ choice: undefined, agentModel: undefined, fallback: mimo, configured: true, valid: none }),
     ).toEqual(mimo)
     expect(resolveModel({ choice: undefined, agentModel: undefined, fallback: mimo, valid: none })).toBeUndefined()
-    const onlyOpus = (model: { modelID: string }) => model.modelID === opus.modelID
+    const onlyFlash = (model: { modelID: string }) => model.modelID === flash.modelID
     expect(
-      resolveModel({ choice: undefined, agentModel: opus, fallback: mimo, configured: true, valid: onlyOpus }),
-    ).toEqual(opus)
+      resolveModel({ choice: undefined, agentModel: flash, fallback: mimo, configured: true, valid: onlyFlash }),
+    ).toEqual(flash)
   })
 
   test("--model takes precedence over the config model", () => {

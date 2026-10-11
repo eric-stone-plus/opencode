@@ -31,13 +31,14 @@ const seed = Effect.fn(function* () {
   yield* catalog.transform((draft) => {
     // Simulates models.dev / env discovery adding free or undeclared providers.
     for (const [providerID, models] of [
-      ["openrouter", ["free-model"]],
-      ["anthropic", ["claude-haiku"]],
+      ["alibaba", ["free-model"]],
+      ["deepseek", ["deepseek-flash"]],
       ["zhipuai-coding-plan", ["glm-5.3", "glm-4.7"]],
       ["xiaomi-token-plan-cn", ["mimo-v2.6-pro", "mimo-v2-flash"]],
     ] as const) {
       draft.provider.update(ProviderV2.ID.make(providerID), () => {})
-      for (const modelID of models) draft.model.update(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID), () => {})
+      for (const modelID of models)
+        draft.model.update(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID), () => {})
     }
   })
   return catalog
@@ -120,7 +121,11 @@ describe("DeclaredProvidersPlugin api precedence", () => {
         }),
       )
       const model = required(yield* catalog.model.get(providerID, ModelV2.ID.make("glm-5.3")))
-      expect(model.api).toMatchObject({ type: "aisdk", package: "@ai-sdk/anthropic", url: "https://user.example.com/v1" })
+      expect(model.api).toMatchObject({
+        type: "aisdk",
+        package: "@ai-sdk/anthropic",
+        url: "https://user.example.com/v1",
+      })
       expect(String(model.api.id)).toBe("glm-5.3")
       const pinned = required(yield* catalog.model.get(providerID, ModelV2.ID.make("glm-pinned")))
       expect(pinned.api).toMatchObject({ package: "@ai-sdk/openai-compatible", url: "https://registry.example.com/v4" })

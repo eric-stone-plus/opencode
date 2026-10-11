@@ -19,15 +19,14 @@ import { Tool } from "../src/tool"
 
 export const weatherToolName = "get_weather"
 
-// A deterministic system prompt long enough to clear every supported provider's
-// minimum cacheable-prefix threshold (Anthropic Haiku 3.5: 2048 tokens; Anthropic
-// Opus/Haiku 4.5: 4096 tokens; OpenAI/Gemini/Bedrock: lower). Built by repeating
-// a fixed sentence — the cassette replays bit-for-bit, so the exact text matters
-// only when re-recording with `RECORD=true`.
+// A deterministic system prompt long enough to clear the minimum cacheable-prefix
+// threshold (Anthropic Haiku 3.5: 2048 tokens; Anthropic Opus/Haiku 4.5: 4096
+// tokens). Built by repeating a fixed sentence — the cassette replays bit-for-bit,
+// so the exact text matters only when re-recording with `RECORD=true`.
 export const LARGE_CACHEABLE_SYSTEM = (() => {
   const sentence = "You are a concise, factual assistant. Answer precisely and avoid filler. Cite numbers when known. "
   // ~100 chars per sentence × 250 repeats ≈ 25,000 chars ≈ 5k+ tokens, safely
-  // above every provider's threshold.
+  // above the threshold.
   return sentence.repeat(250)
 })()
 
@@ -203,15 +202,6 @@ const normalizeImageText = (value: string) =>
     .replace(/\s+/g, " ")
     .trim()
 
-const encryptedReasoningOptions = {
-  openai: {
-    store: false,
-    include: ["reasoning.encrypted_content"],
-    reasoningEffort: "low",
-    reasoningSummary: "auto",
-  },
-} as const
-
 type AssistantTextExpectation = string | RegExp
 
 type UserStep = { readonly type: "user"; readonly content: Message.ContentInput }
@@ -219,7 +209,6 @@ type AssistantStep = {
   readonly type: "assistant"
   readonly text?: AssistantTextExpectation
   readonly toolCall?: { readonly name: string; readonly input: unknown }
-  readonly reasoning?: "openai-encrypted"
   readonly id?: string
   readonly system?: string
   readonly maxTokens?: number
@@ -236,23 +225,13 @@ const user = (content: Message.ContentInput): ConversationStep => ({ type: "user
 const assistant = {
   expectText: (
     text: AssistantTextExpectation,
-    options?: Omit<AssistantStep, "type" | "text" | "reasoning" | "toolCall">,
+    options?: Omit<AssistantStep, "type" | "text" | "toolCall">,
   ): ConversationStep => ({ type: "assistant", text, ...options }),
   expectToolCall: (
     name: string,
     input: unknown,
-    options?: Omit<AssistantStep, "type" | "text" | "reasoning" | "toolCall" | "finish">,
+    options?: Omit<AssistantStep, "type" | "text" | "toolCall" | "finish">,
   ): ConversationStep => ({ type: "assistant", toolCall: { name, input }, finish: "tool-calls", ...options }),
-  expectEncryptedReasoningText: (
-    text: AssistantTextExpectation,
-    options?: Omit<AssistantStep, "type" | "text" | "reasoning" | "toolCall" | "providerOptions">,
-  ): ConversationStep => ({
-    type: "assistant",
-    text,
-    reasoning: "openai-encrypted",
-    providerOptions: encryptedReasoningOptions,
-    ...options,
-  }),
 }
 
 const assertAssistantText = (actual: string, expected: AssistantTextExpectation) => {
@@ -270,20 +249,10 @@ const assertAssistantToolCall = (response: LLMResponse, expected: NonNullable<As
 }
 
 // The generated golden scenarios only model one assistant shape at a time:
-// encrypted reasoning + text, text, or tool call. Keep mixed interleavings in
-// focused protocol tests where event order can be asserted directly.
-const assistantMessageFromResponse = (response: LLMResponse, step: AssistantStep) => {
+// text or tool call. Keep mixed interleavings in focused protocol tests where
+// event order can be asserted directly.
+const assistantMessageFromResponse = (response: LLMResponse) => {
   const content: ContentPart[] = []
-  if (step.reasoning === "openai-encrypted") {
-    const reasoning = response.events.find(
-      (event): event is Extract<LLMEvent, { readonly type: "reasoning-end" }> =>
-        LLMEvent.is.reasoningEnd(event) && typeof event.providerMetadata?.openai?.itemId === "string",
-    )
-    if (!reasoning) throw new Error("OpenAI Responses did not return reasoning metadata")
-    expect(reasoning.providerMetadata?.openai?.reasoningEncryptedContent).toEqual(expect.any(String))
-    content.push({ type: "reasoning", text: response.reasoning, providerMetadata: reasoning.providerMetadata })
-  }
-
   if (response.text.length > 0) content.push({ type: "text", text: response.text })
   content.push(...response.toolCalls)
   return Message.assistant(content)
@@ -317,7 +286,7 @@ const runGeneratedConversation = (context: GoldenScenarioContext, steps: Readonl
       if (step.toolCall) assertAssistantToolCall(response, step.toolCall)
       step.assert?.(response)
       expectFinish(response.events, step.finish ?? "stop")
-      messages.push(assistantMessageFromResponse(response, step))
+      messages.push(assistantMessageFromResponse(response))
     }
   })
 
@@ -327,8 +296,6 @@ const runTextScenario = (context: GoldenScenarioContext) =>
     assistant.expectText(/^Hello!?$/, {
       system: "You are concise.",
       maxTokens: context.maxTokens ?? 40,
-      providerOptions:
-        context.model.route.id === "gemini" ? { gemini: { thinkingConfig: { thinkingBudget: 0 } } } : undefined,
     }),
   ])
 
@@ -406,29 +373,6 @@ const runImageToolResultScenario = (context: GoldenScenarioContext) =>
     expect(normalizeImageText(response.text)).toBe(RESTROOM_IMAGE_TEXT)
   })
 
-const runReasoningScenario = (context: GoldenScenarioContext) =>
-  runGeneratedConversation(context, [
-    user("Think briefly, then reply exactly with: Hello!"),
-    assistant.expectText(/^Hello!?$/, {
-      system: "Show concise reasoning when the provider supports visible reasoning summaries.",
-      providerOptions: { openai: { reasoningEffort: "low", reasoningSummary: "auto" } },
-      maxTokens: context.maxTokens ?? 120,
-      assert: (response) => expect(response.usage?.reasoningTokens ?? 0).toBeGreaterThan(0),
-    }),
-  ])
-
-const runReasoningContinuationScenario = (context: GoldenScenarioContext) =>
-  runGeneratedConversation(context, [
-    user("Think briefly, then reply exactly with: Hello!"),
-    assistant.expectEncryptedReasoningText(/^Hello!?$/, {
-      id: "first",
-      system: "Show concise reasoning when the provider supports visible reasoning summaries.",
-      maxTokens: context.maxTokens ?? 120,
-    }),
-    user("Now reply exactly with: Done."),
-    assistant.expectText(/^Done\.?$/, { id: "second", maxTokens: 40, providerOptions: encryptedReasoningOptions }),
-  ])
-
 const runToolLoopScenario = (context: GoldenScenarioContext) =>
   Effect.gen(function* () {
     expectGoldenWeatherToolLoop(
@@ -452,12 +396,6 @@ const goldenScenarios = {
     title: "reads image returned from tool result",
     tags: ["media", "image", "vision", "tool", "tool-result", "golden"],
     run: runImageToolResultScenario,
-  },
-  reasoning: { title: "uses reasoning", tags: ["reasoning", "golden"], run: runReasoningScenario },
-  "reasoning-continuation": {
-    title: "continues encrypted reasoning",
-    tags: ["reasoning", "continuation", "encrypted-reasoning", "golden"],
-    run: runReasoningContinuationScenario,
   },
 } as const
 

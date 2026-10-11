@@ -30,9 +30,6 @@ export const ReasoningEfforts = ["none", "minimal", "low", "medium", "high", "xh
 export const ReasoningEffort = Schema.Literals(ReasoningEfforts)
 export type ReasoningEffort = Schema.Schema.Type<typeof ReasoningEffort>
 
-export const TextVerbosity = Schema.Literals(["low", "medium", "high"])
-export type TextVerbosity = Schema.Schema.Type<typeof TextVerbosity>
-
 export const MessageRole = Schema.Literals(["system", "user", "assistant", "tool"])
 export type MessageRole = Schema.Schema.Type<typeof MessageRole>
 

@@ -19,8 +19,8 @@ type OpenAIChatBody = {
 }
 
 const model = OpenAIChat.route
-  .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-  .model({ id: "gpt-4o-mini" })
+  .with({ endpoint: { baseURL: "https://api.example.test/v1/" }, auth: Auth.bearer("test") })
+  .model({ id: "deepseek-chat" })
 
 const Json = Schema.fromJsonString(Schema.Unknown)
 const decodeJson = Schema.decodeUnknownSync(Json)

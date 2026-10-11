@@ -157,37 +157,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   // for providers that don't support that media type in tool results.
   //
   // OpenAI-compatible APIs only support string content in tool results, so we need
-  // to extract media and inject as user messages. Some SDKs only support a subset
-  // of media in tool results; e.g. Bedrock supports images but not PDFs there.
+  // to extract media and inject as user messages.
   //
   // Only apply this workaround if the model actually supports that media input -
   // otherwise unsupportedParts() will turn it into a user-visible error.
   const supportsMediaInput = (attachment: { mime: string }) =>
     attachment.mime === "application/pdf" ? model.capabilities.input.pdf : model.capabilities.input.image
 
-  const supportsMediaInToolResult = (attachment: { mime: string }) => {
-    if (model.api.npm === "@ai-sdk/anthropic") return true
-    if (model.api.npm === "@ai-sdk/openai") return true
-    if (model.api.npm === "@ai-sdk/amazon-bedrock/mantle") return true
-    if (model.api.npm === "@ai-sdk/amazon-bedrock") {
-      if (!attachment.mime.startsWith("image/")) return false
-      const id = model.api.id.toLowerCase()
-      return id.includes("anthropic.") || id.includes("nova") || id.includes("llama4") || id.includes("llama-4")
-    }
-    if (model.api.npm === "@ai-sdk/xai") return attachment.mime.startsWith("image/")
-    if (model.api.npm === "@ai-sdk/google-vertex/anthropic") return true
-    if (model.api.npm === "@ai-sdk/google") {
-      const id = model.api.id.toLowerCase()
-      return id.includes("gemini-3") && !id.includes("gemini-2")
-    }
-    return false
-  }
-
-  // xAI rejects any other image format (e.g. GIF) with invalid_image, failing the whole request.
-  const rejectedByProvider = (attachment: { mime: string }) =>
-    model.api.npm === "@ai-sdk/xai" &&
-    attachment.mime.startsWith("image/") &&
-    !["image/png", "image/jpeg", "image/webp"].includes(attachment.mime)
+  const supportsMediaInToolResult = model.api.npm === "@ai-sdk/anthropic"
 
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
@@ -345,13 +322,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const baseOutputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
-            // Upstream drops media the provider rejects outright (xAI GIFs);
-            // the fork turns media the model cannot read at all into a text
-            // placeholder. Chain both: reject-drop first, placeholder second.
-            const stored =
-              part.state.time.compacted || options?.stripMedia
-                ? []
-                : (part.state.attachments ?? []).filter((a) => !rejectedByProvider(a))
+            // The fork turns media the model cannot read at all into a text placeholder.
+            const stored = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
             const unreadable = stored.filter((a) => isMedia(a.mime) && !supportsMediaInput(a))
             const attachments = stored.filter((a) => !unreadable.includes(a))
             const outputText = [
@@ -367,11 +339,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
             const mediaAttachments = attachments.filter((a) => isMedia(a.mime))
-            const extractedMedia = mediaAttachments.filter((a) => !supportsMediaInToolResult(a))
+            const extractedMedia = supportsMediaInToolResult ? [] : mediaAttachments
             if (extractedMedia.length > 0) {
               media.push(...extractedMedia)
             }
-            const finalAttachments = attachments.filter((a) => !isMedia(a.mime) || supportsMediaInToolResult(a))
+            const finalAttachments = supportsMediaInToolResult
+              ? attachments
+              : attachments.filter((a) => !isMedia(a.mime))
 
             const output =
               finalAttachments.length > 0

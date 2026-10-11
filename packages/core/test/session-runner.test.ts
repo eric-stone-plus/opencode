@@ -2515,7 +2515,7 @@ describe("SessionRunnerLLM", () => {
       yield* Effect.yieldNow
 
       expect(requests).toHaveLength(2)
-      expect(requests.map((request) => request.providerOptions?.openai?.promptCacheKey)).toEqual([
+      expect(requests.map((request) => request.http?.headers?.["x-opencode-session-id"])).toEqual([
         sessionID,
         otherSessionID,
       ])
@@ -2568,36 +2568,6 @@ describe("SessionRunnerLLM", () => {
         "X-Session-Id": sessionID,
         "x-parent-session-id": parentID,
       })
-    }),
-  )
-
-  it.effect("bounds 64-character session prompt cache keys", () =>
-    Effect.gen(function* () {
-      yield* setup
-      const longSessionID = SessionV2.ID.make(`ses_${"a".repeat(64)}`)
-      const otherLongSessionID = SessionV2.ID.make(`ses_${"b".repeat(64)}`)
-      yield* insertSession(longSessionID)
-      yield* insertSession(otherLongSessionID)
-      const session = yield* SessionV2.Service
-      yield* session.prompt({
-        sessionID: longSessionID,
-        prompt: Prompt.make({ text: "Run long session" }),
-        resume: false,
-      })
-      yield* session.prompt({
-        sessionID: otherLongSessionID,
-        prompt: Prompt.make({ text: "Run other long session" }),
-        resume: false,
-      })
-
-      requests.length = 0
-      yield* session.resume(longSessionID)
-      yield* session.resume(otherLongSessionID)
-
-      const keys = requests.map((request) => request.providerOptions?.openai?.promptCacheKey)
-      expect(keys).toEqual([longSessionID.slice(4), otherLongSessionID.slice(4)])
-      expect(keys.every((key) => typeof key === "string" && key.length === 64)).toBe(true)
-      expect(keys[0]).not.toBe(keys[1])
     }),
   )
 

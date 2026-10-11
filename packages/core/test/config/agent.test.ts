@@ -68,7 +68,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
                     permissions: [{ action: "bash", resource: "git *", effect: "allow" }],
                   },
                   reviewer: {
-                    model: "openrouter/openai/gpt-5",
+                    model: "xiaomi/mimo-v2.6-pro",
                     description: "Review changes",
                     mode: "subagent",
                     permissions: [
@@ -117,7 +117,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
         description: "Review changes",
         mode: "subagent",
         hidden: true,
-        model: { providerID: "openrouter", id: "openai/gpt-5", variant: "high" },
+        model: { providerID: "xiaomi", id: "mimo-v2.6-pro", variant: "high" },
       })
       expect(reviewer.permissions).toEqual([
         { action: "bash", resource: "*", effect: "ask" },
@@ -146,7 +146,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
               info: decode({
                 agents: {
                   reviewer: {
-                    model: "anthropic/claude-sonnet",
+                    model: "deepseek/deepseek-flash",
                     system: "Review carefully.",
                     description: "Reviews changes",
                     mode: "subagent",
@@ -190,7 +190,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
         hidden: true,
         color: "warning",
         steps: 12,
-        model: { providerID: "anthropic", id: "claude-sonnet", variant: undefined },
+        model: { providerID: "deepseek", id: "deepseek-flash", variant: undefined },
       })
       expect(reviewer.request).toEqual({
         headers: { first: "one", shared: "last", second: "two" },
@@ -236,7 +236,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
             await fs.writeFile(
               path.join(tmp.path, "agents", "reviewer.md"),
               `---
-model: openrouter/openai/gpt-5
+model: xiaomi/mimo-v2.6-pro
 description: Markdown description
 temperature: 0.5
 tools:
@@ -280,7 +280,7 @@ Use native v2 fields.`,
           )
 
           expect(yield* agents.get(AgentV2.ID.make("reviewer"))).toMatchObject({
-            model: { providerID: "openrouter", id: "openai/gpt-5" },
+            model: { providerID: "xiaomi", id: "mimo-v2.6-pro" },
             system: "Review carefully.",
             description: "Markdown description",
             request: { body: { temperature: 0.5 } },

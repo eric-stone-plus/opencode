@@ -968,7 +968,10 @@ it.live("session.processor does not replay completed tools after a stream failur
         expect(value).toBe("stop")
         expect(handle.message.error).toMatchObject({
           name: "APIError",
-          data: { message: expect.stringContaining("not retried because a tool had already started"), isRetryable: false },
+          data: {
+            message: expect.stringContaining("not retried because a tool had already started"),
+            isRetryable: false,
+          },
         })
         expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
         expect(parts.find((part) => part.type === "tool")?.state.status).toBe("completed")
@@ -1072,7 +1075,10 @@ it.live("session.processor does not replay tools still running when a stream fai
         expect(value).toBe("stop")
         expect(handle.message.error).toMatchObject({
           name: "APIError",
-          data: { message: expect.stringContaining("not retried because a tool had already started"), isRetryable: false },
+          data: {
+            message: expect.stringContaining("not retried because a tool had already started"),
+            isRetryable: false,
+          },
         })
         expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
         expect(parts.find((part) => part.type === "tool")?.state.status).toBe("error")
@@ -1751,7 +1757,7 @@ itInteractiveDoom.live("session.processor asks doom_loop for identical calls int
 
 // ---------------------------------------------------------------------------
 // Auto price match gate: only a zero-rate model with a nonzero step may
-// resolve prices; nanoAiu billing always wins.
+// resolve prices.
 // ---------------------------------------------------------------------------
 
 const pricingCalls: Array<{ providerID: string; modelID: string }> = []
@@ -1796,7 +1802,9 @@ const zeroTokensLLM = stepFinishLLM({
   cacheReadInputTokens: 0,
   cacheWriteInputTokens: 0,
 })
-const itZeroTokens = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, zeroTokensLLM], [Pricing.node, countingPricing]]))
+const itZeroTokens = testEffect(
+  LayerNode.compile(root, [...replacements, [LLM.node, zeroTokensLLM], [Pricing.node, countingPricing]]),
+)
 
 itZeroTokens.live("session.processor skips auto price match when the step used no tokens", () =>
   provideTmpdirInstance(
@@ -1820,8 +1828,16 @@ itZeroTokens.live("session.processor skips auto price match when the step used n
   ),
 )
 
-const tokensLLM = stepFinishLLM({ inputTokens: 10, outputTokens: 4, reasoningTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 })
-const itTokens = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, tokensLLM], [Pricing.node, countingPricing]]))
+const tokensLLM = stepFinishLLM({
+  inputTokens: 10,
+  outputTokens: 4,
+  reasoningTokens: 0,
+  cacheReadInputTokens: 0,
+  cacheWriteInputTokens: 0,
+})
+const itTokens = testEffect(
+  LayerNode.compile(root, [...replacements, [LLM.node, tokensLLM], [Pricing.node, countingPricing]]),
+)
 
 itTokens.live("session.processor resolves and applies prices for a zero-rate model with tokens", () =>
   provideTmpdirInstance(
@@ -1841,35 +1857,6 @@ itTokens.live("session.processor resolves and applies prices for a zero-rate mod
         // (10*2 + 4*6) / 1e6 at the matched rates.
         const step = (yield* MessageV2.parts(msg.id)).find((part) => part.type === "step-finish")
         expect(step?.cost).toBeCloseTo(0.000044, 12)
-      }),
-    { config: cfg },
-  ),
-)
-
-const nanoAiuLLM = stepFinishLLM(
-  { inputTokens: 10, outputTokens: 4, reasoningTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
-  { copilot: { totalNanoAiu: 100_000_000_000 } },
-)
-const itNanoAiu = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, nanoAiuLLM], [Pricing.node, countingPricing]]))
-
-itNanoAiu.live("session.processor keeps nanoAiu billing and never resolves rates for it", () =>
-  provideTmpdirInstance(
-    (dir) =>
-      Effect.gen(function* () {
-        pricingCalls.length = 0
-        const { processors, session, provider } = yield* boot()
-        const chat = yield* session.create({})
-        const parent = yield* user(chat.id, "hi")
-        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
-        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
-        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
-        const result = yield* handle.process(streamInput(chat, parent, mdl))
-
-        expect(result).toBe("continue")
-        expect(pricingCalls).toHaveLength(0)
-        // 100_000_000_000 nanoAiu = $1.00.
-        const step = (yield* MessageV2.parts(msg.id)).find((part) => part.type === "step-finish")
-        expect(step?.cost).toBeCloseTo(1, 12)
       }),
     { config: cfg },
   ),

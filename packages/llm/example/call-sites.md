@@ -1,5 +1,9 @@
 # LLM Call Site Sketches
 
+> Fork note: this checkout supports only the Alibaba, DeepSeek, Zhipu, and Xiaomi MiMo vendors. Examples below that
+> use other vendors (OpenAI, Azure, Bedrock, Gemini, Cloudflare, GitHub Copilot, OpenRouter, xAI) are historical design
+> sketches; those providers and protocols no longer exist in this package. See `README.md` for the current surface.
+
 Scratchpad for examples first, abstractions second. Current direction: routes
 execute, provider facades organize configured route sets, and models carry route
 values directly.

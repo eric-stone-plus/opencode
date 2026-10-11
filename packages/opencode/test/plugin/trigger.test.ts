@@ -24,7 +24,7 @@ const it = testEffect(
     [Auth.node, AuthTest.empty],
     [Account.node, AccountTest.empty],
     [Npm.node, NpmTest.noop],
-    [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true })],
+    [RuntimeFlags.node, RuntimeFlags.layer()],
   ]),
 )
 const systemHook = "experimental.chat.system.transform"
@@ -63,8 +63,8 @@ const triggerSystemTransform = Effect.fn("PluginTriggerTest.triggerSystemTransfo
     systemHook,
     {
       model: {
-        providerID: ProviderV2.ID.anthropic,
-        modelID: ModelV2.ID.make("claude-sonnet-4-6"),
+        providerID: ProviderV2.ID.make("deepseek"),
+        modelID: ModelV2.ID.make("deepseek-v4-flash"),
       },
     },
     out,

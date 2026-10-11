@@ -12,23 +12,21 @@ import type { LLMError, LLMEvent, LLMRequest, ProtocolID } from "../schema"
  * Examples:
  *
  * - `OpenAIChat.protocol` — chat completions style
- * - `OpenAIResponses.protocol` — responses API
  * - `AnthropicMessages.protocol` — messages API with content blocks
- * - `Gemini.protocol` — generateContent
- * - `BedrockConverse.protocol` — Converse with binary event-stream framing
  *
  * A `Protocol` is **not** a deployment. It does not know which URL, which
  * headers, or which auth scheme to use. Those are deployment concerns owned
  * by `Route.make(...)` along with the chosen `Endpoint`, `Auth`,
- * and `Framing`. This separation is what lets DeepSeek, TogetherAI, Cerebras,
- * etc. all reuse `OpenAIChat.protocol` without forking 300 lines per provider.
+ * and `Framing`. This separation is what lets DeepSeek and other
+ * OpenAI-compatible providers reuse `OpenAIChat.protocol` without forking 300
+ * lines per provider.
  *
  * The four type parameters reflect the pipeline:
  *
  * - `Body` — provider-native request body candidate. `Route.make(...)`
  *   validates and JSON-encodes it with `body.schema`.
  * - `Frame` — one unit of the framed response stream. SSE: a JSON data
- *   string. AWS event stream: a parsed binary frame.
+ *   string.
  * - `Event` — schema-decoded provider event produced from one frame.
  * - `State` — accumulator threaded through `stream.step` to translate event
  *   sequences into `LLMEvent` sequences.

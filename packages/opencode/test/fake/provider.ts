@@ -5,8 +5,8 @@ import { ModelV2 } from "@opencode-ai/core/model"
 
 export namespace ProviderTest {
   export function model(override: Partial<Provider.Model> = {}): Provider.Model {
-    const id = override.id ?? ModelV2.ID.make("gpt-5.2")
-    const providerID = override.providerID ?? ProviderV2.ID.make("openai")
+    const id = override.id ?? ModelV2.ID.make("deepseek-v4-flash")
+    const providerID = override.providerID ?? ProviderV2.ID.make("deepseek")
     return {
       id,
       providerID,
@@ -20,7 +20,7 @@ export namespace ProviderTest {
         input: { text: true, image: false, audio: false, video: false, pdf: false },
         output: { text: true, image: false, audio: false, video: false, pdf: false },
       },
-      api: { id, url: "https://example.com", npm: "@ai-sdk/openai" },
+      api: { id, url: "https://example.com", npm: "@ai-sdk/openai-compatible" },
       cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
       limit: { context: 200_000, output: 10_000 },
       status: "active",
