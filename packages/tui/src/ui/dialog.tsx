@@ -1,5 +1,15 @@
 import { useRenderer, useTerminalDimensions } from "@opentui/solid"
-import { batch, createContext, createEffect, onCleanup, Show, useContext, type JSX, type ParentProps } from "solid-js"
+import {
+  batch,
+  createContext,
+  createEffect,
+  createMemo,
+  onCleanup,
+  Show,
+  useContext,
+  type JSX,
+  type ParentProps,
+} from "solid-js"
 import { useTheme } from "../context/theme"
 import { MouseButton, Renderable, RGBA } from "@opentui/core"
 import { createStore } from "solid-js/store"
@@ -7,22 +17,28 @@ import { useToast } from "./toast"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { useBindings, useOpencodeModeStack } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { useTuiConfig } from "../config"
+import { getScrollAcceleration } from "../util/scroll"
 
 export function Dialog(
   props: ParentProps<{
     size?: "medium" | "large" | "xlarge"
     onClose: () => void
+    // Pinned chrome rendered above the scrollable body so the title/close
+    // affordance stays visible while the content is scrolled (landscape).
+    header?: () => JSX.Element
   }>,
 ) {
   const dimensions = useTerminalDimensions()
   const { theme } = useTheme()
   const renderer = useRenderer()
+  const tuiConfig = useTuiConfig()
+  const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
 
   let dismiss = false
   const width = () => {
-    if (props.size === "xlarge") return 116
-    if (props.size === "large") return 88
-    return 60
+    const sizeWidth = props.size === "xlarge" ? 116 : props.size === "large" ? 88 : 60
+    return Math.min(sizeWidth, Math.max(0, dimensions().width - 2))
   }
 
   return (
@@ -40,14 +56,15 @@ export function Dialog(
       width={dimensions().width}
       height={dimensions().height}
       alignItems="center"
+      justifyContent="center"
       position="absolute"
       zIndex={3000}
-      paddingTop={dimensions().height / 4}
       left={0}
       top={0}
       backgroundColor={RGBA.fromInts(0, 0, 0, 150)}
     >
       <box
+        id="dialog-panel"
         onMouseUp={(e: { stopPropagation(): void }) => {
           // A selection release must bubble up to the copy-on-select handler in
           // DialogProvider; the backdrop's dismiss flag keeps it from closing the dialog.
@@ -56,11 +73,33 @@ export function Dialog(
           e.stopPropagation()
         }}
         width={width()}
-        maxWidth={dimensions().width - 2}
+        maxHeight={dimensions().height}
+        overflow="hidden"
+        flexDirection="column"
         backgroundColor={theme.backgroundPanel}
         paddingTop={1}
       >
-        {props.children}
+        <Show when={props.header}>
+          <box id="dialog-header" flexShrink={0}>
+            {props.header!()}
+          </box>
+        </Show>
+        {/* Tall content (realistic /usage is ~30 rows) overflows short landscape
+            terminals; the shared scrollbox keeps every row reachable instead of
+            clipping it below the panel edge. contentOptions minHeight 0 overrides
+            the scrollbox content's default minHeight 100%, which otherwise
+            resolves against the terminal height and forces the panel to full
+            height even for short dialogs (confirm/help/prompt look). */}
+        <scrollbox
+          id="dialog-scroll"
+          flexGrow={1}
+          flexShrink={1}
+          scrollbarOptions={{ visible: false }}
+          contentOptions={{ minHeight: 0 }}
+          scrollAcceleration={scrollAcceleration()}
+        >
+          {props.children}
+        </scrollbox>
       </box>
     </box>
   )
@@ -73,6 +112,7 @@ function init() {
       onClose?: () => void
     }[],
     size: "medium" as "medium" | "large" | "xlarge",
+    header: undefined as (() => JSX.Element) | undefined,
   })
 
   const renderer = useRenderer()
@@ -115,7 +155,19 @@ function init() {
           }
           const current = store.stack.at(-1)
           current?.onClose?.()
-          setStore("stack", store.stack.slice(0, -1))
+          const rest = store.stack.slice(0, -1)
+          // Reset size/header when the last dialog pops; a stale pinned header
+          // would otherwise survive into the next dialog opened without
+          // replace() (replace()/clear() already reset them).
+          if (rest.length === 0) {
+            batch(() => {
+              setStore("size", "medium")
+              setStore("header", undefined)
+              setStore("stack", rest)
+            })
+          } else {
+            setStore("stack", rest)
+          }
           refocus()
         },
       },
@@ -129,7 +181,16 @@ function init() {
           }
           const current = store.stack.at(-1)
           current?.onClose?.()
-          setStore("stack", store.stack.slice(0, -1))
+          const rest = store.stack.slice(0, -1)
+          if (rest.length === 0) {
+            batch(() => {
+              setStore("size", "medium")
+              setStore("header", undefined)
+              setStore("stack", rest)
+            })
+          } else {
+            setStore("stack", rest)
+          }
           refocus()
         },
       },
@@ -143,6 +204,7 @@ function init() {
       }
       batch(() => {
         setStore("size", "medium")
+        setStore("header", undefined)
         setStore("stack", [])
       })
       refocus()
@@ -156,6 +218,7 @@ function init() {
         if (item.onClose) item.onClose()
       }
       setStore("size", "medium")
+      setStore("header", undefined)
       setStore("stack", [
         {
           element: input,
@@ -169,8 +232,14 @@ function init() {
     get size() {
       return store.size
     },
+    get header() {
+      return store.header
+    },
     setSize(size: "medium" | "large" | "xlarge") {
       setStore("size", size)
+    },
+    setHeader(header?: () => JSX.Element) {
+      setStore("header", header)
     },
   }
 }
@@ -213,7 +282,7 @@ export function DialogProvider(props: ParentProps) {
         onMouseUp={!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? copySelection : undefined}
       >
         <Show when={value.stack.length}>
-          <Dialog onClose={() => value.clear()} size={value.size}>
+          <Dialog onClose={() => value.clear()} size={value.size} header={value.header}>
             {value.stack.at(-1)!.element}
           </Dialog>
         </Show>

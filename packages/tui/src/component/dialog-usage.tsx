@@ -23,22 +23,78 @@ export const USAGE_ESTIMATE_NOTE =
 // counts derived from the loaded list can under-count once it is at the cap.
 const MESSAGE_CAP = 100
 
+// S5: the loaded-message fallback can never be complete — it sees at most
+// MESSAGE_CAP recent messages and nothing from compacted-away history. Say so
+// whenever it supplies totals (or the window is at its cap).
+export const USAGE_FALLBACK_NOTE =
+  "Note: fallback totals cover only the loaded message window (at most 100) and may under-count earlier or compacted spend."
+
+export type UsageTotals = {
+  input: number
+  output: number
+  reasoning: number
+  cacheRead: number
+  cacheWrite: number
+  cost: number
+  sum: number
+  source: "session" | "messages"
+}
+
+// S1/S3: authoritative lifetime totals live on the session row (the projector
+// accumulates every step-finish and never subtracts). Tolerate partial payloads
+// (cost without tokens or the reverse) instead of silently dropping to the
+// loaded-message fallback, which cannot cover pre-compaction spend.
+export function sessionTotals(
+  info:
+    | {
+        cost?: number
+        tokens?: {
+          input: number
+          output: number
+          reasoning: number
+          cache: { read: number; write: number }
+        }
+      }
+    | undefined,
+): UsageTotals | undefined {
+  if (!info) return undefined
+  const tokens = info.tokens
+  const cost = info.cost
+  if (!tokens && cost === undefined) return undefined
+  const input = tokens?.input ?? 0
+  const output = tokens?.output ?? 0
+  const reasoning = tokens?.reasoning ?? 0
+  const cacheRead = tokens?.cache.read ?? 0
+  const cacheWrite = tokens?.cache.write ?? 0
+  const value = cost ?? 0
+  return {
+    input,
+    output,
+    reasoning,
+    cacheRead,
+    cacheWrite,
+    cost: value,
+    sum: input + output + reasoning + cacheRead + cacheWrite + value,
+    source: "session" as const,
+  }
+}
+
+// S3/S5: session aggregates win whenever they carry anything at all; summing
+// loaded messages is a last resort for sessions whose aggregates never
+// accumulated (legacy rows).
+export function selectUsageTotals(input: { stored?: UsageTotals; derived: UsageTotals }): UsageTotals {
+  const saved = input.stored
+  if (saved && (saved.sum > 0 || input.derived.sum === 0)) return saved
+  return input.derived
+}
+
 export function usageSection(input: {
   loadedMessages: number
   userMessages: number
   assistantMessages: number
   toolCalls: number
   turns: number
-  totals: {
-    input: number
-    output: number
-    reasoning: number
-    cacheRead: number
-    cacheWrite: number
-    cost: number
-    sum: number
-    source: "session" | "messages"
-  }
+  totals: UsageTotals
 }) {
   if (input.assistantMessages === 0 && input.totals.sum <= 0) {
     return { rows: [{ label: "Usage", value: "No model calls yet in this session." }], footnotes: [] }
@@ -66,7 +122,7 @@ export function usageSection(input: {
         ? "Source: Totals from session aggregates."
         : `Source: Totals aggregated from ${input.loadedMessages} loaded messages.`,
       ...(input.totals.source === "messages" || input.loadedMessages >= MESSAGE_CAP
-        ? ["Note: usage is incomplete and may under-count."]
+        ? [USAGE_FALLBACK_NOTE]
         : []),
       USAGE_ESTIMATE_NOTE,
     ],
@@ -85,6 +141,18 @@ export function DialogUsage() {
   const [copied, setCopied] = createSignal(false)
 
   dialog.setSize("large")
+  // Pin the title/close row above the scrollable body so it stays visible when
+  // the tall report scrolls in short landscape terminals.
+  dialog.setHeader(() => (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" justifyContent="space-between">
+      <text fg={theme.text} attributes={TextAttributes.BOLD}>
+        Session Usage
+      </text>
+      <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+        esc
+      </text>
+    </box>
+  ))
 
   const sessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
   const session = createMemo(() => {
@@ -146,31 +214,13 @@ export function DialogUsage() {
     }
   })
 
-  const stored = createMemo(() => {
-    const info = session()
-    if (!info?.tokens || info.cost === undefined) return
-    const tokens = info.tokens
-    return {
-      input: tokens.input,
-      output: tokens.output,
-      reasoning: tokens.reasoning,
-      cacheRead: tokens.cache.read,
-      cacheWrite: tokens.cache.write,
-      cost: info.cost,
-      sum: tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write + info.cost,
-      source: "session" as const,
-    }
-  })
+  const stored = createMemo(() => sessionTotals(session()))
 
-  // Prefer the session-level aggregates the server maintains; an all-zero
-  // session row alongside recorded message usage means the aggregates never
-  // accumulated, so fall back to summing the loaded messages.
-  const totals = createMemo(() => {
-    const saved = stored()
-    const derived = aggregated()
-    if (saved && (saved.sum > 0 || derived.sum === 0)) return saved
-    return derived
-  })
+  // Prefer the session-level aggregates the server maintains (complete
+  // lifetime totals across any number of compactions); an all-zero session row
+  // alongside recorded message usage means the aggregates never accumulated,
+  // so fall back to summing the loaded messages (S5 last resort, footnoted).
+  const totals = createMemo(() => selectUsageTotals({ stored: stored(), derived: aggregated() }))
 
   const context = createMemo(() => {
     const last = assistants().findLast((message) => message.tokens.output > 0)
@@ -292,14 +342,6 @@ export function DialogUsage() {
 
   return (
     <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text fg={theme.text} attributes={TextAttributes.BOLD}>
-          Session Usage
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
       {/* No click-to-copy on values: releasing a mouse selection must trigger
           the global copy-on-select so users can copy a single value. */}
       <For each={report()}>

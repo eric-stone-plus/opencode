@@ -13,6 +13,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionMessageUpdater } from "@opencode-ai/core/session/message-updater"
@@ -562,6 +563,202 @@ describe("SessionProjector", () => {
           time: { created },
         }),
       ])
+    }),
+  )
+
+  const setupUsageSession = Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    yield* db
+      .insert(ProjectTable)
+      .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+      .run()
+      .pipe(Effect.orDie)
+    yield* db
+      .insert(SessionTable)
+      .values({
+        id: sessionID,
+        project_id: Project.ID.global,
+        slug: "test",
+        directory: "/project",
+        title: "test",
+        version: "test",
+      })
+      .run()
+      .pipe(Effect.orDie)
+    return db
+  })
+
+  const readUsage = Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const row = yield* db
+      .select({
+        cost: SessionTable.cost,
+        input: SessionTable.tokens_input,
+        output: SessionTable.tokens_output,
+        reasoning: SessionTable.tokens_reasoning,
+        cacheRead: SessionTable.tokens_cache_read,
+        cacheWrite: SessionTable.tokens_cache_write,
+      })
+      .from(SessionTable)
+      .get()
+      .pipe(Effect.orDie)
+    return row!
+  })
+
+  const stepFinishPart = (partID: string, messageID: string, cost: number, input = 100) =>
+    SessionV1.StepFinishPart.make({
+      id: SessionV1.PartID.make(partID),
+      sessionID,
+      messageID: SessionV1.MessageID.make(messageID),
+      type: "step-finish",
+      reason: "stop",
+      cost,
+      tokens: { input, output: 10, reasoning: 0, cache: { read: 5, write: 2 } },
+    })
+
+  // Part rows foreign-key message rows, so every billed part needs its message
+  // projected first (MessageUpdated), as the live processor does.
+  const publishAssistantMessage = (messageID: string) =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionV1.Event.MessageUpdated, {
+        sessionID,
+        info: SessionV1.Assistant.make({
+          id: SessionV1.MessageID.make(messageID),
+          sessionID,
+          role: "assistant",
+          time: { created: 1 },
+          parentID: SessionV1.MessageID.make("msg_parent_root"),
+          modelID: ModelV2.ID.make("model"),
+          providerID: ProviderV2.ID.make("provider"),
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/project", root: "/project" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
+      })
+    })
+
+  it.effect("session totals survive MessageRemoved of a billed message", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      const messageID = SessionV1.MessageID.make("msg_billed")
+      yield* publishAssistantMessage("msg_billed")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_billed", "msg_billed", 0.5),
+        time: 1,
+      })
+      expect(yield* readUsage).toMatchObject({ cost: 0.5, input: 100 })
+
+      yield* events.publish(SessionV1.Event.MessageRemoved, { sessionID, messageID })
+
+      expect(yield* readUsage).toMatchObject({ cost: 0.5, input: 100, output: 10 })
+    }),
+  )
+
+  it.effect("session totals survive PartRemoved of a step-finish part", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      yield* publishAssistantMessage("msg_parent")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_removed", "msg_parent", 0.25),
+        time: 1,
+      })
+      expect(yield* readUsage).toMatchObject({ cost: 0.25, input: 100 })
+
+      yield* events.publish(SessionV1.Event.PartRemoved, {
+        sessionID,
+        messageID: SessionV1.MessageID.make("msg_parent"),
+        partID: SessionV1.PartID.make("prt_removed"),
+      })
+
+      expect(yield* readUsage).toMatchObject({ cost: 0.25, input: 100 })
+    }),
+  )
+
+  it.effect("PartUpdated rewrite of a step-finish adjusts by delta", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      yield* publishAssistantMessage("msg_rewrite")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_rewrite", "msg_rewrite", 0.3),
+        time: 1,
+      })
+      expect(yield* readUsage).toMatchObject({ cost: 0.3 })
+
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_rewrite", "msg_rewrite", 0.5),
+        time: 2,
+      })
+      expect(yield* readUsage).toMatchObject({ cost: 0.5 })
+
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_rewrite", "msg_rewrite", 0.2),
+        time: 3,
+      })
+      expect(yield* readUsage).toMatchObject({ cost: 0.2 })
+    }),
+  )
+
+  it.effect("session totals stay complete across two compaction removal cycles", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      const snapshot: number[] = []
+      const record = Effect.gen(function* () {
+        snapshot.push((yield* readUsage).cost)
+      })
+
+      // Compaction cycle 1: a billed summary message is written, then a failed
+      // summary is removed on retry (compaction.ts removeMessage paths).
+      yield* publishAssistantMessage("msg_summary_1")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_cycle1", "msg_summary_1", 1, 10),
+        time: 1,
+      })
+      yield* record
+      yield* events.publish(SessionV1.Event.MessageRemoved, {
+        sessionID,
+        messageID: SessionV1.MessageID.make("msg_summary_1"),
+      })
+      yield* record
+
+      // Compaction cycle 2: same story for a second summary.
+      yield* publishAssistantMessage("msg_summary_2")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_cycle2", "msg_summary_2", 2, 20),
+        time: 2,
+      })
+      yield* record
+      yield* events.publish(SessionV1.Event.MessageRemoved, {
+        sessionID,
+        messageID: SessionV1.MessageID.make("msg_summary_2"),
+      })
+      yield* record
+
+      // Post-compaction spend keeps accruing.
+      yield* publishAssistantMessage("msg_after")
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: stepFinishPart("prt_after", "msg_after", 3, 30),
+        time: 3,
+      })
+      yield* record
+
+      expect(yield* readUsage).toMatchObject({ cost: 6, input: 60, output: 30 })
+      // S1: totals are monotonic across every removal.
+      for (let i = 1; i < snapshot.length; i++) expect(snapshot[i]).toBeGreaterThanOrEqual(snapshot[i - 1])
     }),
   )
 })

@@ -273,16 +273,10 @@ const layer = Layer.effectDiscard(
     )
     yield* events.project(SessionV1.Event.MessageRemoved, (event) =>
       Effect.gen(function* () {
-        const rows = yield* db
-          .select()
-          .from(PartTable)
-          .where(and(eq(PartTable.message_id, event.data.messageID), eq(PartTable.session_id, event.data.sessionID)))
-          .all()
-          .pipe(Effect.orDie)
-        for (const row of rows) {
-          const previous = usage(row.data)
-          if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
-        }
+        // S2/S4: removing a message must never reduce session usage totals.
+        // The spend was billed regardless of the message's lifetime, and the
+        // message's parts cascade away with its row. Only PartUpdated applies
+        // a delta (a rewrite of the same step-finish part).
         yield* db
           .delete(MessageTable)
           .where(and(eq(MessageTable.id, event.data.messageID), eq(MessageTable.session_id, event.data.sessionID)))
@@ -291,21 +285,12 @@ const layer = Layer.effectDiscard(
       }),
     )
     yield* events.project(SessionV1.Event.PartRemoved, (event) =>
-      Effect.gen(function* () {
-        const row = yield* db
-          .select()
-          .from(PartTable)
-          .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
-          .get()
-          .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
-        yield* db
-          .delete(PartTable)
-          .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
-          .run()
-          .pipe(Effect.orDie)
-      }),
+      // S2/S4: part removal is not a billing correction — never subtract.
+      db
+        .delete(PartTable)
+        .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
+        .run()
+        .pipe(Effect.orDie),
     )
     yield* events.project(SessionV1.Event.PartUpdated, (event) =>
       Effect.gen(function* () {

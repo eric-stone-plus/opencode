@@ -13,7 +13,7 @@ type Opts = {
 export function createTuiPluginApi(opts: Opts = {}) {
   const values = new Map<string, unknown>()
   const color = RGBA.fromInts(200, 200, 200)
-  const dialog = { clear() {}, replace() {}, setSize() {}, size: "medium" as const, depth: 0, open: false }
+  const dialog = { clear() {}, replace() {}, setSize() {}, setHeader() {}, size: "medium" as const, depth: 0, open: false }
   return {
     attention: { notify: async () => ({ ok: false, notification: false, sound: false }), ...opts.attention },
     client: opts.client,
