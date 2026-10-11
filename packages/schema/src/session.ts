@@ -32,6 +32,9 @@ export const Info = Schema.Struct({
       write: Schema.Finite,
     }),
   }),
+  // Lifetime compaction-boundary count, accumulated by the projector. Optional
+  // because sessions created before the column carry no value.
+  compactions: Schema.Finite.pipe(optional),
   time: Schema.Struct({
     created: DateTimeUtcFromMillis,
     updated: DateTimeUtcFromMillis,

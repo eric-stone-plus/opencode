@@ -192,6 +192,7 @@ export type Session = {
       write: number
     }
   }
+  compactions?: number
   share?: {
     url: string
   }
@@ -2235,6 +2236,7 @@ export type GlobalSession = {
       write: number
     }
   }
+  compactions?: number
   share?: {
     url: string
   }
@@ -3949,6 +3951,7 @@ export type SessionV2Info = {
       write: number
     }
   }
+  compactions?: number
   time: {
     created: number
     updated: number

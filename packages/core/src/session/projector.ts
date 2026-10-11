@@ -65,6 +65,7 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     tokens_reasoning: (info.tokens ?? { reasoning: 0 }).reasoning,
     tokens_cache_read: (info.tokens ?? { cache: { read: 0 } }).cache.read,
     tokens_cache_write: (info.tokens ?? { cache: { write: 0 } }).cache.write,
+    compactions: info.compactions ?? 0,
     revert: info.revert ? { ...info.revert, messageID: SessionMessage.ID.make(info.revert.messageID) } : null,
     permission: info.permission ? [...info.permission] : undefined,
     time_created: info.time.created,
@@ -101,6 +102,31 @@ function applyUsage(
       tokens_reasoning: sql`${SessionTable.tokens_reasoning} + ${value.tokens.reasoning * sign}`,
       tokens_cache_read: sql`${SessionTable.tokens_cache_read} + ${value.tokens.cache.read * sign}`,
       tokens_cache_write: sql`${SessionTable.tokens_cache_write} + ${value.tokens.cache.write * sign}`,
+      time_updated: sql`${SessionTable.time_updated}`,
+    })
+    .where(eq(SessionTable.id, sessionID))
+    .run()
+    .pipe(Effect.orDie)
+}
+
+// A compaction boundary marker: one user-message part per auto or manual
+// compaction. Counting markers (not summaries) matches how the session
+// aggregates spend — the work happened, and a later revert or a failed
+// summary does not un-count it.
+function isCompactionPart(part: unknown): boolean {
+  return typeof part === "object" && part !== null && (part as Record<string, unknown>).type === "compaction"
+}
+
+function applyCompaction(
+  db: DatabaseService,
+  sessionID: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["sessionID"],
+) {
+  return db
+    .update(SessionTable)
+    .set({
+      compactions: sql`${SessionTable.compactions} + 1`,
+      // Pin the timestamp: a compaction projection is bookkeeping, and
+      // `time_updated` carries `$onUpdate` — like applyUsage, do not bump it.
       time_updated: sql`${SessionTable.time_updated}`,
     })
     .where(eq(SessionTable.id, sessionID))
@@ -309,6 +335,11 @@ const layer = Layer.effectDiscard(
         const next = usage(event.data.part)
         if (previous) yield* applyUsage(db, row.session_id, previous, -1)
         if (next) yield* applyUsage(db, sessionID, next)
+        // Count a compaction once, on first insert. Later PartUpdated events for
+        // the same marker (the tail_start_id refinement) must not re-count it,
+        // and a rewritten marker must not be missed either — `row` is the
+        // pre-upsert existence check for exactly that.
+        if (row === undefined && isCompactionPart(event.data.part)) yield* applyCompaction(db, sessionID)
       }),
     )
     yield* events.project(SessionEvent.AgentSwitched, (event) =>
@@ -375,7 +406,15 @@ const layer = Layer.effectDiscard(
     yield* events.project(SessionEvent.Reasoning.Started, (event) => run(db, event))
     yield* events.project(SessionEvent.Reasoning.Ended, (event) => run(db, event))
     // yield* events.project(SessionEvent.Retried, (event) => run(db, event))
-    yield* events.project(SessionEvent.Compaction.Ended, (event) => run(db, event))
+    // A v2 compaction has no boundary part to count; its ended event is the
+    // single signal. The two engines never emit both for one compaction, so a
+    // session's count is the number of compactions it actually ran.
+    yield* events.project(SessionEvent.Compaction.Ended, (event) =>
+      Effect.gen(function* () {
+        yield* run(db, event)
+        yield* applyCompaction(db, event.data.sessionID)
+      }),
+    )
     yield* events.project(SessionEvent.RevertEvent.Staged, (event) =>
       db
         .update(SessionTable)

@@ -201,6 +201,7 @@ export default {
           \`tokens_reasoning\` integer DEFAULT 0 NOT NULL,
           \`tokens_cache_read\` integer DEFAULT 0 NOT NULL,
           \`tokens_cache_write\` integer DEFAULT 0 NOT NULL,
+          \`compactions\` integer DEFAULT 0 NOT NULL,
           \`revert\` text,
           \`permission\` text,
           \`agent\` text,

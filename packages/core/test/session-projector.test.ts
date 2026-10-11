@@ -598,6 +598,7 @@ describe("SessionProjector", () => {
         reasoning: SessionTable.tokens_reasoning,
         cacheRead: SessionTable.tokens_cache_read,
         cacheWrite: SessionTable.tokens_cache_write,
+        compactions: SessionTable.compactions,
       })
       .from(SessionTable)
       .get()
@@ -614,6 +615,18 @@ describe("SessionProjector", () => {
       reason: "stop",
       cost,
       tokens: { input, output: 10, reasoning: 0, cache: { read: 5, write: 2 } },
+    })
+
+  // SessionV1.User carries { providerID, modelID }, unlike the assistant shape.
+  const userModel = { providerID: ProviderV2.ID.make("provider"), modelID: ModelV2.ID.make("model") }
+
+  const compactionPart = (partID: string, messageID: string) =>
+    SessionV1.CompactionPart.make({
+      id: SessionV1.PartID.make(partID),
+      sessionID,
+      messageID: SessionV1.MessageID.make(messageID),
+      type: "compaction",
+      auto: true,
     })
 
   // Part rows foreign-key message rows, so every billed part needs its message
@@ -760,5 +773,102 @@ describe("SessionProjector", () => {
       // S1: totals are monotonic across every removal.
       for (let i = 1; i < snapshot.length; i++) expect(snapshot[i]).toBeGreaterThanOrEqual(snapshot[i - 1])
     }),
+  )
+
+  it.effect("compaction boundaries are counted once and never subtracted", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      // A user message carries the compaction marker, as the live loop writes it.
+      yield* events.publish(SessionV1.Event.MessageUpdated, {
+        sessionID,
+        info: SessionV1.User.make({
+          id: SessionV1.MessageID.make("msg_compact_1"),
+          sessionID,
+          role: "user",
+          time: { created: 1 },
+          agent: "build",
+          model: userModel,
+        }),
+      })
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: compactionPart("prt_compact_1", "msg_compact_1"),
+        time: 1,
+      })
+      expect(yield* readUsage).toMatchObject({ compactions: 1 })
+
+      // The tail_start_id refinement rewrites the same marker; it must not re-count.
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: SessionV1.CompactionPart.make({
+          ...compactionPart("prt_compact_1", "msg_compact_1"),
+          tail_start_id: SessionV1.MessageID.make("msg_tail"),
+        }),
+        time: 2,
+      })
+      expect(yield* readUsage).toMatchObject({ compactions: 1 })
+
+      // A second compaction gets its own marker and its own count.
+      yield* events.publish(SessionV1.Event.MessageUpdated, {
+        sessionID,
+        info: SessionV1.User.make({
+          id: SessionV1.MessageID.make("msg_compact_2"),
+          sessionID,
+          role: "user",
+          time: { created: 3 },
+          agent: "build",
+          model: userModel,
+        }),
+      })
+      yield* events.publish(SessionV1.Event.PartUpdated, {
+        sessionID,
+        part: compactionPart("prt_compact_2", "msg_compact_2"),
+        time: 3,
+      })
+      expect(yield* readUsage).toMatchObject({ compactions: 2 })
+
+      // Marker removal is not a billing correction — the compaction still ran.
+      yield* events.publish(SessionV1.Event.PartRemoved, {
+        sessionID,
+        messageID: SessionV1.MessageID.make("msg_compact_2"),
+        partID: SessionV1.PartID.make("prt_compact_2"),
+      })
+      expect(yield* readUsage).toMatchObject({ compactions: 2 })
+    }),
+  )
+
+  it.effect("a v2 compaction-ended event counts when no boundary part exists", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionEvent.Compaction.Ended, {
+        sessionID,
+        messageID: SessionMessage.ID.create(),
+        timestamp: DateTime.makeUnsafe(1),
+        reason: "auto",
+        text: "summary",
+        recent: "recent context",
+      })
+      expect(yield* readUsage).toMatchObject({ compactions: 1 })
+    }),
+  )
+
+  it.effect("the counted total reaches the session service payload, not just the row", () =>
+    Effect.gen(function* () {
+      yield* setupUsageSession
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionEvent.Compaction.Ended, {
+        sessionID,
+        messageID: SessionMessage.ID.create(),
+        timestamp: DateTime.makeUnsafe(1),
+        reason: "auto",
+        text: "summary",
+        recent: "recent context",
+      })
+      const sessions = yield* SessionV2.Service
+      // Exercises fromRow: the number the /usage dialog reads from session.get.
+      expect((yield* sessions.get(sessionID)).compactions).toBe(1)
+    }).pipe(Effect.provide(sessionsLayer)),
   )
 })

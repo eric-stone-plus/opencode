@@ -1,6 +1,6 @@
 import { TextAttributes } from "@opentui/core"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Part } from "@opencode-ai/sdk/v2"
 import { useTheme } from "../context/theme"
 import { useDialog } from "../ui/dialog"
 import { useSync } from "../context/sync"
@@ -28,6 +28,12 @@ const MESSAGE_CAP = 100
 // whenever it supplies totals (or the window is at its cap).
 export const USAGE_FALLBACK_NOTE =
   "Note: fallback totals cover only the loaded message window (at most 100) and may under-count earlier or compacted spend."
+
+// The compaction count has the same window hazard as cost: a long autonomous
+// run compacts far more often than the 100-message hydration window holds, so a
+// count derived from loaded messages under-reports. Say so when it is used.
+export const USAGE_COMPACTION_FALLBACK_NOTE =
+  "Note: compaction count comes from the loaded message window (at most 100); earlier compactions in this session may not be counted."
 
 export type UsageTotals = {
   input: number
@@ -88,6 +94,81 @@ export function selectUsageTotals(input: { stored?: UsageTotals; derived: UsageT
   return input.derived
 }
 
+// A session's compaction count, and which source supplied it.
+export type CompactionTotal = {
+  count: number
+  source: "session" | "messages"
+}
+
+// S1/S3 for compactions: the session aggregate the projector accumulates is the
+// lifetime count and survives the hydration window and any number of
+// compactions. Counting loaded compaction markers is the last resort for legacy
+// rows whose aggregate predates the column; an aggregate of 0 alongside loaded
+// markers means exactly that, so prefer the window count then.
+export function selectCompactionTotal(input: { stored?: number; derived: number }): CompactionTotal {
+  if (input.stored !== undefined && (input.stored > 0 || input.derived === 0))
+    return { count: input.stored, source: "session" }
+  return { count: input.derived, source: "messages" }
+}
+
+// Why a per-model breakdown can never be lifetime-accurate: only the session
+// scalar cost/token aggregates are projected and persisted; nothing attributes
+// spend to a model. So the split is derived from the loaded window and is
+// stated as such, exactly like the totals fallback.
+export const USAGE_MODEL_NOTE =
+  "Note: by-model totals cover only the loaded message window; earlier or compacted spend is not attributed."
+
+// Per-model spend, for sessions that switched models (planning on a cheap model
+// and editing on an expensive one, or a subagent model). Sums step-finish
+// receipts so multi-step turns count whole — `message.tokens` records the last
+// step only — and pairs them with per-message cost, which already accumulates
+// every step. Empty for single-model sessions, where the session row is exact.
+export function modelUsageRows(input: {
+  messages: readonly AssistantMessage[]
+  parts: Readonly<Record<string, readonly Part[]>>
+}): Array<{ label: string; value: string }> {
+  const byModel = new Map<
+    string,
+    { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; cost: number }
+  >()
+  for (const message of input.messages) {
+    const key = `${message.providerID}/${message.modelID}`
+    const entry = byModel.get(key) ?? {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    }
+    const steps = (input.parts[message.id] ?? []).filter((part) => part.type === "step-finish")
+    if (steps.length > 0) {
+      for (const step of steps) {
+        entry.input += step.tokens.input
+        entry.output += step.tokens.output
+        entry.reasoning += step.tokens.reasoning
+        entry.cacheRead += step.tokens.cache.read
+        entry.cacheWrite += step.tokens.cache.write
+      }
+    } else {
+      entry.input += message.tokens.input
+      entry.output += message.tokens.output
+      entry.reasoning += message.tokens.reasoning
+      entry.cacheRead += message.tokens.cache.read
+      entry.cacheWrite += message.tokens.cache.write
+    }
+    entry.cost += message.cost
+    byModel.set(key, entry)
+  }
+  if (byModel.size <= 1) return []
+  return [...byModel.entries()]
+    .sort((a, b) => b[1].cost - a[1].cost)
+    .map(([key, value]) => {
+      const tokens = value.input + value.output + value.reasoning + value.cacheRead + value.cacheWrite
+      return { label: key, value: `${money.format(value.cost)} · ${tokens.toLocaleString()} tokens` }
+    })
+}
+
 export function usageSection(input: {
   loadedMessages: number
   userMessages: number
@@ -95,6 +176,7 @@ export function usageSection(input: {
   toolCalls: number
   turns: number
   totals: UsageTotals
+  compactions?: CompactionTotal
 }) {
   if (input.assistantMessages === 0 && input.totals.sum <= 0) {
     return { rows: [{ label: "Usage", value: "No model calls yet in this session." }], footnotes: [] }
@@ -116,14 +198,14 @@ export function usageSection(input: {
       { label: "Messages", value: `${input.userMessages} user / ${input.assistantMessages} assistant` },
       { label: "Tool calls", value: input.toolCalls.toLocaleString() },
       { label: "Turns", value: input.turns.toLocaleString() },
+      ...(input.compactions ? [{ label: "Compactions", value: input.compactions.count.toLocaleString() }] : []),
     ],
     footnotes: [
       input.totals.source === "session"
         ? "Source: Totals from session aggregates."
         : `Source: Totals aggregated from ${input.loadedMessages} loaded messages.`,
-      ...(input.totals.source === "messages" || input.loadedMessages >= MESSAGE_CAP
-        ? [USAGE_FALLBACK_NOTE]
-        : []),
+      ...(input.totals.source === "messages" || input.loadedMessages >= MESSAGE_CAP ? [USAGE_FALLBACK_NOTE] : []),
+      ...(input.compactions?.source === "messages" ? [USAGE_COMPACTION_FALLBACK_NOTE] : []),
       USAGE_ESTIMATE_NOTE,
     ],
   }
@@ -216,6 +298,21 @@ export function DialogUsage() {
 
   const stored = createMemo(() => sessionTotals(session()))
 
+  // Loaded compaction markers (one user-message part per auto or manual
+  // compaction) — only meaningful within the hydration window.
+  const loadedCompactions = createMemo(
+    () =>
+      messages().filter(
+        (message) =>
+          message.role === "user" && (sync.data.part[message.id] ?? []).some((part) => part.type === "compaction"),
+      ).length,
+  )
+
+  // Lifetime compaction count the server accumulates, over the windowed count.
+  const compactions = createMemo(() =>
+    selectCompactionTotal({ stored: session()?.compactions, derived: loadedCompactions() }),
+  )
+
   // Prefer the session-level aggregates the server maintains (complete
   // lifetime totals across any number of compactions); an all-zero session row
   // alongside recorded message usage means the aggregates never accumulated,
@@ -254,6 +351,7 @@ export function DialogUsage() {
       toolCalls: parts.filter((part) => part.type === "tool").length,
       turns: parts.filter((part) => part.type === "step-finish").length,
       totals: totals(),
+      compactions: compactions(),
     })
   })
 
@@ -286,10 +384,12 @@ export function DialogUsage() {
     ]
     const used = usage()
     const windowRows = context()
+    const modelRows = modelUsageRows({ messages: assistants(), parts: sync.data.part })
     return [
       ...(sessionRows.length ? [{ title: "Session", rows: sessionRows, footnotes: [] }] : []),
       ...(metaRows.length ? [{ title: "Agent & Model", rows: metaRows, footnotes: [] }] : []),
       { title: "Usage (this session)", rows: used.rows, footnotes: used.footnotes },
+      ...(modelRows.length ? [{ title: "By model", rows: modelRows, footnotes: [USAGE_MODEL_NOTE] }] : []),
       ...(windowRows ? [{ title: "Context window", rows: windowRows, footnotes: [] }] : []),
     ]
   })
@@ -364,7 +464,13 @@ export function DialogUsage() {
                 </box>
               )}
             </For>
-            <For each={section.footnotes}>{(note) => <text fg={theme.textMuted} wrapMode="word">{note}</text>}</For>
+            <For each={section.footnotes}>
+              {(note) => (
+                <text fg={theme.textMuted} wrapMode="word">
+                  {note}
+                </text>
+              )}
+            </For>
           </box>
         )}
       </For>

@@ -10,6 +10,7 @@ import { DatabaseMigration } from "@opencode-ai/core/database/migration"
 import { migrations } from "@opencode-ai/core/database/migration.gen"
 import workspaceNameMigration from "@opencode-ai/core/database/migration/20260410174513_workspace-name"
 import sessionUsageMigration from "@opencode-ai/core/database/migration/20260510033149_session_usage"
+import sessionCompactionsMigration from "@opencode-ai/core/database/migration/20261011113913_session_compactions"
 import normalizeStoragePathsMigration from "@opencode-ai/core/database/migration/20260601010001_normalize_storage_paths"
 import sessionMessageProjectionOrderMigration from "@opencode-ai/core/database/migration/20260603040000_session_message_projection_order"
 import eventSourcedSessionInputMigration from "@opencode-ai/core/database/migration/20260604172448_event_sourced_session_input"
@@ -462,6 +463,37 @@ describe("DatabaseMigration", () => {
           tokens_cache_read: 5,
           tokens_cache_write: 6,
         })
+      }),
+    )
+  })
+
+  test("backfills lifetime compaction counts from stored boundary parts", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`CREATE TABLE session (id text PRIMARY KEY, time_updated integer NOT NULL)`)
+        yield* db.run(
+          sql`CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, data text NOT NULL)`,
+        )
+        yield* db.run(sql`INSERT INTO session (id, time_updated) VALUES ('session_1', 1)`)
+        yield* db.run(sql`INSERT INTO session (id, time_updated) VALUES ('session_2', 1)`)
+        // Two compaction boundaries plus non-compaction parts that must not count.
+        yield* db.run(
+          sql`INSERT INTO part (id, message_id, session_id, data) VALUES ('part_1', 'msg_1', 'session_1', '{"type":"compaction","auto":true}')`,
+        )
+        yield* db.run(
+          sql`INSERT INTO part (id, message_id, session_id, data) VALUES ('part_2', 'msg_2', 'session_1', '{"type":"compaction","auto":true}')`,
+        )
+        yield* db.run(
+          sql`INSERT INTO part (id, message_id, session_id, data) VALUES ('part_3', 'msg_3', 'session_1', '{"type":"text","text":"hi"}')`,
+        )
+
+        yield* DatabaseMigration.applyOnly(db, [sessionCompactionsMigration])
+
+        expect(yield* db.all(sql`SELECT id, compactions FROM session ORDER BY id`)).toEqual([
+          { id: "session_1", compactions: 2 },
+          { id: "session_2", compactions: 0 },
+        ])
       }),
     )
   })

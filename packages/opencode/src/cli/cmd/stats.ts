@@ -46,6 +46,43 @@ interface SessionStats {
   medianTokensPerSession: number
 }
 
+// Per-model token totals for one assistant message. `message.info.tokens`
+// records the LAST step only, so a multi-step turn under-counts there while its
+// cost accumulates across every step — summing step-finish receipts keeps the
+// token and cost figures consistent. Reasoning is folded into output, matching
+// how it is billed. Falls back to the message totals when no receipts are
+// loaded (parts not hydrated / legacy rows).
+type TokenUsage = { input: number; output: number; cache: { read: number; write: number } }
+export function messageTokenUsage(message: {
+  parts: readonly {
+    type: string
+    tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } }
+  }[]
+  tokens?: { input: number; output: number; reasoning: number; cache?: { read: number; write: number } } | undefined
+}): TokenUsage {
+  const steps = message.parts.filter((part) => part.type === "step-finish" && part.tokens !== undefined)
+  if (steps.length > 0) {
+    return steps.reduce<TokenUsage>(
+      (acc, step) => ({
+        input: acc.input + (step.tokens!.input || 0),
+        output: acc.output + (step.tokens!.output || 0) + (step.tokens!.reasoning || 0),
+        cache: {
+          read: acc.cache.read + (step.tokens!.cache.read || 0),
+          write: acc.cache.write + (step.tokens!.cache.write || 0),
+        },
+      }),
+      { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    )
+  }
+  const tokens = message.tokens
+  if (!tokens) return { input: 0, output: 0, cache: { read: 0, write: 0 } }
+  return {
+    input: tokens.input || 0,
+    output: (tokens.output || 0) + (tokens.reasoning || 0),
+    cache: { read: tokens.cache?.read || 0, write: tokens.cache?.write || 0 },
+  }
+}
+
 export const StatsCommand = effectCmd({
   command: "stats",
   describe: "show token usage and cost statistics",
@@ -193,13 +230,15 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
             sessionModelUsage[modelKey].messages++
             sessionModelUsage[modelKey].cost += message.info.cost || 0
 
-            if (message.info.tokens) {
-              sessionModelUsage[modelKey].tokens.input += message.info.tokens.input || 0
-              sessionModelUsage[modelKey].tokens.output +=
-                (message.info.tokens.output || 0) + (message.info.tokens.reasoning || 0)
-              sessionModelUsage[modelKey].tokens.cache.read += message.info.tokens.cache?.read || 0
-              sessionModelUsage[modelKey].tokens.cache.write += message.info.tokens.cache?.write || 0
-            }
+            // Sum every step-finish receipt, not message.info.tokens: the latter
+            // records the LAST step only, so a multi-step turn would under-count
+            // its per-model tokens while its cost (which accumulates per step)
+            // stayed whole — the two figures would disagree.
+            const usage = messageTokenUsage({ parts: message.parts, tokens: message.info.tokens })
+            sessionModelUsage[modelKey].tokens.input += usage.input
+            sessionModelUsage[modelKey].tokens.output += usage.output
+            sessionModelUsage[modelKey].tokens.cache.read += usage.cache.read
+            sessionModelUsage[modelKey].tokens.cache.write += usage.cache.write
           }
 
           for (const part of message.parts) {

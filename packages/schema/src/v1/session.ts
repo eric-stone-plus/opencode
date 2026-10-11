@@ -551,6 +551,7 @@ export const SessionInfo = Schema.Struct({
   summary: optional(SessionSummary),
   cost: optional(Schema.Finite),
   tokens: optional(SessionTokens),
+  compactions: optional(NonNegativeInt),
   share: optional(SessionShare),
   title: Schema.String,
   agent: optional(Schema.String),

@@ -106,6 +106,7 @@ export function fromRow(row: SessionRow): Info {
         write: row.tokens_cache_write,
       },
     },
+    compactions: row.compactions,
     share,
     metadata: row.metadata ?? undefined,
     revert,
@@ -144,6 +145,7 @@ export function toRow(info: Info) {
     tokens_reasoning: (info.tokens ?? EmptyTokens).reasoning,
     tokens_cache_read: (info.tokens ?? EmptyTokens).cache.read,
     tokens_cache_write: (info.tokens ?? EmptyTokens).cache.write,
+    compactions: info.compactions ?? 0,
     revert: info.revert
       ? {
           messageID: SessionMessage.ID.make(info.revert.messageID),
@@ -234,6 +236,10 @@ export const Info = Schema.Struct({
   summary: optional(Summary),
   cost: optional(Schema.Finite),
   tokens: optional(Tokens),
+  // Lifetime count of compaction boundaries recorded in this session (one per
+  // auto or manual compaction). Optional for rows and payloads predating the
+  // column; the projector accumulates it and never subtracts.
+  compactions: optional(NonNegativeInt),
   share: optional(Share),
   title: Schema.String,
   agent: optional(Schema.String),
