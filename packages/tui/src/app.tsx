@@ -288,7 +288,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       )
       renderer.once("destroy", () => shutdown.openUnsafe())
       yield* Effect.tryPromise(async () => {
-        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(1000)) ?? "dark"
+        // A terminal that never answers the theme query (Ptyxis, tmux) must not hold up first paint;
+        // the THEME_MODE event corrects the mode afterwards.
+        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(100)) ?? "dark"
         if (renderer.isDestroyed) return
 
         await render(() => {
