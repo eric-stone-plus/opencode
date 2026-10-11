@@ -278,21 +278,47 @@ function walkCanonical(models: Record<string, ModelsDev.Provider>, row: ModelsDe
   return { terminal, priced }
 }
 
+type Index = {
+  readonly exact: ReadonlyMap<string, readonly Candidate[]>
+  readonly caseless: ReadonlyMap<string, readonly Candidate[]>
+}
+
+// Keyed by registry identity: each refresh publishes a new object, and published objects are never mutated.
+const indexes = new WeakMap<Record<string, ModelsDev.Provider>, Index>()
+
+function indexOf(models: Record<string, ModelsDev.Provider>): Index {
+  const cached = indexes.get(models)
+  if (cached) return cached
+  const exact = new Map<string, Candidate[]>()
+  const caseless = new Map<string, Candidate[]>()
+  for (const [providerID, provider] of Object.entries(models)) {
+    for (const [key, row] of Object.entries(provider.models)) {
+      const candidate = { providerID, key, row }
+      addTo(exact, key, candidate)
+      addTo(caseless, key.toLowerCase(), candidate)
+    }
+  }
+  const built = { exact, caseless }
+  indexes.set(models, built)
+  return built
+}
+
+function addTo(map: Map<string, Candidate[]>, key: string, candidate: Candidate) {
+  const list = map.get(key)
+  if (list) list.push(candidate)
+  else map.set(key, [candidate])
+}
+
 function crossProvider(models: Record<string, ModelsDev.Provider>, modelID: string): Match | undefined {
-  const entries = Object.entries(models).flatMap(([providerID, provider]) =>
-    Object.entries(provider.models).map(([key, row]) => ({ providerID, key, row })),
-  )
+  const { exact, caseless } = indexOf(models)
   // Exact candidates win outright when they yield a price. All-zero exact rows
   // must not shadow priced case-variant rows, so on nothing the pipeline
   // re-runs on the union with the case-insensitive matches (the real registry
   // has 147 case-collision groups — merging variants into a priced exact set
   // would change results).
   return (
-    crossProviderVotes(models, entries.filter((entry) => entry.key === modelID)) ??
-    crossProviderVotes(
-      models,
-      entries.filter((entry) => entry.key.toLowerCase() === modelID.toLowerCase()),
-    )
+    crossProviderVotes(models, exact.get(modelID) ?? []) ??
+    crossProviderVotes(models, caseless.get(modelID.toLowerCase()) ?? [])
   )
 }
 
