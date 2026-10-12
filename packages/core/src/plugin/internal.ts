@@ -89,6 +89,7 @@ import { WriteTool } from "../tool/plugin/write.js"
 import { AgentPlugin } from "./agent.js"
 import BrowserPlugin from "@opencode/plugin-browser"
 import { CommandPlugin } from "./command.js"
+import { DeclaredProvidersPlugin } from "./fork/declared-providers.js"
 import { IdentityPlugin } from "./identity.js"
 import { PlanPlugin } from "./plan.js"
 import { ModelsDevPlugin } from "./models-dev.js"
@@ -259,12 +260,14 @@ const post = [
   ConfigCompatibilityPlugin.Plugin,
   ConfigSkillPlugin.Plugin,
   ConfigProviderPlugin.Plugin,
+  DeclaredProvidersPlugin.Plugin,
   ConfigWebSearchPlugin.Plugin,
   ConfigPolicyPlugin.Plugin,
 ] as const satisfies readonly InternalPlugin[]
 
-// Repository config must not switch off policy enforcement, so plugin remove operations skip these IDs.
-export const guarded: ReadonlySet<string> = new Set([ConfigPolicyPlugin.Plugin.id])
+// Repository config must not switch off policy enforcement or the fork provider policy, so plugin remove operations
+// skip these IDs.
+export const guarded: ReadonlySet<string> = new Set([ConfigPolicyPlugin.Plugin.id, DeclaredProvidersPlugin.Plugin.id])
 
 export const list = Effect.fn("PluginInternal.list")(function* () {
   // Capture only services; activation supplies the child Scope and batching context.

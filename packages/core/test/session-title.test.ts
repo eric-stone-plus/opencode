@@ -175,11 +175,6 @@ const small = Model.Info.make({
     { id: Model.VariantID.make("high") },
   ],
 })
-const lowSmall = Model.Info.make({
-  ...small,
-  variants: [{ id: Model.VariantID.make("low") }, { id: Model.VariantID.make("high") }],
-})
-
 beforeEach(() => {
   requests = []
   selectedSmall = undefined
@@ -197,6 +192,24 @@ const enableTitleAgent = Effect.gen(function* () {
     })
   })
 })
+
+it.effect("never infers a small model for the title and uses the session model", () =>
+  Effect.gen(function* () {
+    // The catalog still offers a small model; the fork policy ignores it unless `small_model` configures one.
+    selectedSmall = small
+    yield* enableTitleAgent
+    const sessionID = Session.ID.make("ses_title_no_small_model")
+    yield* insertSession(sessionID)
+    yield* prompt(sessionID, "Name this conversation")
+
+    const title = yield* SessionTitle.Service
+    yield* title.generate(sessionID)
+
+    expect(requests.map((request) => String(request.model.id))).toEqual(["title-model"])
+    const store = yield* SessionStore.Service
+    expect((yield* store.get(sessionID))?.title).toBe("Generated Title")
+  }),
+)
 
 it.effect("generates a title from the sole user message and renames the session", () =>
   Effect.gen(function* () {
@@ -283,63 +296,6 @@ it.effect("uses a hook-provided title without a model request", () =>
     expect(requests).toHaveLength(0)
     const store = yield* SessionStore.Service
     expect((yield* store.get(sessionID))?.title).toBe("Plugin Title")
-  }),
-)
-
-it.effect("uses a small model from the primary provider", () =>
-  Effect.gen(function* () {
-    selectedSmall = small
-    yield* enableTitleAgent
-    const sessionID = Session.ID.make("ses_title_small_model")
-    yield* insertSession(sessionID)
-    yield* prompt(sessionID, "Use a small model for this title")
-
-    const title = yield* SessionTitle.Service
-    yield* title.generate(sessionID)
-
-    expect(requests.map((request) => String(request.model.id))).toEqual(["title-small"])
-    expect(selections[1]?.variant).toBe(Model.VariantID.make("none"))
-    const store = yield* SessionStore.Service
-    expect((yield* store.get(sessionID))?.title).toBe("Generated Title")
-  }),
-)
-
-it.effect("falls back to the primary model when the small model fails", () =>
-  Effect.gen(function* () {
-    titleStream = () =>
-      requests.length === 1
-        ? Stream.make(LLMEvent.providerError({ message: "Small model unavailable" }))
-        : successfulTitle()
-    selectedSmall = lowSmall
-    yield* enableTitleAgent
-    const sessionID = Session.ID.make("ses_title_small_fallback")
-    yield* insertSession(
-      sessionID,
-      undefined,
-      undefined,
-      Model.Ref.make({
-        providerID: Provider.ID.make("test"),
-        id: Model.ID.make("title-model"),
-        variant: Model.VariantID.make("high"),
-      }),
-    )
-    yield* prompt(sessionID, "Fall back when title generation fails")
-
-    const attempted: Model.Ref[] = []
-    const hooks = yield* PluginHooks.Service
-    yield* hooks.register("session", "model.request", (event) =>
-      Effect.sync(() => {
-        attempted.push(event.model)
-      }),
-    )
-
-    const title = yield* SessionTitle.Service
-    yield* title.generate(sessionID)
-
-    expect(requests.map((request) => String(request.model.id))).toEqual(["title-small", "title-model"])
-    expect(attempted.map((model) => String(model.variant))).toEqual(["low", "high"])
-    const store = yield* SessionStore.Service
-    expect((yield* store.get(sessionID))?.title).toBe("Generated Title")
   }),
 )
 
