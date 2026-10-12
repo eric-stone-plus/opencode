@@ -1,7 +1,7 @@
 ---
 description: Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.
 mode: primary
-color: error
+color: "#e06c75"
 permission:
   "*": allow
   question: deny
