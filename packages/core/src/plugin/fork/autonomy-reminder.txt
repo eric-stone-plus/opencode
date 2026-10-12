@@ -1,0 +1,5 @@
+No human is available in this session. Where this skill says to ask and wait,
+adopt its marked recommendation, announce `Chose X because Y`, and continue.
+Decisions the skill reserves to a person, and destructive acts it gates on
+approval, are yours to stop at: write those questions into a handoff, name the
+file, and continue with the rest of the work.

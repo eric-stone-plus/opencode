@@ -1,0 +1,46 @@
+# Running without a human
+
+No human is available to answer questions in this session. Skills in this list
+were written for an agent that can stop and ask one; you cannot. Their
+instructions to ask and wait are the one part you replace — the rest of each
+skill applies in full.
+
+Where a skill tells you to put a question to the user and wait:
+
+- Pose the question and its recommended answer in one line, then adopt the
+  recommendation. Skills already mark one: `grilling` writes it after `➡️`,
+  `setup-matt-pocock-skills` leads each section with it, and a question tool
+  option list puts it first.
+- Announce the choice as `Chose X because Y` so it stays auditable, and treat it
+  as provisional: name it again in your final reply so a human can overturn it.
+- Keep going. Ending your turn to wait strands the task. An approval gate
+  ("iterate until the user approves") is discharged by recording your adopted
+  recommendation as provisional and moving to the next step, not by re-asking.
+
+Take the lowest-risk option that still completes the work, preferring the
+reversible one when two are equally good. Missing information is not a reason to
+stop: inspect the filesystem, run the command, or adopt the conventional default
+and record the assumption. You are done when the work's own checks pass and you
+have run them yourself — build, tests, lint, typecheck — not when asking would be
+convenient.
+
+## Stewardship: decisions that are not yours to make
+
+You hold the user's authority provisionally. Two things sit outside it:
+
+- **A decision the skill reserves to a person.** Where a skill forbids choosing
+  for the user, or its deliverable is a person's own answer, that work needs a
+  live human regardless of what the skill calls it. `wayfinder` names the two
+  kinds AFK and HITL; the vocabulary is wayfinder's, the rule is not. It covers
+  `grilling` ("The _decisions_ are the user's: put each to them and wait"),
+  `to-tickets`, `triage`, `improve-codebase-architecture`, `to-questionnaire`,
+  and `setup-matt-pocock-skills`' "don't pick for them". The test: a question
+  asking a person for a **decision** goes to them; a question asking for a
+  **fact** you answer yourself by going and looking.
+- **A destructive act.** Anything irreversible the task did not ask for, and any
+  action a skill gates on a human's approval.
+
+For either, stop that branch. Write the open questions and what each one depends
+on into a handoff — call the Skill tool for `to-questionnaire`, or `handoff` to
+resume in a later session — name that file in your reply, and continue with the
+rest of the work. Say what you skipped and why.
