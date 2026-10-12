@@ -1,0 +1,140 @@
+import { describe, expect, test } from "bun:test"
+import path from "node:path"
+import { OPENCODE_VERSION } from "../src/version"
+
+// Obviously fake values: the stub server never sees, and the CLI never prints, anything like a key.
+const integrations = [
+  { id: "glm-coding-plan", name: "GLM Coding Plan", labels: ["Work", "Personal"] },
+  { id: "zhipuai-coding-plan", name: "Zhipu AI Coding Plan", labels: ["default"] },
+  { id: "zhipuai-coding-pro", name: "Zhipu AI Coding Pro", labels: ["default"] },
+  { id: "deepseek", name: "DeepSeek", labels: [] },
+]
+
+describe("auth purge", () => {
+  test("registers the command and its flags", async () => {
+    const [auth, purge] = await Promise.all([cli(["auth", "--help"]), cli(["auth", "purge", "--help"])])
+    expect(auth.stdout).toContain("remove saved credentials and every stale copy of their values")
+    expect(purge.exitCode).toBe(0)
+    for (const flag of ["--all", "--yes", "--dry-run", "--files", "--history", "--compact", "--server", "--standalone"])
+      expect(purge.stdout).toContain(flag)
+  })
+
+  test("previews a purge by substring without confirming or changing anything", async () => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", "GLM", "--dry-run", "--server", server.url.toString()])
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" })
+    expect(stub.purges).toEqual([
+      { integrationIDs: ["glm-coding-plan"], files: true, history: false, compact: false, dryRun: true },
+    ])
+    expect(result.stdout).toContain("GLM Coding Plan (glm-coding-plan): Work, Personal")
+    expect(result.stdout).toContain("Would remove 1 of 1 credential(s)")
+    expect(stub.paths).not.toContain("/api/credential")
+  })
+
+  test("requires --yes without an interactive terminal and sends nothing before it", async () => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", "glm", "--server", server.url.toString()])
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toContain("Pass --yes to purge without an interactive terminal")
+    expect(stub.purges).toEqual([])
+  })
+
+  test.each([
+    { args: ["nothing-like-it"], message: 'No integration with stored credentials matches "nothing-like-it"' },
+    { args: ["zhipuai-coding"], message: '"zhipuai-coding" is ambiguous: zhipuai-coding-plan, zhipuai-coding-pro' },
+    { args: ["deepseek"], message: 'No integration with stored credentials matches "deepseek"' },
+    { args: ["glm", "--all"], message: "Pass integration targets or --all, not both" },
+    { args: [], message: "Name the integrations to purge, or pass --all" },
+  ])("fails $args without purging, listing candidates", async ({ args, message }) => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", ...args, "--yes", "--server", server.url.toString()])
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toContain(message)
+    expect(stub.purges).toEqual([])
+  })
+
+  test("prefers an exact ID over longer IDs that contain it", async () => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", "zhipuai-coding-plan", "--yes", "--no-files", "--history", "--server", server.url.toString()])
+    expect(result.exitCode).toBe(0)
+    expect(stub.purges).toEqual([
+      { integrationIDs: ["zhipuai-coding-plan"], files: false, history: true, compact: false, dryRun: false },
+    ])
+  })
+
+  test("purges everything with --all and exits 2 while copies remain", async () => {
+    const stub = purgeServer({ remaining: [{ kind: "database", location: "~/data/db (file)", count: 3 }] })
+    using server = stub.server
+    const result = await cli(["auth", "purge", "--all", "--yes", "--compact", "--server", server.url.toString()])
+    expect(result.exitCode).toBe(2)
+    expect(stub.purges).toEqual([{ all: true, files: true, history: true, compact: true, dryRun: false }])
+    expect(result.stdout).toContain("Copies remain")
+    expect(result.stdout).toContain("~/data/db (file): 3 copy/copies")
+  })
+})
+
+function purgeServer(options: { remaining?: unknown[] } = {}) {
+  const purges: unknown[] = []
+  const paths: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      paths.push(url.pathname)
+      if (url.pathname === "/api/info")
+        return Response.json({ version: OPENCODE_VERSION, pid: process.pid, urls: [], paths: { tmp: "/tmp/opencode" } })
+      if (url.pathname === "/api/model/default") return Response.json(located(null))
+      if (url.pathname === "/api/integration")
+        return Response.json(
+          located(
+            integrations.map((item) => ({
+              id: item.id,
+              name: item.name,
+              methods: [{ type: "key" }],
+              connections: item.labels.map((label) => ({ type: "credential", method: "key", id: `cred_${label}`, label })),
+            })),
+          ),
+        )
+      if (url.pathname === "/api/credential/purge" && request.method === "POST") {
+        const body = (await request.json()) as { integrationIDs?: string[]; dryRun?: boolean }
+        purges.push(body)
+        return Response.json({
+          data: {
+            dryRun: body.dryRun === true,
+            credentials: [{ id: "cred_x", integrationID: body.integrationIDs?.[0] ?? "all", label: "Work", removed: body.dryRun !== true }],
+            secrets: { distinct: 1, shared: 0, short: 0 },
+            swept: [{ kind: "auth", location: "~/.local/share/opencode/auth.json", count: 1 }],
+            remaining: options.remaining ?? [],
+          },
+        })
+      }
+      return new Response("Not found", { status: 404 })
+    },
+  })
+  return { server, purges, paths }
+}
+
+function located<T>(data: T) {
+  return {
+    location: { directory: process.cwd(), project: { id: "project", directory: process.cwd(), canonical: process.cwd() } },
+    data,
+  }
+}
+
+async function cli(args: string[]) {
+  const child = Bun.spawn([process.execPath, "run", "src/index.ts", ...args], {
+    cwd: path.join(import.meta.dir, ".."),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  return { stdout, stderr, exitCode }
+}
