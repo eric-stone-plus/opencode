@@ -1,14 +1,17 @@
 import { describe, expect } from "bun:test"
-import { LLM } from "@opencode/ai"
+import { LanguageModel, LLM } from "@opencode/ai"
+import { OpenAIChat } from "@opencode/ai/protocols"
 import { compileRequest } from "@opencode/ai/route/client"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { Headers } from "effect/http"
 import { AISDKNative } from "@opencode/core/aisdk-native"
-import { Compatibility, ID, Info, Model, VariantID } from "@opencode/core/model"
+import { Compatibility, ID, Info, Model, Ref, VariantID } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { AISDK } from "@opencode/core/aisdk"
-import { it } from "./lib/effect"
+import { Integration } from "@opencode/core/integration"
+import { Npm } from "@opencode/util/npm"
+import { it, testEffect } from "./lib/effect"
 
 interface ModelOptions {
   readonly providerID?: Provider.ID
@@ -227,6 +230,18 @@ describe("ModelResolver", () => {
     }),
   )
 
+  it.effect("keeps the fork-local working-context pin off the wire", () =>
+    Effect.gen(function* () {
+      const catalog = model(Provider.aisdk("@ai-sdk/openai-compatible"), {
+        settings: { baseURL: "https://compatible.example/v1", workingContextCap: 852_544, top_p: 0.9 },
+      })
+      const resolved = yield* ModelResolver.fromCatalogModel(catalog)
+
+      // The fork-local policy must never ride a provider request body; every other setting still does.
+      expect(resolved.route.defaults.providerOptions).toEqual({ top_p: 0.9 })
+    }),
+  )
+
   it.effect("overlays selected Anthropic variant settings", () =>
     Effect.gen(function* () {
       const catalog = model(Provider.aisdk("@ai-sdk/anthropic"), {
@@ -379,3 +394,61 @@ describe("ModelResolver", () => {
     }),
   )
 })
+
+// Service-path integration: the working-context pin must survive the layer's
+// settings merge into Resolved (the module-level fromCatalogModel returns a
+// route, not a Resolved, so the field can only be observed here).
+const pinned = Info.make({
+  ...Info.default(Provider.ID.make("test-provider"), ID.make("pinned-model")),
+  package: Provider.aisdk("@ai-sdk/openai-compatible"),
+  settings: { baseURL: "https://compatible.example/v1", workingContextCap: 852_544, maxOutputTokens: 65_536 },
+})
+const pinnedRuntime = LanguageModel.make({ id: "pinned-model", provider: "test-provider", route: OpenAIChat.route })
+const pinnedResolver = ModelResolver.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(Provider.Service, { get: () => Effect.undefined }),
+      Layer.mock(Model.Service, { get: () => Effect.succeed(pinned) }),
+      Layer.mock(Integration.Service, {
+        revision: () => 0,
+        connection: {
+          active: () => Effect.undefined,
+          resolve: () => Effect.die("unused"),
+          key: () => Effect.die("unused"),
+          external: () => Effect.die("unused"),
+          activate: () => Effect.die("unused"),
+          update: () => Effect.die("unused"),
+          remove: () => Effect.die("unused"),
+          status: () => Effect.die("unused"),
+        },
+        oauth: {
+          connect: () => Effect.die("unused"),
+          status: () => Effect.die("unused"),
+          complete: () => Effect.die("unused"),
+          cancel: () => Effect.die("unused"),
+        },
+        command: {
+          connect: () => Effect.die("unused"),
+          status: () => Effect.die("unused"),
+          cancel: () => Effect.die("unused"),
+        },
+      }),
+      Layer.mock(Npm.Service, { add: () => Effect.die("unused"), which: () => Effect.die("unused") }),
+      Layer.mock(AISDK.Service, {
+        hook: { sdk: () => Effect.die("unused"), language: () => Effect.die("unused") },
+        model: () => Effect.succeed(pinnedRuntime),
+      }),
+    ),
+  ),
+)
+const pinnedIt = testEffect(pinnedResolver)
+
+pinnedIt.effect("resolves model settings into the working-context cap and output budget", () =>
+  Effect.gen(function* () {
+    const resolver = yield* ModelResolver.Service
+    const result = yield* resolver.resolve(Ref.make({ providerID: pinned.providerID, id: pinned.id }))
+
+    expect(result?.workingContextCap).toBe(852_544)
+    expect(result?.outputTokenMax).toBe(65_536)
+  }),
+)

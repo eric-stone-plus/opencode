@@ -22,10 +22,11 @@ import { Context, Effect, Layer, Result, Stream } from "effect"
 import { Agent } from "../agent.js"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
+import { Token } from "../util/token.js"
+import { WorkingContext } from "../util/working-context.js"
 import { llmClient } from "../effect/app-node-platform.js"
 import { Model } from "../model.js"
 import { State } from "../state.js"
-import { Token } from "../util/token.js"
 import type { SessionContext } from "./context.js"
 import { SessionEvent } from "./event.js"
 import { SessionHistory } from "./history.js"
@@ -209,7 +210,10 @@ export const layer = Layer.effect(
 
       // Only the user compacts when automatic compaction is off, overflow included.
       if (trigger.reason !== "manual" && !settings.auto) return { status: "skipped" }
-      if (trigger.reason === "auto" && !due(context, calculateCeiling(context.model.limit, settings.buffer)))
+      if (
+        trigger.reason === "auto" &&
+        !due(context, calculateCeiling(context.model.limit, settings.buffer, context.model.workingContextCap))
+      )
         return { status: "skipped" }
       const native = context.model.compaction?.type === "native"
       const agent = native ? undefined : yield* agents.get(Agent.ID.make("compaction"))
@@ -219,11 +223,11 @@ export const layer = Layer.effect(
             .resolve({ ...context.session, model: agent.model }, catalog.available)
             .pipe(Effect.orElseSucceed(() => undefined)))) ??
         context.model
-      const ceiling = calculateCeiling(model.limit, settings.buffer)
+      const ceiling = calculateCeiling(model.limit, settings.buffer, model.workingContextCap)
       // An unknown window never triggers auto compaction, but the compaction request still needs a size to aim for.
       const cap = Number.isFinite(ceiling)
         ? ceiling
-        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, settings.buffer)
+        : calculateCeiling({ ...model.limit, context: UNKNOWN_WINDOW }, settings.buffer, model.workingContextCap)
       // The provider just rejected this context, so the estimate ran low; the first attempt already aims below it.
       const budget =
         trigger.reason === "overflow" ? Math.min(cap, Math.floor(estimateContext(context) * SHRINK_STEPS[0])) : cap
@@ -902,11 +906,19 @@ export const estimatePrompt = (context: SessionContext.Loaded) => {
  * The largest request the model takes while leaving room for its reply: 10% of the window, or `RESERVE_MIN` when that
  * is more. The summary request is capped at the same size, so its output limit is whatever the reserve leaves. A window
  * too small to give up `RESERVE_MIN` keeps 10%.
+ *
+ * The window itself is the working-context window (V1 overflow.ts policy): the model's input limit (or context
+ * window), clamped to `cap` when the model pins one and to `WORKING_CONTEXT_CAP` otherwise, so advertised 1M
+ * contexts still compact around a Claude/Codex-sized working set.
  */
-const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: number | undefined) => {
+const calculateCeiling = (
+  limit: SessionContext.Loaded["model"]["limit"],
+  buffer: number | undefined,
+  cap?: number,
+) => {
   // Unknown limits are reported as 0. An unknown input limit falls back to the context window; with no window at
   // all, only a provider rejection can limit the request.
-  const window = limit.input || limit.context
+  const window = WorkingContext.window(limit, cap)
   if (window <= 0) return Number.POSITIVE_INFINITY
   if (buffer !== undefined) return window - buffer
   return window - Math.max(Math.floor(window * 0.1), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)

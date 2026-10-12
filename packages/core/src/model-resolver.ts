@@ -11,6 +11,7 @@ import { Capabilities, ID, Info, Model, Ref, VariantID } from "./model.js"
 import type { RuntimeInfo } from "./model.js"
 import { Npm } from "@opencode/util/npm"
 import { Variant } from "./variant.js"
+import { WorkingContext } from "./util/working-context.js"
 import { Provider } from "./provider.js"
 
 export class VariantUnavailableError extends Schema.TaggedError<VariantUnavailableError>()(
@@ -125,6 +126,14 @@ export interface Resolved {
   readonly transport?: Provider.Transport
   /** Milliseconds without streamed data before a WebSocket exchange fails; `false` disables the limit. */
   readonly chunkTimeout?: number | false
+  /** Per-model working-context cap (`model.options.workingContextCap`); omitted means the default clamp. */
+  readonly workingContextCap?: number
+  /**
+   * Per-model request output budget (`model.options.maxOutputTokens`, the V1 alias): the
+   * request's max-token ceiling while `limit.output` stays the capability. Omitted means
+   * the catalog limit alone bounds the request.
+   */
+  readonly outputTokenMax?: number
 }
 
 export interface Interface {
@@ -258,8 +267,14 @@ const resolveCatalogModel = Effect.fn("ModelResolver.resolveCatalogModel")(funct
 })
 
 function prepareRuntimeModel(model: RuntimeInfo) {
-  if (model.settings?.apiKey !== "") return model
-  return { ...model, settings: Struct.omit(model.settings, ["apiKey"]) }
+  if (model.settings === undefined) return model
+  // Fork-local compaction policy, read by SessionCompaction from settings before
+  // this point. Stripped here so no provider path can leak it into a request body:
+  // the native module.model destructures unknown settings into providerOptions,
+  // and the AISDK path spreads settings into its option object.
+  const settings = Struct.omit(model.settings, ["workingContextCap"])
+  if (model.settings.apiKey !== "") return { ...model, settings }
+  return { ...model, settings: Struct.omit(settings, ["apiKey"]) }
 }
 
 function validateProviderVariables(
@@ -353,6 +368,17 @@ export const resolveModel = (
 
 export const hasPackage = (model: Info) => Boolean(model.package)
 
+/**
+ * The V1 `options.maxOutputTokens` alias: a per-model request output budget that lowers
+ * (never raises) the catalog output limit, persisted in config so terminal and daemon
+ * environments do not depend on an exported env var. Only safe integers above zero count,
+ * matching ProviderTransform.maxOutputTokens.
+ */
+function outputTokenMax(settings: Readonly<Record<string, unknown>> | undefined): number | undefined {
+  const value = settings?.maxOutputTokens
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
 /** Resolves catalog selections into runtime models for the current Location. */
 export const layer = Layer.effect(
   Service,
@@ -400,6 +426,8 @@ export const layer = Layer.effect(
         compaction: runtimeInfo.settings?.compaction,
         transport: provider?.settings?.transport,
         chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        workingContextCap: WorkingContext.workingContextCap(runtimeInfo.settings),
+        outputTokenMax: outputTokenMax(runtimeInfo.settings),
       }
     })
     return Service.of({

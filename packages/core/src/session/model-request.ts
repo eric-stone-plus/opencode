@@ -89,8 +89,14 @@ const outputLimit = (
   limit: Model.Info["limit"],
   kind: "primary" | "compaction",
   inputTokens?: Input["inputTokens"],
+  /** The V1 `options.maxOutputTokens` alias: a request-budget ceiling, never a floor. */
+  outputTokenMax?: number,
 ) => {
-  const model = Math.min(limit.output > 0 ? limit.output : OUTPUT_TOKEN_FALLBACK, OUTPUT_TOKEN_MAX)
+  const model = Math.min(
+    limit.output > 0 ? limit.output : (outputTokenMax ?? OUTPUT_TOKEN_FALLBACK),
+    OUTPUT_TOKEN_MAX,
+    outputTokenMax ?? Number.POSITIVE_INFINITY,
+  )
   const requested = kind === "compaction" ? Math.min(model, SUMMARY_OUTPUT_MAX) : model
   if (inputTokens === undefined || limit.context <= 0) return requested
   const room = limit.context - inputTokens.measured - Math.ceil(inputTokens.estimated * (1 + ESTIMATE_ERROR))
@@ -241,7 +247,7 @@ export const layer = Layer.effect(
           messages: input.messages,
           options:
             kind === "primary" || kind === "compaction"
-              ? { maxTokens: outputLimit(model.limit, kind, input.inputTokens) }
+              ? { maxTokens: outputLimit(model.limit, kind, input.inputTokens, model.outputTokenMax) }
               : {},
         },
         Object.fromEntries(Array.from(given, ([d, t]) => [t.name, d])),

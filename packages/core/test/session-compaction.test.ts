@@ -205,17 +205,33 @@ it.effect("auto compaction estimates current content against the buffered prompt
     const due = (context: SessionContext.Loaded) =>
       compaction.compact({ reason: "auto", context }).pipe(Effect.map((outcome) => outcome.status !== "skipped"))
 
-    // 90% of the input limit, which takes precedence over the context window.
-    const inputLimited = { context: 400_000, input: 272_000, output: 128_000 }
-    expect(yield* due(input(244_799, inputLimited))).toBe(false)
-    expect(yield* due(input(244_800, inputLimited))).toBe(true)
+    // Input takes precedence over the context window, both below the default working-context clamp.
+    const inputLimited = { context: 400_000, input: 200_000, output: 128_000 }
+    expect(yield* due(input(179_999, inputLimited))).toBe(false)
+    expect(yield* due(input(180_000, inputLimited))).toBe(true)
     const native = (tokens: number, limit: { context: number; input?: number; output: number } = inputLimited) => {
       const selected = input(tokens, limit)
       return { ...selected, model: { ...selected.model, compaction: { type: "native" as const } } }
     }
-    expect(yield* due(native(244_799))).toBe(false)
-    expect(yield* due(native(244_800))).toBe(true)
+    expect(yield* due(native(179_999))).toBe(false)
+    expect(yield* due(native(180_000))).toBe(true)
     expect(yield* due(native(1_000_000, { context: 0, input: undefined, output: 0 }))).toBe(false)
+
+    // The working-context clamp (V1 overflow.ts policy): an advertised 1M window still compacts around 256k.
+    const wide = { context: 1_000_000, input: 606_784, output: 128_000 }
+    expect(yield* due(input(230_399, wide))).toBe(false)
+    expect(yield* due(input(230_400, wide))).toBe(true)
+    // A model-level workingContextCap pin raises the clamp up to its own input budget.
+    const pinned = (tokens: number, cap: number | undefined) => {
+      const selected = input(tokens, wide)
+      return { ...selected, model: { ...selected.model, workingContextCap: cap } }
+    }
+    // 606_784 - max(60_678, 16_000) = 546_106.
+    expect(yield* due(pinned(546_105, 606_784))).toBe(false)
+    expect(yield* due(pinned(546_106, 606_784))).toBe(true)
+    // A pin below the default clamp shrinks the window: 100_000 - max(10_000, 16_000) = 84_000.
+    expect(yield* due(pinned(83_999, 100_000))).toBe(false)
+    expect(yield* due(pinned(84_000, 100_000))).toBe(true)
 
     // The summary's 16k output limit is more than 10% of a 100k window, so it sets the ceiling.
     const contextLimited = { context: 100_000, output: 10_000 }

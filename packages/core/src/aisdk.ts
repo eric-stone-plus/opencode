@@ -441,6 +441,8 @@ function requestSettings(settings: Readonly<Record<string, unknown>> | undefined
           "headerTimeout",
           "timeout",
           "transport",
+          // Fork-local policy read by SessionCompaction; must never ride a provider request.
+          "workingContextCap",
         ].includes(key),
     ),
   )

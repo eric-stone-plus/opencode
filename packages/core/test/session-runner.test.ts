@@ -107,6 +107,7 @@ const testLLM = TestLLM.layer({
 type ModelLimit = { readonly context: number; readonly input?: number; readonly output: number }
 const defaultModelLimit = { context: 200_000, output: 32_000 }
 const modelLimits = new Map<string, ModelLimit>()
+const modelOutputTokenMax = new Map<string, number>()
 const testModel = (id: string, limit: ModelLimit = defaultModelLimit) => {
   modelLimits.set(id, limit)
   return LanguageModel.make({ id, provider: "fake", route: OpenAIChat.route })
@@ -126,6 +127,9 @@ const recoveryModel = testModel("recovery", { context: 200_000, output: 1_000 })
 const fittedOutputModel = testModel("fitted-output", { context: 100_000, output: 64_000 })
 const smallWindowModel = testModel("small-window", { context: 64_000, output: 16_000 })
 const largeOutputModel = testModel("large-output", { context: 1_000_000, output: 1_000_000 })
+// The V1 `options.maxOutputTokens` alias: catalog output stays 1M, the request budget is 64k.
+const aliasedOutputModel = testModel("aliased-output", { context: 1_000_000, output: 1_000_000 })
+modelOutputTokenMax.set("aliased-output", 64_000)
 
 test("calculates step cost using the matching context tier", () => {
   expect(
@@ -325,6 +329,7 @@ const layer = Layer.unwrap(
               capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
               cost: [],
               limit: modelLimits.get(String(selected.id)) ?? defaultModelLimit,
+              outputTokenMax: modelOutputTokenMax.get(String(selected.id)),
               variant: session.model?.variant,
               compaction: state.compaction,
             })
@@ -3343,6 +3348,15 @@ describe("SessionRunnerLLM", () => {
     yield* s.runPrompt("Question")
 
     expect(s.requests[0]?.generation?.maxTokens).toBe(256_000)
+  })
+
+  scenario("honors the maxOutputTokens model option as the request budget ceiling", function* (s) {
+    s.currentModel = aliasedOutputModel
+    yield* s.llm.push(TestLLM.text("Answer", "text-aliased-output"))
+    yield* s.runPrompt("Question")
+
+    // The catalog output (1M) stays the capability; the alias lowers the request budget.
+    expect(s.requests[0]?.generation?.maxTokens).toBe(64_000)
   })
 
   scenario("gives the summary its full output limit when the conversation overshot the threshold", function* (s) {
