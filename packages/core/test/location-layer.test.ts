@@ -458,6 +458,19 @@ describe("LocationServiceMap", () => {
     ).pipe(
       Effect.flatMap(([blocked, allowed]) =>
         Effect.gen(function* () {
+          // The fork only keeps config-declared providers (ADR 0003), so each location declares its own probe.
+          yield* Effect.promise(() =>
+            Promise.all([
+              fs.writeFile(
+                path.join(blocked.path, "opencode.json"),
+                JSON.stringify({ providers: { "blocked-location": {} } }),
+              ),
+              fs.writeFile(
+                path.join(allowed.path, "opencode.json"),
+                JSON.stringify({ providers: { "allowed-location": {} } }),
+              ),
+            ]),
+          )
           const update = (directory: string, providerID: Provider.ID) =>
             Effect.gen(function* () {
               yield* Reference.Service
