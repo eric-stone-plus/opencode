@@ -3,8 +3,9 @@ import { Schema } from "effect"
 import { Info, resolve } from "../src/config"
 
 // The fork ships cli.json at the repository root and the install step copies it to ~/.config/opencode/cli.json.
-// tui.json is migrated into cli.json only once, so this file is the only way the keybind policy reaches a client
-// that has already launched V2. Resolving it here catches an upstream rename of any keybind it names.
+// tui.json is migrated into cli.json only once, so this file is the only way the keybind and session-presentation
+// policy reaches a client that has already launched V2. Resolving it here catches an upstream rename of any
+// keybind or session setting it names.
 const shipped = await Bun.file(new URL("../../../cli.json", import.meta.url)).json()
 const info = Object.fromEntries(Object.entries(shipped).filter(([key]) => key !== "$schema"))
 const config = resolve(Schema.decodeUnknownSync(Info)(info), { terminalSuspend: true, environment: {} })
@@ -30,6 +31,10 @@ test("bare arrows stay with the prompt cursor and history", () => {
 test("Tab cycles agents forward and shift+tab backward (V1 policy restored)", () => {
   expect(keys("agent.cycle")).toEqual(["tab"])
   expect(keys("agent.cycle.reverse")).toEqual(["shift+tab"])
+})
+
+test("thinking blocks are shown by default", () => {
+  expect(config.session?.thinking).toBe("show")
 })
 
 test("keeps the mouse on", () => {

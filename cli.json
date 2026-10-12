@@ -9,5 +9,8 @@
     "session.page.down": "pagedown,ctrl+down,alt+down,ctrl+alt+f",
     "session.line.up": "ctrl+alt+y,ctrl+shift+up",
     "session.line.down": "ctrl+alt+e,ctrl+shift+down"
+  },
+  "session": {
+    "thinking": "show"
   }
 }
