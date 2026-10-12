@@ -3,6 +3,8 @@
   "mouse": true,
   "keybinds": {
     "app.exit": "none",
+    "agent.cycle": "tab",
+    "agent.cycle.reverse": "shift+tab",
     "session.page.up": "pageup,ctrl+up,alt+up,ctrl+alt+b",
     "session.page.down": "pagedown,ctrl+down,alt+down,ctrl+alt+f",
     "session.line.up": "ctrl+alt+y,ctrl+shift+up",

@@ -27,6 +27,11 @@ test("bare arrows stay with the prompt cursor and history", () => {
   expect(scrolling.filter((key) => ["up", "down", "left", "right"].includes(key))).toEqual([])
 })
 
+test("Tab cycles agents forward and shift+tab backward (V1 policy restored)", () => {
+  expect(keys("agent.cycle")).toEqual(["tab"])
+  expect(keys("agent.cycle.reverse")).toEqual(["shift+tab"])
+})
+
 test("keeps the mouse on", () => {
   expect(config.mouse).toBe(true)
 })
