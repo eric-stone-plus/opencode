@@ -23,15 +23,17 @@
 #   2  config: opencode.jsonc (copy + plans-path sed from --home, or --link), auth.json (template,
 #      only if absent), env (template, only if absent)
 #   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
-#      OPENCODE_EXPERIMENTAL_PLAN_MODE=1 + OPENCODE_EXPERIMENTAL_LSP_TOOL=1 +
-#      OPENCODE_DISABLE_LSP_DOWNLOAD=1 -> exec binary)
+#      OPENCODE_DISABLE_MODELS_FETCH=1 + OPENCODE_DISABLE_LSP_DOWNLOAD=1 -> exec
+#      binary) and, when ~/.opencode/bin/opencode exists, the same DB/fetch pins
+#      in the V2 background service config (`opencode service set env`): the
+#      service keeps the env of whichever client spawned it
 #   4  environment.d/10-opencode-db.conf (managed) + the other *.conf templates
 #      (only if absent, never overwritten)
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
 #      (4 hook configs IF they exist; the opencode plugin port via step 7)
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
 #   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts + secret-path-guard.ts
-#      + open-code-review.ts copies
+#      + skill-hints.ts + open-code-review.ts copies
 #   8  command/ + agent/ goal files (only those shipped in the bundle),
 #      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
@@ -116,22 +118,19 @@ write_wrapper() {
   cat > "$SHIM" <<'WRAP'
 #!/usr/bin/env bash
 # Anti-fork pin: the binary names its SQLite DB after its build channel
-# (packages/core/src/database/database.ts path(): channel not in
-# latest|beta|prod -> opencode-<channel>.db). Force the canonical DB for
-# every launch flavor, including non-interactive PATH lookups that never
-# see environment.d. Managed by bootstrap/install.sh.
+# (the git branch it was built on). Force the canonical DB for every launch
+# flavor, including non-interactive PATH lookups that never see environment.d.
+# Managed by bootstrap/install.sh.
 export OPENCODE_DB=opencode-main.db
-# The four-profile config (plan allows plan_exit, edits only plan files) is
-# written for the plan-file workflow, which is gated on this flag
-# (packages/opencode/src/tool/registry.ts): without it plan_exit does not
-# exist and plan is prompt-only.
-export OPENCODE_EXPERIMENTAL_PLAN_MODE=1
-# The `lsp` agent tool (query LSP diagnostics/hover/references from tools) is
-# gated on this flag (packages/opencode/src/effect/runtime-flags.ts, tool/registry.ts).
-export OPENCODE_EXPERIMENTAL_LSP_TOOL=1
+# Fork policy: never fetch the models.dev catalog implicitly (the bundled
+# snapshot and the DB-cached catalog are the only sources).
+export OPENCODE_DISABLE_MODELS_FETCH=1
 # Language servers are installed by hand: a missing one would otherwise auto-download
 # inside the awaited edit/write path with no timeout. Delete this line to restore it.
 export OPENCODE_DISABLE_LSP_DOWNLOAD=1
+# The V2 background service keeps the env of the client that spawned it, so the pins
+# above only reach it when this wrapper spawns it (install.sh also persists them with
+# `opencode service set env`).
 exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
   chmod +x "$SHIM"
@@ -331,8 +330,8 @@ say ""
 say "-- step 3: ~/.local/bin/opencode shim (anti-fork pin wrapper)"
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null \
-  && grep -q "OPENCODE_EXPERIMENTAL_PLAN_MODE=1" "$SHIM" 2>/dev/null \
-  && grep -q "OPENCODE_EXPERIMENTAL_LSP_TOOL=1" "$SHIM" 2>/dev/null \
+  && grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null \
+  && ! grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null \
   && grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
   note "unchanged $SHIM (pin wrapper already in place)"
 elif [ -e "$SHIM" ] || [ -L "$SHIM" ]; then
@@ -355,6 +354,23 @@ else
 fi
 
 # --- 4. environment.d --------------------------------------------------------
+# V2 background service: it keeps the env of whichever client spawned it, so persist the
+# same pins in its own config. Any later spawn then agrees on the DB and the fetch policy,
+# whichever client or wrapper starts it. Writes service config only; never opens the DB.
+OC_REAL="$TARGET_HOME/.opencode/bin/opencode"
+if [ -x "$OC_REAL" ]; then
+  for pin in "OPENCODE_DB opencode-main.db" "OPENCODE_DISABLE_MODELS_FETCH 1"; do
+    act "service set env $pin"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      # shellcheck disable=SC2086
+      HOME="$TARGET_HOME" OPENCODE_DB=opencode-main.db "$OC_REAL" service set env $pin \
+        || note "service set env $pin failed (re-run after the binary works)"
+    fi
+  done
+else
+  note "service env pins skipped: $OC_REAL is not built yet (re-run install.sh after the first sync-upstream)"
+fi
+
 say ""
 say "-- step 4: environment.d"
 # Managed: the DB pin must converge (it is the consolidation mechanism).
@@ -980,7 +996,7 @@ PL="$TARGET_HOME/.config/opencode/plugin"
 # background fiber; verify.sh's log sweep watches its failure mode), so no
 # npm step is needed here. It spawns `ocr` from PATH (npm i -g
 # @alibaba-group/open-code-review on the target seat).
-for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts open-code-review.ts; do
+for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts skill-hints.ts open-code-review.ts; do
   STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
