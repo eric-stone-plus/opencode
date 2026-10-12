@@ -125,7 +125,11 @@ it.live("seeds host plugins from CreateOptions and waits for delayed model plugi
           config: {
             directory: fixture.directory,
             project: false,
-            content: JSON.stringify({ model: "seeded/fictional-chat" }),
+            // The fork keeps only config-declared providers (ADR 0003); the host plugin enriches this declaration.
+            content: JSON.stringify({
+              model: "seeded/fictional-chat",
+              providers: { seeded: { models: { "fictional-chat": {} } } },
+            }),
           },
           models: { fetch: false },
           fs: { filewatcher: false },
@@ -158,7 +162,11 @@ it.live("OpenCodeWorkerd seeds plugins before cold model resolution", () =>
       const opencode = yield* OpenCodeWorkerd.create({
         storage: makeDurableObjectStorage(),
         models: { fetch: false },
-        config: { model: "workerd-seeded/fictional-chat" },
+        // The fork keeps only config-declared providers (ADR 0003); the host plugin enriches this declaration.
+        config: {
+          model: "workerd-seeded/fictional-chat",
+          providers: { "workerd-seeded": { models: { "fictional-chat": {} } } },
+        },
         plugins: [
           Plugin.define({
             id: "workerd-seeded-models",
