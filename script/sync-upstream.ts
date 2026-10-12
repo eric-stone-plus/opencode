@@ -10,8 +10,9 @@
  *   bun run sync-upstream --continue   after resolving merge conflicts and committing
  *
  * The flow merges upstream/dev into main (never rebases), then refuses to
- * build or push if upstream reintroduced a self-upgrade or web path this fork
- * deleted on purpose (see assertForkInvariants).
+ * build or push if upstream reintroduced a self-update path this fork deleted
+ * on purpose (see assertForkInvariants). The product is packages/cli (upstream
+ * V2); the legacy packages/opencode runtime no longer exists.
  */
 import { $ } from "bun"
 import { homedir } from "os"
@@ -23,6 +24,14 @@ const ROOT = path.resolve(import.meta.dirname, "..")
 const UPSTREAM_URL = "https://github.com/anomalyco/opencode.git"
 const UPSTREAM_BRANCH = "dev"
 const LOCAL_BRANCH = "main"
+const MINIMUM_BUN = [1, 4, 2]
+
+export function assertBunVersion(version: string) {
+  const found = version.split(".").map((part) => Number.parseInt(part, 10) || 0)
+  const order = MINIMUM_BUN.reduce((result, minimum, index) => result || Math.sign((found[index] ?? 0) - minimum), 0)
+  if (order < 0) throw new Error(`bun >= ${MINIMUM_BUN.join(".")} is required (found ${version}).`)
+}
+
 async function git(args: string[], directory = ROOT) {
   const result = await $`git ${args}`.cwd(directory).nothrow().quiet()
   return {
@@ -77,21 +86,21 @@ export async function assertSyncReady(directory: string, resume = false) {
   }
 }
 
-// Paths this fork deleted on purpose: every Installation.upgrade method (curl
-// script, npm, brew, ...) replaces the source-built ~/.opencode/bin/opencode
-// with an upstream release, and `opencode web` / `opencode upgrade` are the
-// CLI doors to it (commit "eric: drop self-upgrade paths that would overwrite
-// the fork binary"). A clean upstream merge can bring any of them back
-// silently, so the sync refuses to build or push until they are gone again.
+// Self-update paths this fork deleted on purpose: the upgrade/uninstall commands
+// and the updater's network calls would replace or remove the source-built
+// ~/.opencode/bin/opencode (docs/adr/0001-source-built-binary-no-self-upgrade.md).
+// A clean upstream merge can bring any of them back silently, so the sync
+// refuses to build or push until they are gone again.
 export const FORK_DELETED_FILES = [
-  "packages/opencode/src/cli/cmd/upgrade.ts",
-  "packages/opencode/src/cli/cmd/web.ts",
+  "packages/cli/src/commands/handlers/upgrade.ts",
+  "packages/cli/src/commands/handlers/uninstall.ts",
 ]
-const CLI_ENTRY = "packages/opencode/src/index.ts"
-const FORK_DELETED_COMMANDS = ["UpgradeCommand", "WebCommand"]
-// ERE for git grep: a call (not the Effect.fn("Installation.upgrade") label or
-// a prose mention) on the Installation namespace or a yielded service.
-const UPGRADE_CALL = "(^|[^A-Za-z0-9_])[Ii]nstallation\\.upgrade\\("
+const CLI_ENTRY = "packages/cli/src/index.ts"
+const CLI_COMMANDS = "packages/cli/src/commands/commands.ts"
+const FORK_DELETED_LOADERS = ["commands/handlers/upgrade", "commands/handlers/uninstall"]
+const FORK_DELETED_SPECS = ["upgrade", "uninstall"]
+// ERE for git grep: the release lookup and installer endpoints of the upstream updater.
+const UPDATER_NETWORK = "opencode\\.ai/(update/api|v2/install)|formulae\\.brew\\.sh/api/formula/opencode"
 
 export async function assertForkInvariants(directory: string) {
   const problems: string[] = []
@@ -101,19 +110,26 @@ export async function assertForkInvariants(directory: string) {
   const entry = path.join(directory, CLI_ENTRY)
   if (existsSync(entry)) {
     const source = await readFile(entry, "utf8")
-    for (const name of FORK_DELETED_COMMANDS) {
-      if (new RegExp(`\\b${name}\\b`).test(source)) problems.push(`${CLI_ENTRY} references ${name}`)
+    for (const name of FORK_DELETED_LOADERS) {
+      if (source.includes(name)) problems.push(`${CLI_ENTRY} loads ${name}`)
     }
   }
-  const calls = await git(["grep", "-n", "-E", UPGRADE_CALL, "--", "packages"], directory)
+  const commands = path.join(directory, CLI_COMMANDS)
+  if (existsSync(commands)) {
+    const source = await readFile(commands, "utf8")
+    for (const name of FORK_DELETED_SPECS) {
+      if (source.includes(`Spec.make("${name}"`)) problems.push(`${CLI_COMMANDS} registers the ${name} command`)
+    }
+  }
+  const calls = await git(["grep", "-n", "-E", UPDATER_NETWORK, "--", "packages/cli/src"], directory)
   if (calls.ok && calls.text) {
-    problems.push(`Installation.upgrade call site(s):\n${calls.text.replace(/^/gm, "      ")}`)
+    problems.push(`updater network call site(s):\n${calls.text.replace(/^/gm, "      ")}`)
   } else if (!calls.ok && calls.code !== 1) {
     throw new Error(calls.error || `git grep failed (${calls.code})`)
   }
   if (problems.length === 0) return
   throw new Error(
-    "Upstream reintroduced self-upgrade/web paths this fork deleted (they would overwrite the source-built binary):\n" +
+    "Upstream reintroduced self-update paths this fork deleted (they would overwrite the source-built binary):\n" +
       problems.map((problem) => `  - ${problem}`).join("\n") +
       "\nRemove them again, commit, then run: bun run sync-upstream --continue",
   )
@@ -135,6 +151,7 @@ export async function installBinary(source: string, destination: string) {
 }
 
 async function main() {
+  assertBunVersion(Bun.version)
   const noRebuild = process.argv.includes("--no-rebuild")
   const resume = process.argv.includes("--continue")
   await assertSyncReady(ROOT, resume)
@@ -188,13 +205,13 @@ async function main() {
     console.log("warning: no personal commits on top of upstream (main == upstream/dev)")
   }
 
-  const pkg = path.join(ROOT, "packages/opencode")
+  const pkg = path.join(ROOT, "packages/cli")
   const arch = process.arch === "arm64" ? "arm64" : "x64"
   const binary = process.platform === "win32" ? "opencode.exe" : "opencode"
   const built = path.join(
     pkg,
     "dist",
-    `opencode-${process.platform === "win32" ? "windows" : process.platform}-${arch}`,
+    `cli-${process.platform === "win32" ? "windows" : process.platform}-${arch}`,
     "bin",
     binary,
   )
@@ -204,7 +221,7 @@ async function main() {
     if (install.exitCode !== 0) throw new Error(`Dependency install failed (${install.exitCode})`)
 
     console.log(`rebuilding ${process.platform}-${process.arch} binary…`)
-    const build = await $`bun run script/build.ts --single --skip-install`.cwd(pkg).nothrow()
+    const build = await $`bun run script/build.ts --single --skip-install --skip-web-ui`.cwd(pkg).nothrow()
     if (build.exitCode !== 0) throw new Error(`Build failed (${build.exitCode})`)
     if (!existsSync(built)) throw new Error(`Built binary missing: ${built}`)
 
@@ -222,13 +239,8 @@ async function main() {
   console.log("pushing origin/main…")
   await mustGit(["push", "origin", LOCAL_BRANCH])
 
-  const tuiSrc = path.join(ROOT, "tui.json")
-  const tuiDest = path.join(homedir(), ".config", "opencode", "tui.json")
-  if (existsSync(tuiSrc)) {
-    await mkdir(path.dirname(tuiDest), { recursive: true })
-    await copyFile(tuiSrc, tuiDest)
-    console.log(`installed ${tuiDest} (app_exit none)`)
-  }
+  const tuiInstalled = await installTuiConfig(ROOT, path.join(homedir(), ".config", "opencode"))
+  if (tuiInstalled) console.log(`installed ${tuiInstalled}`)
 
   const skillsSrc = path.join(ROOT, "skills")
   if (existsSync(skillsSrc)) {
@@ -252,6 +264,20 @@ async function main() {
   const version = await $`${dest} --version`.text()
   console.log(`installed ${dest}`)
   console.log(version.trim())
+}
+
+// V2 migrates tui.json into cli.json exactly once and ignores later tui.json edits, so the
+// deployed keybinds file is cli.json whenever the repo carries one (dotfiles/opencode/cli.json);
+// the legacy repo-root tui.json is the fallback that still seeds a fresh config directory.
+export async function installTuiConfig(root: string, configDir: string) {
+  const cli = path.join(root, "dotfiles", "opencode", "cli.json")
+  const legacy = path.join(root, "tui.json")
+  const source = existsSync(cli) ? cli : existsSync(legacy) ? legacy : undefined
+  if (!source) return undefined
+  const destination = path.join(configDir, path.basename(source))
+  await mkdir(configDir, { recursive: true })
+  await copyFile(source, destination)
+  return destination
 }
 
 // Replaces each vendored skill directory in place rather than merging into it,
