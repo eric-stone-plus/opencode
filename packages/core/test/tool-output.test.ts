@@ -88,15 +88,39 @@ describe("ToolOutput", () => {
     ),
   )
 
-  it.live("skips results that report a truncation state", () =>
+  it.live("skips only its own bounded output and passes tool-reported states through", () =>
     withStore((output) =>
       Effect.gen(function* () {
         const content: Tool.NormalizedResult["content"] = [{ type: "text", text: "one\ntwo" }]
-        const truncated = { content, metadata: { truncated: true, source: "tool" } }
-        const retained = { content, metadata: { truncated: false, source: "tool" } }
-        expect(yield* output.truncate(truncated)).toBe(truncated)
-        expect(yield* output.truncate(retained)).toBe(retained)
+        const own = { content, metadata: { truncated: true, outputPath: "/tmp/saved" } }
+        expect(yield* output.truncate(own)).toBe(own)
+        // A tool-reported state (grep, glob, read) describes the tool's own result list; the
+        // result still passes through so an oversized payload gets bounded here.
+        const reported = { content, metadata: { truncated: true, source: "tool" } }
+        const kept = yield* output.truncate(reported)
+        expect(kept.content).toEqual(content)
+        expect(kept.metadata).toMatchObject({ truncated: true, source: "tool" })
       }),
+    ),
+  )
+
+  it.live("bounds a tool-reported result whose payload is oversized", () =>
+    withStore(
+      (output) =>
+        Effect.gen(function* () {
+          const result = yield* output.truncate({
+            content: [{ type: "text", text: "first\nsecond\nthird" }],
+            metadata: { truncated: false, source: "tool" },
+          })
+          expect(result.metadata).toMatchObject({ truncated: true, source: "tool" })
+          const outputPath = result.metadata?.outputPath
+          expect(typeof outputPath).toBe("string")
+          expect(result.content).toEqual([
+            { type: "text", text: "first" },
+            { type: "text", text: `[showing lines 1-1 of 3; full output saved to ${outputPath}]` },
+          ])
+        }),
+      { maxLines: 1, maxBytes: 1_000 },
     ),
   )
 

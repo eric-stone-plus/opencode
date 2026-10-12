@@ -65,7 +65,10 @@ const layer = Layer.effect(
     })
 
     const truncate = Effect.fnUntraced(function* (result: Result) {
-      if (result.metadata?.truncated !== undefined) return result
+      // A tool-reported truncation state (grep, glob, read) describes the tool's own result list,
+      // not the payload size, so it still passes through here: an oversized result must get bounded
+      // either way. Only this service's own bounded output carries `outputPath`.
+      if (result.metadata?.truncated === true && typeof result.metadata?.outputPath === "string") return result
       const content = result.content
       const text = content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
       const limits = state.get()
@@ -73,7 +76,7 @@ const layer = Layer.effect(
       if (text.endsWith("\n")) lines.pop()
       const totalBytes = Buffer.byteLength(text, "utf-8")
       if (lines.length <= limits.maxLines && totalBytes <= limits.maxBytes)
-        return { ...result, metadata: { ...result.metadata, truncated: false } }
+        return { ...result, metadata: { ...result.metadata, truncated: result.metadata?.truncated === true } }
 
       const kept: string[] = []
       let bytes = 0
