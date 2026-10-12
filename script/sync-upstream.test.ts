@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, open, readdir, rm, stat } from "fs/pro
 import { tmpdir } from "os"
 import path from "path"
 import { rejects } from "assert/strict"
-import { assertForkInvariants, assertSyncReady, installBinary } from "./sync-upstream"
+import { assertBunVersion, assertForkInvariants, assertSyncReady, installBinary, installTuiConfig } from "./sync-upstream"
 
 const directories: string[] = []
 const gitBinary = Bun.which("git")!
@@ -104,10 +104,10 @@ describe("fork invariants after the upstream merge", () => {
     await git(directory, "init", "--initial-branch=main", "--template=")
     await git(directory, "config", "core.hooksPath", "/dev/null")
     const base: Record<string, string> = {
-      "packages/opencode/src/index.ts": 'import { ServeCommand } from "./cli/cmd/serve"\ncli.command(ServeCommand)\n',
-      "packages/opencode/src/installation/index.ts":
-        'upgrade: Effect.fn("Installation.upgrade")(function* () {})\nexport const upgrade = (...a) => runPromise((s) => s.upgrade(...a))\n',
-      "packages/opencode/src/cli/upgrade.ts": "export async function upgrade() {}\n",
+      "packages/cli/src/index.ts":
+        'const Handlers = Runtime.handlers(Commands, {\n  acp: () => import("./commands/handlers/acp"),\n})\n',
+      "packages/cli/src/commands/commands.ts": 'commands: [\n  Spec.make("acp", {}),\n  Spec.make("update", {}),\n]\n',
+      "packages/cli/src/services/updater.ts": "export const layer = Layer.succeed(Service, Service.of({ enabled: false }))\n",
       ...files,
     }
     for (const [file, text] of Object.entries(base)) {
@@ -123,33 +123,77 @@ describe("fork invariants after the upstream merge", () => {
     await assertForkInvariants(await fork({}))
   })
 
-  test("rejects a reintroduced upgrade or web command file", async () => {
+  test("rejects a reintroduced upgrade or uninstall handler file", async () => {
     await rejects(
-      assertForkInvariants(await fork({ "packages/opencode/src/cli/cmd/upgrade.ts": "export {}\n" })),
-      /cli\/cmd\/upgrade\.ts exists again/,
+      assertForkInvariants(await fork({ "packages/cli/src/commands/handlers/upgrade.ts": "export {}\n" })),
+      /handlers\/upgrade\.ts exists again/,
     )
     await rejects(
-      assertForkInvariants(await fork({ "packages/opencode/src/cli/cmd/web.ts": "export {}\n" })),
-      /cli\/cmd\/web\.ts exists again/,
+      assertForkInvariants(await fork({ "packages/cli/src/commands/handlers/uninstall.ts": "export {}\n" })),
+      /handlers\/uninstall\.ts exists again/,
     )
   })
 
-  test("rejects a re-registered command", async () => {
+  test("rejects a re-registered loader", async () => {
     const directory = await fork({
-      "packages/opencode/src/index.ts": 'import { WebCommand } from "./cli/cmd/web"\ncli.command(WebCommand)\n',
+      "packages/cli/src/index.ts":
+        'const Handlers = Runtime.handlers(Commands, {\n  upgrade: () => import("./commands/handlers/upgrade"),\n})\n',
     })
-    await rejects(assertForkInvariants(directory), /index\.ts references WebCommand/)
+    await rejects(assertForkInvariants(directory), /index\.ts loads commands\/handlers\/upgrade/)
   })
 
-  test("rejects a reintroduced Installation.upgrade call site", async () => {
+  test("rejects a re-registered command spec", async () => {
     const directory = await fork({
-      "packages/opencode/src/cli/upgrade.ts": "export async function upgrade() {\n  await Installation.upgrade(method, latest)\n}\n",
+      "packages/cli/src/commands/commands.ts": 'commands: [\n  Spec.make("uninstall", {}),\n]\n',
     })
-    await rejects(assertForkInvariants(directory), /Installation\.upgrade call site[\s\S]*cli\/upgrade\.ts:2/)
-    const service = await fork({
-      "packages/opencode/src/server/global.ts": "const r = yield* installation.upgrade(method, target)\n",
+    await rejects(assertForkInvariants(directory), /commands\.ts registers the uninstall command/)
+  })
+
+  test("rejects a reintroduced updater network call", async () => {
+    const directory = await fork({
+      "packages/cli/src/services/updater.ts":
+        "const url = `https://opencode.ai/update/api/${channel}/${artifact}/npm`\nfetch(url)\n",
     })
-    await rejects(assertForkInvariants(service), /server\/global\.ts:1/)
+    await rejects(assertForkInvariants(directory), /updater network call site[\s\S]*services\/updater\.ts:1/)
+    const installer = await fork({
+      "packages/cli/src/services/other.ts": 'const installer = "https://opencode.ai/v2/install"\n',
+    })
+    await rejects(assertForkInvariants(installer), /services\/other\.ts:1/)
+  })
+})
+
+describe("toolchain", () => {
+  test("accepts bun at or above the V2 minimum and rejects older releases", () => {
+    assertBunVersion("1.4.2")
+    assertBunVersion("1.4.10")
+    assertBunVersion("1.5.0")
+    assertBunVersion("2.0.0")
+    expect(() => assertBunVersion("1.4.1")).toThrow(/bun >= 1\.4\.2 is required \(found 1\.4\.1\)/)
+    expect(() => assertBunVersion("1.3.9")).toThrow(/found 1\.3\.9/)
+  })
+})
+
+describe("TUI config installation", () => {
+  test("prefers the V2 cli.json from dotfiles over the legacy tui.json", async () => {
+    const root = await temporary()
+    const config = path.join(await temporary(), "config")
+    await Bun.write(path.join(root, "dotfiles", "opencode", "cli.json"), '{"keybinds":"v2"}')
+    await Bun.write(path.join(root, "tui.json"), '{"keybinds":"legacy"}')
+    expect(await installTuiConfig(root, config)).toBe(path.join(config, "cli.json"))
+    expect(await Bun.file(path.join(config, "cli.json")).text()).toBe('{"keybinds":"v2"}')
+    expect(await Bun.file(path.join(config, "tui.json")).exists()).toBe(false)
+  })
+
+  test("falls back to the repo-root tui.json when no cli.json is present", async () => {
+    const root = await temporary()
+    const config = path.join(await temporary(), "config")
+    await Bun.write(path.join(root, "tui.json"), '{"keybinds":"legacy"}')
+    expect(await installTuiConfig(root, config)).toBe(path.join(config, "tui.json"))
+    expect(await Bun.file(path.join(config, "tui.json")).text()).toBe('{"keybinds":"legacy"}')
+  })
+
+  test("installs nothing when the repo carries neither file", async () => {
+    expect(await installTuiConfig(await temporary(), path.join(await temporary(), "config"))).toBeUndefined()
   })
 })
 
@@ -189,7 +233,7 @@ describe("sync validation order", () => {
     const directory = await repository()
     const commands = path.join(directory, "bin")
     await mkdir(path.join(directory, "script"))
-    await mkdir(path.join(directory, "packages", "opencode"), { recursive: true })
+    await mkdir(path.join(directory, "packages", "cli"), { recursive: true })
     await mkdir(commands)
     await copyFile(import.meta.dir + "/sync-upstream.ts", path.join(directory, "script", "sync-upstream.ts"))
     await Bun.write(
@@ -245,9 +289,9 @@ chmod +x "$SYNC_TEST_BINARY_DIR/opencode"
           SYNC_TEST_BINARY_DIR: path.join(
             directory,
             "packages",
-            "opencode",
+            "cli",
             "dist",
-            `opencode-${process.platform}-${process.arch}`,
+            `cli-${process.platform}-${process.arch}`,
             "bin",
           ),
         },

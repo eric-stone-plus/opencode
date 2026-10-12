@@ -13,8 +13,8 @@ import {
   ProviderID,
   RateLimitError,
 } from "../src/index.js"
-import { OpenAI } from "../src/providers.js"
 import { OpenAIChat } from "../src/protocols/openai-chat.js"
+import { Auth } from "../src/route.js"
 import { TestLLM } from "../src/testing.js"
 import { Effect, Fiber, Latch, Stream } from "effect"
 import { testEffect } from "./lib/effect.js"
@@ -23,6 +23,15 @@ const request = LLM.request({
   model: LanguageModel.make({ id: "fictional-model", provider: "fixture", route: OpenAIChat.route }),
   prompt: "Say hello",
 })
+// No bundled route implements explicit compaction, so the fixture attaches stub operations that must never run.
+const unreachable = () => Effect.die("TestLLM never reaches the route")
+const compactable = OpenAIChat.route
+  .with({
+    endpoint: { baseURL: "https://fixture.test/v1" },
+    auth: Auth.bearer("test"),
+    compact: { endpoint: unreachable, trigger: unreachable },
+  })
+  .model({ id: "fixture" })
 const legacy = testEffect(TestLLM.layer())
 const it = testEffect(TestLLM.testLayer())
 
@@ -83,7 +92,7 @@ describe("TestLLM first-class client", () => {
   it.effect("returns scripted checkpoints only for trigger compaction", () =>
     Effect.gen(function* () {
       const client = yield* TestLLM.Test
-      const request = LLM.request({ model: OpenAI.configure().responses("fixture"), prompt: "hello" })
+      const request = LLM.request({ model: compactable, prompt: "hello" })
       const checkpoint = new CompactionCheckpointResponse({
         checkpoint: { type: "compaction", provider: ProviderID.make("openai"), encrypted: "opaque" },
         responseID: "resp_fixture",
@@ -108,7 +117,7 @@ describe("TestLLM first-class client", () => {
   it.effect("rejects response fixtures for the wrong operation", () =>
     Effect.gen(function* () {
       const client = yield* TestLLM.Test
-      const request = LLM.request({ model: OpenAI.configure({ apiKey: "test" }).responses("fixture"), prompt: "hello" })
+      const request = LLM.request({ model: compactable, prompt: "hello" })
       yield* client.push(TestLLM.stop(), new CompactionResponse({ replacement: [] }))
       expect(yield* client.compact(request).pipe(Effect.catchDefect(Effect.succeed))).toBe(
         "TestLLM compaction requires a CompactionResponse",
@@ -122,7 +131,7 @@ describe("TestLLM first-class client", () => {
   it.effect("scripts replacement windows with the same lazy recording, gates, and fallback controls", () =>
     Effect.gen(function* () {
       const client = yield* TestLLM.Test
-      const request = LLM.request({ model: OpenAI.configure({ apiKey: "test" }).responses("fixture"), prompt: "hello" })
+      const request = LLM.request({ model: compactable, prompt: "hello" })
       const compacted = new CompactionResponse({
         replacement: [
           Message.user("retained input"),

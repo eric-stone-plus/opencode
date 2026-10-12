@@ -4,7 +4,9 @@ import { RGBA, TextRenderable } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import type { Context } from "@opencode/plugin/tui/context"
 import { createSignal } from "solid-js"
+import { ConfigProvider } from "../../src/config"
 import { PromptFooter } from "../../src/feature-plugins/prompt/footer"
+import { createTuiResolvedConfig } from "../fixture/tui-runtime"
 
 test("prompt footer separates simultaneous subagent, shell, and usage status", async () => {
   const color = RGBA.fromInts(200, 200, 200)
@@ -40,7 +42,11 @@ test("prompt footer separates simultaneous subagent, shell, and usage status", a
     },
   } as unknown as Context
   const app = await testRender(
-    () => <PromptFooter context={context} sessionID="session" mode="normal" showDetails={true} />,
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={context} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
     {
       width: 80,
       height: 2,
@@ -93,6 +99,7 @@ test("prompt footer can hide details", async () => {
               id: "message",
               type: "assistant",
               model: { providerID: "provider", id: "model" },
+              time: { created: 0 },
               tokens: { input: 1_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
             },
           ],
@@ -108,14 +115,16 @@ test("prompt footer can hide details", async () => {
   const [sessionID, setSessionID] = createSignal<string | undefined>("session")
   const app = await testRender(
     () => (
-      <box width="100%" flexDirection="row" justifyContent="space-between" gap={2}>
-        <PromptFooter
-          context={context}
-          sessionID={sessionID()}
-          mode="normal"
-          showDetails={showDetails()}
-        />
-      </box>
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <box width="100%" flexDirection="row" justifyContent="space-between" gap={2}>
+          <PromptFooter
+            context={context}
+            sessionID={sessionID()}
+            mode="normal"
+            showDetails={showDetails()}
+          />
+        </box>
+      </ConfigProvider>
     ),
     {
       width: 80,
@@ -140,5 +149,84 @@ test("prompt footer can hide details", async () => {
     expect(app.captureCharFrame()).not.toContain("shift+tab agents")
   } finally {
     app.renderer.destroy()
+  }
+})
+
+function speedContext(messages: unknown[]) {
+  const color = RGBA.fromInts(200, 200, 200)
+  return {
+    location: { directory: "/workspace" },
+    theme: { text: { base: color, muted: color } },
+    keymap: { shortcuts: (id: string) => (id === "command.palette.show" ? ["ctrl+p"] : []) },
+    data: {
+      session: {
+        family: () => ["session"],
+        status: () => "idle",
+        get: () => ({ id: "session", location: { directory: "/workspace" } }),
+        cost: () => 1,
+        message: { list: () => messages },
+      },
+      shell: { list: () => [] },
+      location: {
+        model: { list: () => [{ providerID: "provider", id: "model", limit: { context: 10_000 } }] },
+      },
+    },
+  } as unknown as Context
+}
+
+const settled = {
+  id: "message",
+  type: "assistant",
+  agent: "build",
+  model: { providerID: "provider", id: "model" },
+  content: [{ type: "reasoning", text: "", time: { created: 900 } }],
+  time: { created: 0, streamed: 1_000, completed: 1_200 },
+  tokens: { input: 1_000, output: 20, reasoning: 20, cache: { read: 0, write: 0 } },
+}
+
+test("prompt footer shows the measured speed cells after context and cost", async () => {
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={speedContext([settled])} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
+    { width: 100, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    // 1.0K + 40 generated tokens against 10K context, 900 ms to the first reasoning, 40 tokens in 1 s
+    expect(app.captureCharFrame()).toContain("1.0K (10%) · $1.00 · TTFT avg 900ms · 40 tok/s")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("prompt footer omits unmeasured speed cells and honors the TPS setting", async () => {
+  const unmeasured = { ...settled, content: [], time: { created: 0 }, tokens: undefined }
+  const render = (config: ReturnType<typeof createTuiResolvedConfig>, messages: unknown[]) =>
+    testRender(
+      () => (
+        <ConfigProvider config={config}>
+          <PromptFooter context={speedContext(messages)} sessionID="session" mode="normal" showDetails={true} />
+        </ConfigProvider>
+      ),
+      { width: 100, height: 1 },
+    )
+  const measured = await render(createTuiResolvedConfig({ session: { tps: false } }), [settled])
+  try {
+    await measured.renderOnce()
+    expect(measured.captureCharFrame()).not.toContain("TTFT")
+    expect(measured.captureCharFrame()).not.toContain("tok/s")
+  } finally {
+    measured.renderer.destroy()
+  }
+  const waiting = await render(createTuiResolvedConfig(), [unmeasured])
+  try {
+    await waiting.renderOnce()
+    expect(waiting.captureCharFrame()).not.toContain("TTFT")
+    expect(waiting.captureCharFrame()).not.toContain("tok/s")
+  } finally {
+    waiting.renderer.destroy()
   }
 })

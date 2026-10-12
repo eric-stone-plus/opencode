@@ -7,7 +7,7 @@ import { compileRequest } from "../../src/route/client.js"
 import { recordedTests } from "../recorded-test.js"
 
 const alibaba = Alibaba.configure({ region: "ap-southeast-1", apiKey: process.env.ALIBABA_API_KEY ?? "fixture" })
-const record = (api: "chat" | "messages" | "responses") =>
+const record = (api: "chat" | "messages") =>
   recordedTests({
     prefix: `alibaba-${api}`,
     provider: "alibaba",
@@ -16,7 +16,7 @@ const record = (api: "chat" | "messages" | "responses") =>
     tags: ["region:ap-southeast-1"],
   })
 
-for (const api of ["chat", "messages", "responses"] as const) {
+for (const api of ["chat", "messages"] as const) {
   const recorded = record(api)
   describe(`Alibaba ${api} capabilities`, () => {
     for (const enabled of [false, true]) {
@@ -159,96 +159,4 @@ record("messages").effect.with(
       expect(response.finishReason.normalized).toBe("stop")
     }),
   120_000,
-)
-
-const responses = record("responses")
-responses.effect.with(
-  "Qwen 3.8 Max continues a stored response",
-  { tags: ["continuation", "storage"] },
-  () =>
-    Effect.gen(function* () {
-      const first = yield* LLMClient.generate(
-        LLM.request({
-          model: alibaba.responses("qwen3.8-max"),
-          prompt: "Remember the password word apricot. Reply OK.",
-          providerOptions: { store: true, reasoningEffort: "none" },
-          generation: { maxTokens: 1024 },
-        }),
-      )
-      const id = first.events.find(LLMEvent.is.finish)?.providerMetadata?.alibaba?.responseId
-      expect(id).toBeString()
-      if (typeof id !== "string") throw new Error("Missing Alibaba response ID")
-      const second = yield* LLMClient.generate(
-        LLM.request({
-          model: alibaba.responses("qwen3.8-max"),
-          prompt: "What word did I ask you to remember? Reply with only the word.",
-          providerOptions: { previousResponseId: id, store: true, reasoningEffort: "none" },
-          generation: { maxTokens: 1024 },
-        }),
-      )
-      expect(second.text.toLowerCase()).toContain("apricot")
-      expect(second.finishReason.normalized).toBe("stop")
-    }),
-  120_000,
-)
-
-responses.effect.with(
-  "Qwen 3.8 Max uses hosted web search and extraction",
-  { tags: ["hosted-tool", "web-search", "web-extractor"] },
-  () =>
-    Effect.gen(function* () {
-      const request = LLM.request({
-        model: alibaba.responses("qwen3.8-max"),
-        prompt:
-          "Use web search to find Alibaba Cloud Model Studio's official documentation, then use web_extractor to read the page. Give a brief summary with the source URL.",
-        tools: [Alibaba.webSearch(), Alibaba.webExtractor()],
-        providerOptions: { reasoningEffort: "low", store: false },
-        generation: { maxTokens: 4096 },
-      })
-      const response = yield* LLMClient.generate(request)
-      expect(response.toolCalls).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: "web_search", providerExecuted: true }),
-          expect.objectContaining({ name: "web_extractor", providerExecuted: true }),
-        ]),
-      )
-      expect(response.text.toLowerCase()).toContain("alibaba")
-      expect(response.events.some(LLMEvent.is.toolResult)).toBe(true)
-      const replay = yield* compileRequest(
-        LLMRequest.update(request, {
-          messages: [...request.messages, response.message, Message.user("Summarize in one sentence.")],
-        }),
-      )
-      expect(replay.body.input).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: "web_search_call" }),
-          expect.objectContaining({ type: "web_extractor_call" }),
-        ]),
-      )
-    }),
-  180_000,
-)
-
-responses.effect.with(
-  "Qwen 3.8 Max uses hosted code interpreter",
-  { tags: ["hosted-tool", "code-interpreter"] },
-  () =>
-    Effect.gen(function* () {
-      const response = yield* LLMClient.generate(
-        LLM.request({
-          model: alibaba.responses("qwen3.8-max"),
-          prompt:
-            "Use the code interpreter to compute the SHA-256 hash of the UTF-8 string hello (no newline). Reply with only the hash.",
-          tools: [Alibaba.codeInterpreter()],
-          providerOptions: { reasoningEffort: "low" },
-          generation: { maxTokens: 4096 },
-        }),
-      )
-      expect(response.toolCalls).toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: "code_interpreter", providerExecuted: true })]),
-      )
-      expect(response.text).toContain("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
-      expect(response.events.some(LLMEvent.is.toolResult)).toBe(true)
-    }),
-  180_000,
 )

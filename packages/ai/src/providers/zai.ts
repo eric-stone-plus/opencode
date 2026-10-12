@@ -1,11 +1,9 @@
 import type { ProviderPackage } from "../provider-package.js"
 import { ZAIChat } from "../protocols/zai-chat.js"
-import { ZAIImages } from "../protocols/zai-images.js"
 import { OpenAIChat } from "../protocols/openai-chat.js"
 import { AuthOptions, type ProviderAuthOption } from "../route/auth-options.js"
 import { Route, type RouteDefaultsInput } from "../route/client.js"
 import { Endpoint } from "../route/endpoint.js"
-import { MediaRoute } from "../route/media.js"
 import { ProviderID, type ModelID } from "../schema/index.js"
 
 export const id = ProviderID.make("zai")
@@ -23,8 +21,6 @@ export type Settings = ProviderPackage.Settings &
     readonly apiKey?: string
     readonly baseURL?: string
   }
-
-export type { ZAIImageOptions } from "../protocols/zai-images.js"
 
 const auth = (options: ProviderAuthOption<"optional">) => AuthOptions.bearer(options, "ZAI_API_KEY")
 
@@ -49,20 +45,16 @@ export const configure = (input: Config = {}) => {
         auth: auth(input),
       })
       .model<ChatOptionsInput>({ id: modelID, compatibility: ZAIChat.compatibility })
-  const media = MediaRoute.deployment(input, auth(input))
-  const image = (modelID: string | ModelID) => ZAIImages.model({ ...media, id: modelID })
 
   return {
     id,
     model: chat,
     chat,
-    image,
     configure,
   }
 }
 
 export const provider = configure()
-export const image = provider.image
 export const chat = provider.chat
 
 export const model: ProviderPackage.Definition<Settings, ChatOptionsInput>["model"] = (

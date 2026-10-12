@@ -248,6 +248,144 @@ describe("SessionStats", () => {
   )
 })
 
+describe("SessionStats compactions and session scope", () => {
+  it.effect("counts completed compactions and attributes their spend to the model that ran them", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      const scopedProject = Project.ID.make("stats-compaction-project")
+      const root = Session.ID.make("ses_stats_compaction_root")
+      const child = Session.ID.make("ses_stats_compaction_child")
+      const grandchild = Session.ID.make("ses_stats_compaction_grandchild")
+      const sibling = Session.ID.make("ses_stats_compaction_sibling")
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: scopedProject, worktree: AbsolutePath.make("/compaction"), name: "compaction", sandboxes: [] })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionTable)
+        .values([
+          { id: root, project_id: scopedProject, slug: "root", directory: "/compaction", version: "test" },
+          {
+            id: child,
+            project_id: scopedProject,
+            parent_id: root,
+            slug: "child",
+            directory: "/compaction",
+            version: "test",
+          },
+          {
+            id: grandchild,
+            project_id: scopedProject,
+            parent_id: child,
+            slug: "grandchild",
+            directory: "/compaction",
+            version: "test",
+          },
+          { id: sibling, project_id: scopedProject, slug: "sibling", directory: "/compaction", version: "test" },
+        ])
+        .run()
+        .pipe(Effect.orDie)
+      const day = Date.UTC(2026, 2, 2, 10)
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          messageRow(root, 1, assistant("msg_cmp_root_step", day, [], "sonnet")),
+          messageRow(root, 2, compaction("msg_cmp_root_a", day + 1_000, "completed", "haiku", 0.25, 100)),
+          messageRow(root, 3, compaction("msg_cmp_root_b", day + 2_000, "completed", "sonnet", 0.5, 200)),
+          messageRow(root, 4, compaction("msg_cmp_root_failed", day + 3_000, "failed")),
+          messageRow(root, 5, compaction("msg_cmp_root_running", day + 4_000, "running")),
+          messageRow(child, 1, assistant("msg_cmp_child_step", day + 5_000, [], "sonnet")),
+          messageRow(child, 2, compaction("msg_cmp_child", day + 6_000, "completed", "haiku", 0.125, 50)),
+          messageRow(grandchild, 1, assistant("msg_cmp_grandchild_step", day + 7_000, [], "large", 2)),
+          messageRow(sibling, 1, assistant("msg_cmp_sibling_step", day + 8_000, [], "sonnet")),
+          messageRow(sibling, 2, compaction("msg_cmp_sibling", day + 9_000, "completed", "sonnet", 4, 400)),
+        ])
+        .run()
+        .pipe(Effect.orDie)
+      // Compaction spend reaches the totals through usage events, exactly once, and a failed compaction bills too.
+      const bus = yield* Bus.Service
+      yield* TestClock.setTime(day + 10_000)
+      const spend = (sessionID: Session.ID, cost: number, scale: number) =>
+        bus.publish(SessionEvent.UsageRecorded, {
+          sessionID,
+          source: "compaction",
+          cost: Money.USD.make(cost),
+          tokens: { input: scale, output: scale, reasoning: scale, cache: { read: scale, write: scale } },
+        })
+      yield* spend(root, 0.25, 20)
+      yield* spend(root, 0.5, 40)
+      yield* spend(root, 0.0625, 2)
+      yield* spend(child, 0.125, 10)
+      yield* spend(sibling, 4, 80)
+
+      const range = { from: day - 1_000, to: day + 60_000, timezone: "UTC", tools: "none" } as const
+      const all = yield* SessionStats.get({ ...range, projectID: scopedProject })
+      expect(all.compactions).toBe(4)
+      expect(all.steps).toBe(4)
+      expect(all.cost).toBe(Money.USD.make(1.5 + 1.5 + 3 + 1.5 + 0.25 + 0.5 + 0.0625 + 0.125 + 4))
+      const bySonnet = all.models.find((item) => item.model.id === "sonnet")
+      const byHaiku = all.models.find((item) => item.model.id === "haiku")
+      expect(byHaiku).toMatchObject({ steps: 0, compactions: 2, cost: Money.USD.make(0.375) })
+      expect(bySonnet).toMatchObject({ steps: 3, compactions: 2 })
+      expect(bySonnet?.cost).toBe(Money.USD.make(1.5 + 1.5 + 1.5 + 0.5 + 4))
+      expect(bySonnet?.tokens.input).toBe(10 * 3 + 200 + 400)
+
+      // The whole tree of the root, nothing from the sibling session.
+      const tree = yield* SessionStats.get({ ...range, projectID: scopedProject, sessionID: root })
+      expect(tree.sessions).toBe(1)
+      expect(tree.subagents).toBe(2)
+      expect(tree.steps).toBe(3)
+      expect(tree.compactions).toBe(3)
+      expect(tree.cost).toBe(Money.USD.make(1.5 + 1.5 + 3 + 0.25 + 0.5 + 0.0625 + 0.125))
+      expect(tree.models.map((item) => String(item.model.id)).toSorted()).toEqual(["haiku", "large", "sonnet"])
+
+      // A subagent's own report covers it and its descendants only.
+      const leaf = yield* SessionStats.get({ ...range, sessionID: child })
+      expect(leaf.steps).toBe(2)
+      expect(leaf.compactions).toBe(1)
+      expect(leaf.cost).toBe(Money.USD.make(1.5 + 3 + 0.125))
+
+      const none = yield* SessionStats.get({ ...range, sessionID: Session.ID.make("ses_stats_missing") })
+      expect(none).toMatchObject({ sessions: 0, steps: 0, compactions: 0, cost: 0 })
+    }),
+  )
+})
+
+function compaction(
+  id: string,
+  created: number,
+  status: "completed" | "failed" | "running",
+  model = "sonnet",
+  cost = 0,
+  scale = 0,
+) {
+  const base = {
+    id: SessionMessage.ID.make(id),
+    type: "compaction" as const,
+    time: { created: DateTime.makeUnsafe(created) },
+  }
+  if (status === "running")
+    return SessionMessage.CompactionRunning.make({ ...base, status, reason: "auto", summary: "", recent: "" })
+  if (status === "failed")
+    return SessionMessage.CompactionFailed.make({
+      ...base,
+      status,
+      reason: "auto",
+      error: { type: "compaction.failed", message: "failed" },
+    })
+  return SessionMessage.CompactionCompleted.make({
+    ...base,
+    status,
+    reason: "auto",
+    model: { id: Model.ID.make(model), providerID: Provider.ID.make("anthropic") },
+    summary: "summary",
+    recent: "",
+    cost: Money.USD.make(cost),
+    tokens: { input: scale, output: scale, reasoning: scale, cache: { read: scale, write: scale } },
+  })
+}
+
 function assistant(
   id: string,
   created: number,

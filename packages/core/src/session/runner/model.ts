@@ -22,10 +22,6 @@ export class ModelUnavailableError extends Schema.TaggedError<ModelUnavailableEr
   { providerID: Provider.ID, modelID: Model.ID },
 ) {
   override get message() {
-    if (this.providerID === "azure-cognitive-services")
-      return `Model unavailable: ${this.providerID}/${this.modelID}. This provider has been deprecated; use azure/${this.modelID} instead.`
-    if (this.providerID === "google-vertex-anthropic")
-      return `Model unavailable: ${this.providerID}/${this.modelID}. This provider has been deprecated; use google-vertex/${this.modelID} instead.`
     return `Model unavailable: ${this.providerID}/${this.modelID}`
   }
 }
@@ -37,6 +33,8 @@ export interface Interface {
   readonly resolve: (
     session: SessionSchema.Info,
     available: () => Effect.Effect<ReadonlyArray<Model.Info>>,
+    /** The selected agent's configured model; used only while the session has no model of its own. */
+    preferred?: Model.Ref,
   ) => Effect.Effect<Resolved, Error>
 }
 
@@ -72,22 +70,28 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const resolver = yield* ModelResolver.Service
     return Service.of({
-      resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session, available) {
+      resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session, available, preferred) {
         // Location plugins populate and filter the catalog asynchronously during layer startup.
-        if (!session.model) {
+        const catalog = session.model || preferred ? yield* available() : []
+        // Clients that never pick a model (`opencode run`) would otherwise ignore the agent's configured model and
+        // variant; an agent model missing from the catalog falls back to the default instead of failing the run.
+        const requested =
+          session.model ??
+          (catalog.some((model) => model.providerID === preferred?.providerID && model.id === preferred.id)
+            ? preferred
+            : undefined)
+        if (!requested) {
           const resolved = yield* resolver.resolve()
           if (resolved) return resolved
           return yield* new ModelNotSelectedError({ sessionID: session.id })
         }
-        const selected = (yield* available()).find(
-          (model) => model.providerID === session.model?.providerID && model.id === session.model.id,
-        )
+        const selected = catalog.find((model) => model.providerID === requested.providerID && model.id === requested.id)
         if (!selected)
           return yield* new ModelUnavailableError({
-            providerID: session.model.providerID,
-            modelID: session.model.id,
+            providerID: requested.providerID,
+            modelID: requested.id,
           })
-        return yield* resolver.resolveModel(selected, session.model.variant)
+        return yield* resolver.resolveModel(selected, requested.variant)
       }),
     })
   }),

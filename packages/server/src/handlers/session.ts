@@ -114,6 +114,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               from: ctx.query.from,
               to: ctx.query.to,
               projectID: ctx.query.project,
+              sessionID: ctx.query.session,
               timezone,
               tools: ctx.query.tools,
             }).pipe(

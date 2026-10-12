@@ -99,15 +99,13 @@ run_oc() {
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
   pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
-  if grep -q "OPENCODE_EXPERIMENTAL_PLAN_MODE=1" "$SHIM" 2>/dev/null; then
-    pass "shim enables the plan-file workflow (OPENCODE_EXPERIMENTAL_PLAN_MODE=1)"
+  if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
+    pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
   else
-    warn "shim lacks OPENCODE_EXPERIMENTAL_PLAN_MODE=1: plan_exit is not registered and the plan profile is prompt-only (re-run install.sh)"
+    warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: V2 refreshes the models.dev catalog at boot and every 5 minutes (re-run install.sh)"
   fi
-  if grep -q "OPENCODE_EXPERIMENTAL_LSP_TOOL=1" "$SHIM" 2>/dev/null; then
-    pass "shim enables the lsp agent tool (OPENCODE_EXPERIMENTAL_LSP_TOOL=1)"
-  else
-    warn "shim lacks OPENCODE_EXPERIMENTAL_LSP_TOOL=1: the model has no lsp tool (re-run install.sh)"
+  if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
+    warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"
   fi
   if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
     pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
@@ -241,14 +239,14 @@ PYEOF
       ph=$(printf '%s\n' "$authout" | sed -n 's/^PLACEHOLDERS //p')
       info "providers: $names"
       ok=1
-      for want in bailian-token-plan-personal glm-coding-plan zhipuai-coding-plan xiaomi-token-plan-cn; do
+      for want in deepseek xiaomi-token-plan-cn; do
         case ",$names," in
           *",$want,"*) : ;;
           *) fail "auth provider missing: $want"; ok=0 ;;
         esac
       done
       if [ "$ok" -eq 1 ]; then
-        pass "all 4 provider entries present"
+        pass "both provider entries present (deepseek, xiaomi-token-plan-cn)"
       fi
       if [ -n "$ph" ]; then
         warn "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"
@@ -534,7 +532,7 @@ fi
 
 # --- 8. plugins --------------------------------------------------------------
 echo "-- plugin/"
-for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts open-code-review.ts; do
+for f in block-unsafe-kill.ts secret-path-guard.ts; do
   if [ -f "$CFG/plugin/$f" ]; then
     pass "plugin/$f present"
   else

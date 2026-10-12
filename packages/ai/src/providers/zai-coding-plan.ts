@@ -1,26 +1,23 @@
 import type { ProviderPackage } from "../provider-package.js"
 import { AnthropicMessages } from "../protocols/anthropic-messages.js"
 import { OpenAIChat } from "../protocols/openai-chat.js"
-import { OpenResponses } from "../protocols/open-responses.js"
 import { ZAIChat } from "../protocols/zai-chat.js"
 import { ZAIMessages } from "../protocols/zai-messages.js"
 import { AuthOptions, type ProviderAuthOption } from "../route/auth-options.js"
 import { Route, type RouteDefaultsInput } from "../route/client.js"
 import { Endpoint } from "../route/endpoint.js"
-import { Framing } from "../route/framing.js"
 import { ProviderID, type ModelID } from "../schema/index.js"
 
 export const id = ProviderID.make("zai-coding-plan")
 
 export type ChatOptionsInput = ZAIChat.OptionsInput
 export type MessagesOptionsInput = ZAIMessages.OptionsInput
-export type ResponsesOptionsInput = { readonly reasoningEffort?: ZAIChat.ReasoningEffort }
 
 export type Config = Omit<RouteDefaultsInput, "providerOptions"> &
   ProviderAuthOption<"optional"> & {
     /** Overrides the selected API's complete base URL. */
     readonly baseURL?: string
-    readonly providerOptions?: ChatOptionsInput | MessagesOptionsInput | ResponsesOptionsInput
+    readonly providerOptions?: ChatOptionsInput | MessagesOptionsInput
   }
 
 export type Settings<Options = ChatOptionsInput> = ProviderPackage.Settings &
@@ -46,16 +43,8 @@ const messagesRoute = Route.make({
   framing: AnthropicMessages.framing,
   headers: () => ({ "anthropic-version": "2023-06-01" }),
 })
-const responsesRoute = Route.make({
-  id: "zai-coding-responses",
-  provider: id,
-  providerMetadataKey: "zai",
-  protocol: OpenResponses.protocol,
-  endpoint: Endpoint.path("/responses", { baseURL: "https://api.z.ai/api/v1" }),
-  framing: Framing.sse,
-})
 
-export const routes = [chatRoute, messagesRoute, responsesRoute]
+export const routes = [chatRoute, messagesRoute]
 
 export const configure = (input: Config = {}) => {
   const { apiKey: _apiKey, auth: _auth, baseURL, ...rest } = input
@@ -70,15 +59,12 @@ export const configure = (input: Config = {}) => {
     messagesRoute
       .with(defaults)
       .model<MessagesOptionsInput>({ id: modelID, compatibility: { requireSignature: false } })
-  const responses = (modelID: string | ModelID) =>
-    responsesRoute.with(defaults).model<ResponsesOptionsInput>({ id: modelID })
-  return { id, model: chat, chat, messages, responses, configure }
+  return { id, model: chat, chat, messages, configure }
 }
 
 export const provider = configure()
 export const chat = provider.chat
 export const messages = provider.messages
-export const responses = provider.responses
 
 export const model: ProviderPackage.Definition<Settings, ChatOptionsInput>["model"] = (
   modelID,

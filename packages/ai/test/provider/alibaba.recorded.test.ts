@@ -18,7 +18,7 @@ const weather = ToolDefinition.make({
   },
 })
 
-for (const api of ["chat", "messages", "responses"] as const) {
+for (const api of ["chat", "messages"] as const) {
   const recorded = recordedTests({
     prefix: `alibaba-${api}`,
     provider: "alibaba",
@@ -44,13 +44,7 @@ for (const api of ["chat", "messages", "responses"] as const) {
             const compiled = yield* compileRequest(request)
             expect(compiled.body.enable_thinking).toBeUndefined()
             expect(compiled.body.thinking).toBeUndefined()
-            expect(
-              api === "chat"
-                ? compiled.body.reasoning_effort
-                : api === "messages"
-                  ? compiled.body.output_config?.effort
-                  : compiled.body.reasoning?.effort,
-            ).toBe(effort)
+            expect(api === "chat" ? compiled.body.reasoning_effort : compiled.body.output_config?.effort).toBe(effort)
             const response = yield* LLMClient.generate(request)
             expect(response.text.replaceAll(",", "")).toContain("37887")
             expect(response.reasoning.length > 0).toBe(effort !== "none")
@@ -71,9 +65,7 @@ for (const api of ["chat", "messages", "responses"] as const) {
             providerOptions:
               api === "messages"
                 ? { effort: "medium" }
-                : api === "chat"
-                  ? { reasoningEffort: "medium", preserveThinking: true, toolStream: true }
-                  : { reasoningEffort: "medium", store: false },
+                : { reasoningEffort: "medium", preserveThinking: true, toolStream: true },
             prompt:
               "We have a budget of 38000 dollars for 219 trips costing 173 dollars each. Calculate whether that is affordable. If it is, use get_weather to look up the current weather in Paris. After receiving the result, report the weather in one short sentence.",
             tools: [weather],
@@ -125,11 +117,7 @@ function expectUsage(response: LLMResponse) {
   expect(response.events.filter(LLMEvent.is.finish)).toHaveLength(1)
 }
 
-function expectReasoning(
-  api: "chat" | "messages" | "responses",
-  body: Readonly<Record<string, unknown>>,
-  response: LLMResponse,
-) {
+function expectReasoning(api: "chat" | "messages", body: Readonly<Record<string, unknown>>, response: LLMResponse) {
   if (api === "chat") {
     expect(body.messages).toEqual(
       expect.arrayContaining([expect.objectContaining({ role: "assistant", reasoning_content: response.reasoning })]),
@@ -137,25 +125,13 @@ function expectReasoning(
     return
   }
   for (const part of response.message.content.filter((part) => part.type === "reasoning")) {
-    if (api === "messages") {
-      expect(body.messages).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: "assistant",
-            content: expect.arrayContaining([
-              { type: "thinking", thinking: part.text, signature: part.providerMetadata?.alibaba?.signature ?? "" },
-            ]),
-          }),
-        ]),
-      )
-      continue
-    }
-    expect(body.input).toEqual(
+    expect(body.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "reasoning",
-          id: part.providerMetadata?.alibaba?.itemId,
-          summary: expect.arrayContaining([{ type: "summary_text", text: part.text }]),
+          role: "assistant",
+          content: expect.arrayContaining([
+            { type: "thinking", thinking: part.text, signature: part.providerMetadata?.alibaba?.signature ?? "" },
+          ]),
         }),
       ]),
     )

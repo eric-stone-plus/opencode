@@ -8,6 +8,7 @@ const stats: SessionStatsInfo = {
   subagents: 99,
   prompts: 24,
   steps: 50,
+  compactions: 0,
   activeDays: 2,
   streak: 2,
   tokens: { input: 1, output: 2, reasoning: 3, cache: { read: 4, write: 5 } },

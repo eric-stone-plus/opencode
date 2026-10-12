@@ -10,6 +10,7 @@ import type { PluginHooks } from "../../plugin/hooks.js"
 import { SessionEvent } from "../event.js"
 import { SessionMessage } from "../message.js"
 import { SessionSchema } from "../schema.js"
+import { ForkRetryBudget } from "../fork/retry-budget.js"
 
 export { isRetryable }
 
@@ -64,12 +65,15 @@ const isTimeout = (error: AIError) => error.reason._tag === "Transport" && error
 export const policy = (sessionID: SessionSchema.ID) =>
   Effect.gen(function* () {
     const step = yield* Schedule.toStep(schedule)
+    const budgeted = yield* Schedule.toStep(ForkRetryBudget.schedule<Input>())
     let attempt = 1
     let timeouts = 0
     return (input: Input) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
-        const next = yield* step(now, input).pipe(Pull.catchDone(() => Effect.succeed(undefined)))
+        // The budget is for sessions the user walks away from; an attended request must fail fast and bounded.
+        const useBudget = ForkRetryBudget.transient(input.cause) && ForkRetryBudget.unattended(input.agent)
+        const next = yield* (useBudget ? budgeted : step)(now, input).pipe(Pull.catchDone(() => Effect.succeed(undefined)))
         if (!next) return { retry: false as const }
         const [, duration] = next
         attempt++

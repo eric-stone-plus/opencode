@@ -23,7 +23,6 @@ it.effect("ZAI owns standard and Coding Plan endpoints and bearer credentials", 
       { model: ZAI.chat("glm-5.3"), path: "/paas/v4/chat/completions", provider: "zai" },
       { model: ZAICodingPlan.chat("glm-5.3"), path: "/coding/paas/v4/chat/completions", provider: "zai-coding-plan" },
       { model: ZAICodingPlan.messages("glm-5.3"), path: "/anthropic/v1/messages", provider: "zai-coding-plan" },
-      { model: ZAICodingPlan.responses("glm-5.3"), path: "/v1/responses", provider: "zai-coding-plan" },
     ]) {
       const request = LLM.request({ model: item.model, prompt: "Hello" })
       const compiled = yield* compileRequest(request)
@@ -170,14 +169,10 @@ it.effect("ZAI lowers effort using the selected native API without inventing thi
       const messages = yield* compileRequest(
         LLM.request({ model: coding.messages("glm-5.3"), providerOptions: { effort } }),
       )
-      const responses = yield* compileRequest(
-        LLM.request({ model: coding.responses("glm-5.3"), providerOptions: { reasoningEffort: effort } }),
-      )
       expect(standard.body.reasoning_effort).toBe(effort)
       expect(chat.body.reasoning_effort).toBe(effort)
       expect(messages.body.output_config).toEqual({ effort })
-      expect(responses.body.reasoning).toEqual({ effort })
-      for (const result of [standard, chat, messages, responses]) expect(result.body.thinking).toBeUndefined()
+      for (const result of [standard, chat, messages]) expect(result.body.thinking).toBeUndefined()
     }
     for (const type of ["enabled", "adaptive", "disabled"]) {
       const result = yield* compileRequest(
@@ -295,26 +290,6 @@ it.effect("ZAI applies configured options, request options, and final body overl
             sseEvents({ choices: [{ delta: { content: "Hello" }, finish_reason: "stop" }] }, "[DONE]"),
             { headers: { "content-type": "text/event-stream" } },
           )
-        }),
-      ),
-    ),
-  ),
-)
-
-it.effect("ZAI Coding Responses uses HTTP with a supplied WebSocket executor", () =>
-  LLMClient.generate(
-    LLM.request({ model: ZAICodingPlan.configure({ apiKey: "fixture" }).responses("glm-5.3"), prompt: "Hello" }),
-    {
-      webSocket: { execute: () => Effect.die("Unexpected WebSocket") },
-    },
-  ).pipe(
-    Effect.provide(
-      dynamicResponse((input) =>
-        Effect.sync(() => {
-          expect(input.request.url).toBe("https://api.z.ai/api/v1/responses")
-          return input.respond(sseEvents({ type: "response.completed", response: {} }), {
-            headers: { "content-type": "text/event-stream" },
-          })
         }),
       ),
     ),

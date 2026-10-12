@@ -1,7 +1,6 @@
 import { Argument, Flag, GlobalFlag } from "effect/cli"
 import { Schema } from "effect"
 import { Spec } from "../framework/spec"
-import { Updater } from "../services/updater"
 
 export const PrintLogs = GlobalFlag.Setting("print-logs")({
   flag: Flag.Boolean("print-logs").pipe(
@@ -57,35 +56,6 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
     prompt: Flag.String("prompt").pipe(Flag.withDescription("Prompt to use"), Flag.optional),
   },
   commands: [
-    Spec.make("upgrade", {
-      description: "Upgrade OpenCode to the latest or a specific version",
-      aliases: ["update"],
-      params: {
-        target: Argument.String("target").pipe(
-          Argument.withDescription("Version to upgrade to (with or without a leading v)"),
-          Argument.optional,
-        ),
-        method: Flag.Literals("method", Updater.methods).pipe(
-          Flag.withAlias("m"),
-          Flag.withDescription("Installation method to use"),
-          Flag.optional,
-        ),
-      },
-    }),
-    Spec.make("uninstall", {
-      description: "Uninstall OpenCode, keeping session data, configuration, and state",
-      params: {
-        dryRun: Flag.Boolean("dry-run").pipe(
-          Flag.withDescription("Show what would be removed without removing"),
-          Flag.withDefault(false),
-        ),
-        force: Flag.Boolean("force").pipe(
-          Flag.withAlias("f"),
-          Flag.withDescription("Skip confirmation prompts"),
-          Flag.withDefault(false),
-        ),
-      },
-    }),
     Spec.make("acp", {
       description: "Start an Agent Client Protocol server",
       params: {
@@ -214,6 +184,41 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
             credential: Argument.String("credential").pipe(
               Argument.withDescription("Credential ID or label (opens an account picker when omitted)"),
               Argument.optional,
+            ),
+          },
+        }),
+        Spec.make("purge", {
+          description: "remove saved credentials and every stale copy of their values",
+          params: {
+            ...ServerParams,
+            targets: Argument.String("target").pipe(
+              Argument.withDescription("Integration ID or name, matched case-insensitively by substring"),
+              Argument.variadic({ min: 0 }),
+            ),
+            all: Flag.Boolean("all").pipe(
+              Flag.withDescription("Purge every integration that holds a saved credential"),
+              Flag.withDefault(false),
+            ),
+            yes: Flag.Boolean("yes").pipe(
+              Flag.withAlias("y"),
+              Flag.withDescription("Skip the confirmation prompt (required without an interactive terminal)"),
+              Flag.withDefault(false),
+            ),
+            dryRun: Flag.Boolean("dry-run").pipe(
+              Flag.withDescription("Show what would be removed without changing anything"),
+              Flag.withDefault(false),
+            ),
+            files: Flag.Boolean("files").pipe(
+              Flag.withDescription("Sweep copies in credential files and environment (disable with --no-files)"),
+              Flag.withDefault(true),
+            ),
+            history: Flag.Boolean("history").pipe(
+              Flag.withDescription("Redact the values in session history, saved tool output, and logs"),
+              Flag.withDefault(false),
+            ),
+            compact: Flag.Boolean("compact").pipe(
+              Flag.withDescription("Rewrite the database file if copies remain in unused pages (implies --history)"),
+              Flag.withDefault(false),
             ),
           },
         }),

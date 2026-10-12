@@ -228,6 +228,25 @@ export type McpResourceTemplate = {
   mimeType?: string
 }
 
+export type CredentialPurgeLocation = {
+  kind:
+    | "credential"
+    | "auth"
+    | "env"
+    | "environment.d"
+    | "service"
+    | "systemd"
+    | "process"
+    | "database"
+    | "tool-output"
+    | "log"
+  location: string
+  count: number
+  error?: string
+}
+
+export type CredentialPurgeCompact = { status: "done" | "skipped" | "failed"; reason?: string }
+
 export type ProjectVcs = string
 
 export type ProjectIcon = { url?: string; override?: string; color?: string }
@@ -659,6 +678,13 @@ export type CredentialExternal = {
   metadata?: { [x: string]: JsonValue }
 }
 
+export type CredentialPurgeCredential = {
+  id: CredentialID
+  integrationID: IntegrationID
+  label: string
+  removed: boolean
+}
+
 export type ConnectionCredentialInfo = {
   type: "credential"
   id: CredentialID
@@ -861,7 +887,13 @@ export type ReferenceSource = ReferenceLocalSource | ReferenceGitSource
 
 export type WorktreeList = Array<WorktreeDirectory>
 
-export type SessionStatsModelUsage = { model: ModelRef; steps: number; tokens: TokenUsageInfo; cost: MoneyUSD }
+export type SessionStatsModelUsage = {
+  model: ModelRef
+  steps: number
+  compactions: number
+  tokens: TokenUsageInfo
+  cost: MoneyUSD
+}
 
 export type SessionMessageModelSelected = {
   id: SessionMessageID
@@ -1912,6 +1944,15 @@ export type CredentialKey = {
   configuration?: FormAnswer
 }
 
+export type CredentialPurgeResult = {
+  dryRun: boolean
+  credentials: Array<CredentialPurgeCredential>
+  secrets: { distinct: number; shared: number; short: number }
+  swept: Array<CredentialPurgeLocation>
+  remaining: Array<CredentialPurgeLocation>
+  compact?: CredentialPurgeCompact
+}
+
 export type ConnectionInfo = ConnectionCredentialInfo | ConnectionEnvInfo
 
 export type PtyCreated = {
@@ -1988,6 +2029,7 @@ export type SessionStatsInfo = {
   subagents: number
   prompts: number
   steps: number
+  compactions: number
   tokens: TokenUsageInfo
   cost: MoneyUSD
   tools: SessionStatsTools
@@ -2212,7 +2254,7 @@ export type ConfigEntry =
                 }
           }
         }
-        compaction?: { auto?: boolean; keep?: { tokens?: number }; buffer?: number }
+        compaction?: { auto?: boolean; prune?: boolean; keep?: { tokens?: number }; buffer?: number }
         skills?: Array<string>
         commands?: {
           [x: string]: {
@@ -3000,6 +3042,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["from"]
@@ -3007,6 +3050,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["to"]
@@ -3014,13 +3058,23 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["project"]
+  readonly session?: {
+    readonly from?: number | undefined
+    readonly to?: number | undefined
+    readonly project?: string | undefined
+    readonly session?: string | undefined
+    readonly timezone?: string | undefined
+    readonly tools?: "none" | "summary" | "detail" | undefined
+  }["session"]
   readonly timezone?: {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["timezone"]
@@ -3028,6 +3082,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["tools"]
@@ -6126,6 +6181,59 @@ export type CredentialActivateOutput = void
 export type CredentialRemoveInput = { readonly credentialID: { readonly credentialID: string }["credentialID"] }
 
 export type CredentialRemoveOutput = void
+
+export type CredentialPurgeInput = {
+  readonly integrationIDs?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["integrationIDs"]
+  readonly all?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["all"]
+  readonly files?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["files"]
+  readonly history?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["history"]
+  readonly compact?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["compact"]
+  readonly dryRun?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["dryRun"]
+}
+
+export type CredentialPurgeOutput = { data: CredentialPurgeResult }["data"]
 
 export type ProjectListInput = { readonly archived?: { readonly archived?: boolean | undefined }["archived"] }
 

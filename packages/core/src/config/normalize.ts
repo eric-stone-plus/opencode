@@ -200,7 +200,7 @@ export function normalize(input: unknown): Result {
   const model = own(input, "model")
     ? decodeValue(ConfigModel.Selection, input.model, ["model"], diagnostics)
     : undefined
-  if (model) encoded.model = { ...model, providerID: ConfigMigrateV1.providerID(model.providerID) }
+  if (model) encoded.model = model
 
   const nativeAtomic = {
     $schema: Info.fields.$schema,
@@ -330,7 +330,6 @@ function normalizeCompaction(
     return
   }
   unsupportedIfPresent(input.compaction, "tail_turns", ["compaction", "tail_turns"], diagnostics)
-  unsupportedIfPresent(input.compaction, "prune", ["compaction", "prune"], diagnostics)
   const result: Record<string, unknown> = {}
   if (own(input.compaction, "auto")) {
     const value = decodeEncoded(
@@ -340,6 +339,15 @@ function normalizeCompaction(
       diagnostics,
     )
     if (value !== undefined) result.auto = value
+  }
+  if (own(input.compaction, "prune")) {
+    const value = decodeEncoded(
+      ConfigCompaction.Info.fields.prune,
+      input.compaction.prune,
+      ["compaction", "prune"],
+      diagnostics,
+    )
+    if (value !== undefined) result.prune = value
   }
   const legacyTokens = own(input.compaction, "preserve_recent_tokens")
     ? decodeEncoded(
@@ -388,22 +396,10 @@ function normalizeExperimental(
   const enabled = decodeProviderList(input, "enabled_providers", diagnostics)
   if (enabled.present && (!enabled.nonEmpty || enabled.values.length)) {
     generated.push({ action: "provider.use", resource: "*", effect: "deny" })
-    generated.push(
-      ...enabled.values.map((resource) => ({
-        action: "provider.use",
-        resource: ConfigMigrateV1.providerID(resource),
-        effect: "allow",
-      })),
-    )
+    generated.push(...enabled.values.map((resource) => ({ action: "provider.use", resource, effect: "allow" })))
   }
   const disabled = decodeProviderList(input, "disabled_providers", diagnostics)
-  generated.push(
-    ...disabled.values.map((resource) => ({
-      action: "provider.use",
-      resource: ConfigMigrateV1.providerID(resource),
-      effect: "deny",
-    })),
-  )
+  generated.push(...disabled.values.map((resource) => ({ action: "provider.use", resource, effect: "deny" })))
   const native: unknown[] = []
   if (own(input, "experimental")) {
     if (!isRecord(input.experimental)) invalid(["experimental"], diagnostics)
@@ -531,26 +527,14 @@ function migrateProviders(value: unknown, diagnostics: Diagnostic[]) {
     invalid(["provider"], diagnostics)
     return {}
   }
-  const candidates = Object.entries(value).flatMap(([name, raw]) => {
+  const result: Record<string, unknown> = {}
+  Object.entries(value).forEach(([name, raw]) => {
     const path = ["provider", name]
     diagnoseProviderUnsupported(raw, path, diagnostics)
-    if (invalidProviderOverlays(raw, path, diagnostics)) return []
+    if (invalidProviderOverlays(raw, path, diagnostics)) return
     const provider = decodeValue(ConfigProviderV1.Info, raw, path, diagnostics)
-    if (provider === undefined) return []
-    const destination = ConfigMigrateV1.providerID(name)
-    return [
-      {
-        name,
-        destination,
-        provider: canonical(ConfigProvider.Info, ConfigMigrateV1.migrateProvider(name, provider)),
-      },
-    ]
-  })
-  const current = new Set(candidates.filter((item) => item.name === item.destination).map((item) => item.destination))
-  const result: Record<string, unknown> = {}
-  candidates.forEach((item) => {
-    if (item.name !== item.destination && current.has(item.destination)) return
-    setOwn(result, item.destination, item.provider)
+    if (provider === undefined) return
+    setOwn(result, name, canonical(ConfigProvider.Info, ConfigMigrateV1.migrateProvider(provider)))
   })
   return result
 }

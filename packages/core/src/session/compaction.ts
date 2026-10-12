@@ -938,7 +938,7 @@ const estimateTool = (tool: ToolEntry): number => {
 
 const estimateMessage = (message: Message) => message.content.reduce((sum, part) => sum + estimatePart(part), 0)
 
-const estimatePart = (part: ContentPart): number => {
+export const estimatePart = (part: ContentPart): number => {
   // An encrypted native compaction has no locally measurable size.
   if (part.type === "compaction") return Token.estimate(part.text ?? "")
   if (part.type === "effort") return 0

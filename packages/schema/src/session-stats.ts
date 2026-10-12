@@ -15,6 +15,8 @@ export type Activity = typeof Activity.Type
 export const ModelUsage = Schema.Struct({
   model: Model.Ref,
   steps: NonNegativeInt,
+  /** Completed compactions run on this model; their spend is part of `tokens` and `cost`. */
+  compactions: NonNegativeInt,
   tokens: TokenUsage.Info,
   cost: Money.USD,
 }).annotate({ identifier: "SessionStats.ModelUsage" })
@@ -57,6 +59,8 @@ export const Info = Schema.Struct({
   subagents: NonNegativeInt,
   prompts: NonNegativeInt,
   steps: NonNegativeInt,
+  /** Completed compactions, whichever model ran them. */
+  compactions: NonNegativeInt,
   tokens: TokenUsage.Info,
   cost: Money.USD,
   tools: Tools,

@@ -36,7 +36,7 @@ import { Cause, Context, Effect, Layer, Option, Schema, Scope, Stream } from "ef
 import { makeParser } from "effect/encoding/Sse"
 import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { ID, RuntimeInfo } from "./model.js"
+import type { RuntimeInfo } from "./model.js"
 import { Provider } from "./provider.js"
 import { State } from "./state.js"
 
@@ -118,8 +118,8 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   })
 }
 
-function prepareOptions(model: RuntimeInfo, pkg: string) {
-  const projected = mapBodyToProviderOptions(model, pkg)
+function prepareOptions(model: RuntimeInfo) {
+  const projected = mapBodyToProviderOptions(model)
   const options: Record<string, any> = {
     name: model.canonical ?? model.providerID,
     ...(model.settings ?? {}),
@@ -332,7 +332,7 @@ export const locationLayer = Layer.effect(
           })
 
         const packageName = Provider.packageName(model.package)
-        const options = prepareOptions(model, packageName)
+        const options = prepareOptions(model)
         const sdkKey = cacheKey({
           providerID: model.providerID,
           canonical: model.canonical,
@@ -367,7 +367,7 @@ export const locationLayer = Layer.effect(
 
 function modelFromLanguage(info: RuntimeInfo, language: LanguageModelV3) {
   const packageName = Provider.packageName(info.package!)
-  const projected = mapBodyToProviderOptions(info, packageName)
+  const projected = mapBodyToProviderOptions(info)
   const providerID = info.canonical ?? info.providerID
   const optionKey = providerOptionKey(packageName, providerID)
   const route: AnyRoute = {
@@ -400,7 +400,7 @@ function modelFromLanguage(info: RuntimeInfo, language: LanguageModelV3) {
       schema: Schema.Unknown,
       from: (request) =>
         Effect.try({
-          try: () => callOptions(request, packageName, info.modelID ?? info.id, optionKey),
+          try: () => callOptions(request, optionKey),
           catch: (cause) =>
             cause instanceof AIError ? cause : ProviderShared.invalidRequest("Invalid AI SDK request", cause),
         }),
@@ -420,34 +420,8 @@ function modelFromLanguage(info: RuntimeInfo, language: LanguageModelV3) {
   })
 }
 
-function gatewayProviderOptions(modelID: ID, settings: Readonly<Record<string, unknown>>) {
-  const gateway =
-    typeof settings.gateway === "object" && settings.gateway !== null && !Array.isArray(settings.gateway)
-      ? Object.fromEntries(Object.entries(settings.gateway))
-      : undefined
-  const model = Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "gateway"))
-  if (Object.keys(model).length === 0) return gateway === undefined ? undefined : { gateway }
-
-  const separator = modelID.indexOf("/")
-  const prefix = separator > 0 ? modelID.slice(0, separator) : undefined
-  if (prefix)
-    return { ...(gateway === undefined ? {} : { gateway }), [prefix === "amazon" ? "bedrock" : prefix]: model }
-  if (gateway !== undefined) return { gateway: { ...gateway, ...model } }
-  return { gateway: model }
-}
-
 function providerOptionKey(packageName: string | undefined, providerID: Provider.ID) {
-  if (packageName === "@ai-sdk/google") return "google"
-  if (packageName === "@ai-sdk/google-vertex") return "vertex"
-  if (packageName === "@ai-sdk/google-vertex/anthropic") return "anthropic"
-  if (packageName === "@ai-sdk/amazon-bedrock") return "bedrock"
-  if (packageName === "@ai-sdk/amazon-bedrock/mantle") return "openai"
-  if (packageName === "@ai-sdk/azure") return "azure"
-  if (packageName === "@ai-sdk/github-copilot") return "copilot"
-  if (packageName === "@jerome-benoit/sap-ai-provider-v2") return "sap-ai"
   if (packageName === "@ai-sdk/openai-compatible") return providerID.split(".")[0]
-  if (packageName === "@openrouter/ai-sdk-provider") return "openrouter"
-  if (packageName === "ai-gateway-provider") return "openaiCompatible"
   if (packageName?.startsWith("@ai-sdk/")) return packageName.slice("@ai-sdk/".length)
   return providerID
 }
@@ -473,28 +447,11 @@ function requestSettings(settings: Readonly<Record<string, unknown>> | undefined
   return Object.keys(result).length === 0 ? undefined : result
 }
 
-function mapBodyToProviderOptions(model: RuntimeInfo, packageName: string) {
-  const settings = requestSettings(model.settings)
-  const pro = Schema.is(Schema.Struct({ mode: Schema.Literal("pro") }))(model.body?.reasoning)
-  const forceReasoning =
-    ["@ai-sdk/openai", "@ai-sdk/azure", "@ai-sdk/amazon-bedrock/mantle"].includes(packageName) &&
-    (pro || settings?.reasoningEffort !== undefined || settings?.reasoningSummary !== undefined)
-  const normalized = forceReasoning ? Provider.mergeOverlay(settings, { forceReasoning: true }) : settings
-  if (!pro) return { settings: normalized, body: model.body }
-  const body = { ...model.body }
-  delete body.reasoning
-  return {
-    settings: Provider.mergeOverlay(normalized, { reasoningMode: "pro" }),
-    body: Object.keys(body).length === 0 ? undefined : body,
-  }
+function mapBodyToProviderOptions(model: RuntimeInfo) {
+  return { settings: requestSettings(model.settings), body: model.body }
 }
 
-function callOptions(
-  request: LLMRequest,
-  packageName: string | undefined,
-  modelID: ID,
-  optionKey: string,
-): LanguageModelV3CallOptions {
+function callOptions(request: LLMRequest, optionKey: string): LanguageModelV3CallOptions {
   const flattened = ProviderShared.flattenToolRequest(request)
   return {
     prompt: prompt(flattened.request),
@@ -509,7 +466,7 @@ function callOptions(
     tools: flattened.tools.map(tool),
     toolChoice: toolChoice(request.toolChoice),
     headers: request.http?.headers,
-    providerOptions: requestProviderOptions(request.providerOptions, packageName, modelID, optionKey),
+    providerOptions: requestProviderOptions(request.providerOptions, optionKey),
   }
 }
 
@@ -703,15 +660,10 @@ function toolChoice(input: LLMRequest["toolChoice"]): LanguageModelV3ToolChoice 
 
 function requestProviderOptions(
   input: LLMRequest["providerOptions"],
-  packageName: string | undefined,
-  modelID: ID,
   optionKey: string,
 ): SharedV3ProviderOptions | undefined {
   if (!input) return undefined
-  const options = jsonObject(input)
-  if (packageName === "@ai-sdk/gateway") return gatewayProviderOptions(modelID, options)
-  if (packageName === "@ai-sdk/azure") return { openai: options, azure: options }
-  return { [optionKey]: options }
+  return { [optionKey]: jsonObject(input) }
 }
 
 function metadataProviderOptions(input: ProviderMetadata | undefined): SharedV3ProviderOptions | undefined {

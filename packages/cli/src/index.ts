@@ -27,8 +27,6 @@ if (process.env.OPENCODE_SSH_ASKPASS_PORT) {
 
 const Handlers = Runtime.handlers(Commands, {
   $: () => import("./commands/handlers/default"),
-  upgrade: () => import("./commands/handlers/upgrade"),
-  uninstall: () => import("./commands/handlers/uninstall"),
   acp: () => import("./commands/handlers/acp"),
   api: () => import("./commands/handlers/api"),
   auth: {
@@ -38,6 +36,7 @@ const Handlers = Runtime.handlers(Commands, {
     export: () => import("./commands/handlers/auth/export"),
     import: () => import("./commands/handlers/auth/import"),
     switch: () => import("./commands/handlers/auth/switch"),
+    purge: () => import("./commands/handlers/auth/purge"),
   },
   debug: {
     agents: () => import("./commands/handlers/debug/agents"),

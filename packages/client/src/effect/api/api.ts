@@ -137,6 +137,7 @@ export type SessionStatsInput = {
   readonly from?: number | undefined
   readonly to?: number | undefined
   readonly project?: Project.ID | undefined
+  readonly session?: Session.ID | undefined
   readonly timezone?: string | undefined
   readonly tools?: "none" | "summary" | "detail" | undefined
 }
@@ -146,6 +147,7 @@ export type SessionStatsOutput = {
   readonly subagents: number
   readonly prompts: number
   readonly steps: number
+  readonly compactions: number
   readonly tokens: {
     readonly input: number
     readonly output: number
@@ -187,6 +189,7 @@ export type SessionStatsOutput = {
   readonly models: ReadonlyArray<{
     readonly model: Model.Ref
     readonly steps: number
+    readonly compactions: number
     readonly tokens: {
       readonly input: number
       readonly output: number
@@ -1655,12 +1658,26 @@ export type CredentialRemoveOperation<E = never> = (
   input: CredentialRemoveInput,
 ) => Effect.Effect<CredentialRemoveOutput, E>
 
+export type CredentialPurgeInput = {
+  readonly integrationIDs?: ReadonlyArray<Integration.ID> | undefined
+  readonly all?: boolean | undefined
+  readonly files?: boolean | undefined
+  readonly history?: boolean | undefined
+  readonly compact?: boolean | undefined
+  readonly dryRun?: boolean | undefined
+}
+export type CredentialPurgeOutput = Credential.PurgeResult
+export type CredentialPurgeOperation<E = never> = (
+  input?: CredentialPurgeInput,
+) => Effect.Effect<CredentialPurgeOutput, E>
+
 export interface CredentialApi<E = never> {
   readonly list: CredentialListOperation<E>
   readonly create: CredentialCreateOperation<E>
   readonly update: CredentialUpdateOperation<E>
   readonly activate: CredentialActivateOperation<E>
   readonly remove: CredentialRemoveOperation<E>
+  readonly purge: CredentialPurgeOperation<E>
 }
 
 export type ProjectListInput = { readonly archived?: boolean | undefined }

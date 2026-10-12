@@ -10,9 +10,6 @@ import { Model } from "@opencode/core/model"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
-import { AzurePlugin } from "@opencode/core/plugin/provider/azure"
-import { OpenAIPlugin } from "@opencode/core/plugin/provider/openai"
-import { XAIPlugin } from "@opencode/core/plugin/provider/xai"
 import { Provider } from "@opencode/core/provider"
 import { withEnv } from "../fixture/env"
 import { testEffect } from "../lib/effect"
@@ -34,47 +31,6 @@ function required<T>(value: T | undefined): T {
 const decode = Schema.decodeUnknownSync(Info)
 
 describe("ConfigProviderPlugin.Plugin", () => {
-  it.effect("inherits the provider compaction setting with model overrides and rejects unsupported routes", () =>
-    Effect.gen(function* () {
-      const models = yield* Model.Service
-      const providers = yield* Provider.Service
-      yield* addPlugin([
-        new Document({
-          type: "document",
-          info: decode({
-            providers: {
-              custom: {
-                package: "@opencode/ai/providers/openai/responses",
-                settings: { compaction: { type: "native" } },
-                models: {
-                  native: {},
-                  local: { settings: { compaction: { type: "summary" } }, package: "@opencode/ai/providers/openai/chat" },
-                  unsupported: { package: "@opencode/ai/providers/openai/chat" },
-                },
-              },
-              default: { package: "@opencode/ai/providers/openai/chat", models: { chat: {} } },
-            },
-          }),
-        }),
-      ])
-      const native = required(yield* models.get(Provider.ID.make("custom"), Model.ID.make("native")))
-      const local = required(yield* models.get(Provider.ID.make("custom"), Model.ID.make("local")))
-      const unsupported = required(yield* models.get(Provider.ID.make("custom"), Model.ID.make("unsupported")))
-      const defaultModel = required(yield* models.get(Provider.ID.make("default"), Model.ID.make("chat")))
-      expect(native.settings?.compaction).toEqual({ type: "native" })
-      expect(local.settings?.compaction).toEqual({ type: "summary" })
-      expect(defaultModel.settings?.compaction).toBeUndefined()
-      expect((yield* providers.get(Provider.ID.make("custom")))?.settings?.compaction).toEqual({ type: "native" })
-      yield* ModelResolver.fromCatalogModel(native)
-      yield* ModelResolver.fromCatalogModel(local)
-      yield* ModelResolver.fromCatalogModel(defaultModel)
-      expect(yield* ModelResolver.fromCatalogModel(unsupported).pipe(Effect.flip)).toMatchObject({
-        _tag: "SessionRunnerModel.UnsupportedCompactionError",
-        message: "Provider compaction is not supported by custom/unsupported (openai-chat)",
-      })
-    }),
-  )
-
   it.effect("keeps the provider websocket policy out of model settings", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
@@ -105,52 +61,6 @@ describe("ConfigProviderPlugin.Plugin", () => {
       expect(untouched.settings?.transport).toBeUndefined()
     }),
   )
-
-  for (const builtin of [
-    { id: "openai", model: "gpt-5.6-sol", package: "@opencode/ai/providers/openai/responses", plugin: OpenAIPlugin },
-    { id: "xai", model: "grok-4.6", package: "@opencode/ai/providers/xai", plugin: XAIPlugin },
-    { id: "azure", model: "gpt-5.6-sol", package: "@opencode/ai/providers/azure/responses", plugin: AzurePlugin },
-    { id: "custom-azure", model: "deployment", package: "@opencode/ai/providers/azure/responses", plugin: AzurePlugin },
-  ]) {
-    it.live(`configured provider transport overrides ${builtin.id} defaults`, () =>
-      Effect.gen(function* () {
-        const providers = yield* Provider.Service
-        const models = yield* Model.Service
-        const plugin = yield* Plugin.Service
-        const host = yield* PluginHost.make(plugin)
-        const providerID = Provider.ID.make(builtin.id)
-        const modelID = Model.ID.make(builtin.model)
-        yield* providers.transform((editor) => {
-          editor.update(providerID, (provider) => {
-            provider.activation = "enabled"
-            provider.package = builtin.package
-          })
-          editor.models.update(providerID, modelID, () => {})
-        })
-        yield* builtin.plugin.effect(host)
-        expect((yield* providers.get(providerID))?.settings?.transport).toBe("websocket")
-        expect((yield* models.get(providerID, modelID))?.settings?.transport).toBeUndefined()
-
-        yield* addPlugin([
-          new Document({
-            type: "document",
-            info: decode({
-              providers: {
-                [builtin.id]: {
-                  settings: { transport: "http" },
-                  models: { override: { modelID: builtin.model } },
-                },
-              },
-            }),
-          }),
-        ])
-
-        expect((yield* providers.get(providerID))?.settings?.transport).toBe("http")
-        expect((yield* models.get(providerID, modelID))?.settings?.transport).toBeUndefined()
-        expect((yield* models.get(providerID, Model.ID.make("override")))?.settings?.transport).toBeUndefined()
-      }),
-    )
-  }
 
   it.effect("adds key auth for custom providers without env credentials", () =>
     Effect.gen(function* () {
@@ -521,16 +431,16 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps configured model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service
-      const providerID = Provider.ID.opencode
+      const providerID = Provider.ID.make("gateway")
       const modelID = Model.ID.make("alpha-gpt-next")
       const entries = [
         new Document({
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 package: "aisdk:@ai-sdk/openai",
-                settings: { baseURL: "https://opencode.test/v1" },
+                settings: { baseURL: "https://gateway.test/v1" },
                 models: {
                   "alpha-gpt-next": {
                     variants: [
@@ -570,16 +480,16 @@ describe("ConfigProviderPlugin.Plugin", () => {
   it.effect("keeps layered model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service
-      const providerID = Provider.ID.opencode
+      const providerID = Provider.ID.make("gateway")
       const modelID = Model.ID.make("alpha-gpt-next")
       const entries = [
         new Document({
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 package: "aisdk:@ai-sdk/openai",
-                settings: { baseURL: "https://opencode.test/v1" },
+                settings: { baseURL: "https://gateway.test/v1" },
               },
             },
           }),
@@ -588,7 +498,7 @@ describe("ConfigProviderPlugin.Plugin", () => {
           type: "document",
           info: decode({
             providers: {
-              opencode: {
+              gateway: {
                 models: {
                   "alpha-gpt-next": {
                     variants: [{ id: "high", body: { reasoningEffort: "high" } }],

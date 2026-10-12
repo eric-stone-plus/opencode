@@ -280,124 +280,6 @@ it.effect("leaves max output tokens unset when the request omits them", () =>
   }),
 )
 
-it.effect("maps pro reasoning bodies to AI SDK provider options", () =>
-  Effect.gen(function* () {
-    const aisdk = yield* AISDK.Service
-    let body: unknown
-    yield* aisdk.hook.sdk((event) => {
-      body = event.options.body
-      event.sdk = { languageModel: () => ({ provider: event.model.providerID }) }
-    })
-
-    const resolved = yield* aisdk.model({
-      ...model("@ai-sdk/openai"),
-      body: { reasoning: { mode: "pro" } },
-    })
-    const prepared = yield* compileRequest(LLM.request({ model: resolved, prompt: "Hello" }))
-
-    expect(body).toBeUndefined()
-    expect(prepared.body.providerOptions).toEqual({
-      openai: { forceReasoning: true, reasoningMode: "pro" },
-    })
-  }),
-)
-
-it.effect("maps package-specific AI SDK provider option keys", () =>
-  Effect.gen(function* () {
-    const aisdk = yield* AISDK.Service
-    yield* aisdk.hook.sdk((event) => {
-      event.sdk = { languageModel: () => ({ provider: event.model.providerID }) }
-    })
-
-    const cases = [
-      ["@ai-sdk/github-copilot", "copilot", { reasoningEffort: "high" }],
-      ["@ai-sdk/amazon-bedrock/mantle", "openai", { reasoningEffort: "high", forceReasoning: true }],
-      ["@ai-sdk/openai-compatible", "test-provider", { reasoningEffort: "high" }],
-      ["@jerome-benoit/sap-ai-provider-v2", "sap-ai", { reasoningEffort: "high" }],
-      ["ai-gateway-provider", "openaiCompatible", { reasoningEffort: "high" }],
-    ] as const
-    for (const [packageName, key, settings] of cases) {
-      const resolved = yield* aisdk.model(model(packageName, { reasoningEffort: "high" }))
-      const prepared = yield* compileRequest(LLM.request({ model: resolved, prompt: "Hello" }))
-      expect(prepared.body.providerOptions).toEqual({ [key]: settings })
-    }
-  }),
-)
-
-it.effect("forces reasoning and projects both Azure AI SDK namespaces", () =>
-  Effect.gen(function* () {
-    const aisdk = yield* AISDK.Service
-    yield* aisdk.hook.sdk((event) => {
-      event.sdk = { languageModel: () => ({ provider: event.model.providerID }) }
-    })
-
-    const openai = yield* aisdk.model(model("@ai-sdk/openai", { reasoningEffort: "high" }))
-    const openaiPrepared = yield* compileRequest(LLM.request({ model: openai, prompt: "Hello" }))
-    expect(openaiPrepared.body.providerOptions).toEqual({
-      openai: { reasoningEffort: "high", forceReasoning: true },
-    })
-
-    const azure = yield* aisdk.model(model("@ai-sdk/azure", { reasoningEffort: "high" }))
-    const azurePrepared = yield* compileRequest(LLM.request({ model: azure, prompt: "Hello" }))
-    expect(azurePrepared.body.providerOptions).toEqual({
-      openai: { reasoningEffort: "high", forceReasoning: true },
-      azure: { reasoningEffort: "high", forceReasoning: true },
-    })
-  }),
-)
-
-it.effect("routes AI Gateway model options by upstream prefix", () =>
-  Effect.gen(function* () {
-    const aisdk = yield* AISDK.Service
-    yield* aisdk.hook.sdk((event) => {
-      event.sdk = { languageModel: () => ({ provider: event.model.providerID }) }
-    })
-
-    const anthropic = yield* aisdk.model({
-      ...model("@ai-sdk/gateway", {
-        gateway: { order: ["anthropic"] },
-        thinking: { type: "adaptive" },
-      }),
-      modelID: Model.ID.make("anthropic/claude-sonnet-5"),
-    })
-    const anthropicPrepared = yield* compileRequest(LLM.request({ model: anthropic, prompt: "Hello" }))
-    expect(anthropicPrepared.body.providerOptions).toEqual({
-      gateway: { order: ["anthropic"] },
-      anthropic: { thinking: { type: "adaptive" } },
-    })
-
-    const bedrock = yield* aisdk.model({
-      ...model("@ai-sdk/gateway", { reasoningConfig: { type: "enabled" } }),
-      modelID: Model.ID.make("amazon/nova-2-lite"),
-    })
-    const bedrockPrepared = yield* compileRequest(LLM.request({ model: bedrock, prompt: "Hello" }))
-    expect(bedrockPrepared.body.providerOptions).toEqual({
-      bedrock: { reasoningConfig: { type: "enabled" } },
-    })
-
-    const openai = yield* aisdk.model({
-      ...model("@ai-sdk/gateway", { gateway: { order: ["openai"] } }),
-      modelID: Model.ID.make("openai/gpt-5.5"),
-    })
-    const openaiPrepared = yield* compileRequest(
-      LLM.request({ model: openai, prompt: "Hello", providerOptions: { textVerbosity: "low" } }),
-    )
-    expect(openaiPrepared.body.providerOptions).toEqual({
-      gateway: { order: ["openai"] },
-      openai: { textVerbosity: "low" },
-    })
-
-    const fallback = yield* aisdk.model({
-      ...model("@ai-sdk/gateway", { reasoningEffort: "high" }),
-      modelID: Model.ID.make("deepseek/deepseek-v4"),
-    })
-    const fallbackPrepared = yield* compileRequest(LLM.request({ model: fallback, prompt: "Hello" }))
-    expect(fallbackPrepared.body.providerOptions).toEqual({
-      deepseek: { reasoningEffort: "high" },
-    })
-  }),
-)
-
 it.effect("closes the open AI SDK reasoning part when the next one starts", () =>
   Effect.gen(function* () {
     // AI SDK OpenAI Responses can start summary part 1 before part 0 ends, then end both at item completion (#50662).
@@ -561,11 +443,19 @@ it.effect("normalizes file data across AI SDK prompt parts", () =>
           Message.user([
             { type: "media", media: Media.bytes(bytes, "image/png"), filename: "bytes.png" },
             { type: "media", media: Media.base64("AAAA", "image/png"), filename: "base64.png" },
-            { type: "media", media: Media.fromDataUrl("data:image/png;charset=utf-8;base64,AQID"), filename: "inline.png" },
+            {
+              type: "media",
+              media: Media.fromDataUrl("data:image/png;charset=utf-8;base64,AQID"),
+              filename: "inline.png",
+            },
             { type: "media", media: Media.url("https://example.com/image.png", { mediaType: "image/png" }) },
             { type: "media", media: Media.base64("s3://bucket/image.png", "image/png") },
           ]),
-          Message.assistant({ type: "media", media: Media.url("http://example.com/document.pdf", { mediaType: "application/pdf" }), filename: "document.pdf" }),
+          Message.assistant({
+            type: "media",
+            media: Media.url("http://example.com/document.pdf", { mediaType: "application/pdf" }),
+            filename: "document.pdf",
+          }),
           Message.tool({
             id: "call_1",
             name: "screenshot",
@@ -748,12 +638,7 @@ it.effect("routes AI SDK requests and responses through HTTP hook middleware", (
     expect(sent[0]?.headers.get("x-hook")).toBe("applied")
     expect(sent[0]?.headers.get("authorization")).toBe("Bearer test")
     expect(JSON.parse(sent[0]?.body ?? "")).toMatchObject({ model: "api-model" })
-    expect(seen).toEqual([
-      "POST https://example.test/v1/chat/completions",
-      sent[0]?.body,
-      sent[0]?.body,
-      "status 200",
-    ])
+    expect(seen).toEqual(["POST https://example.test/v1/chat/completions", sent[0]?.body, sent[0]?.body, "status 200"])
     expect(response.events.filter(LLMEvent.is.textDelta).map((event) => event.text)).toEqual(["rewritten"])
   }),
 )

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import path from "path"
 import { Money } from "@opencode/schema/money"
 import { Effect, Fiber, Layer, Ref, Scope, Stream } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
@@ -10,6 +11,7 @@ import { KV } from "@opencode/core/kv"
 import { Model } from "@opencode/core/model"
 import { bodyDigest, ModelsDev } from "@opencode/core/models-dev"
 import { Provider } from "@opencode/core/provider"
+import { tmpdirScoped } from "./fixture/tmpdir"
 import { it } from "./lib/effect"
 
 const cacheKey = "models-dev:catalog"
@@ -22,15 +24,15 @@ test("normalizes permissive interleaved values to compatibility", () => {
 })
 
 const fixture = {
-  acme: {
-    id: "acme",
-    name: "Acme",
-    env: ["ACME_API_KEY"],
+  xiaomi: {
+    id: "xiaomi",
+    name: "Xiaomi",
+    env: ["XIAOMI_API_KEY"],
     npm: "@ai-sdk/openai-compatible",
     models: {
-      "acme-1": {
-        id: "acme-1",
-        name: "Acme One",
+      "mimo-1": {
+        id: "mimo-1",
+        name: "MiMo One",
         release_date: "2026-01-01",
         attachment: false,
         reasoning: false,
@@ -46,21 +48,21 @@ const fixture = {
 const fixtureSnapshot = [
   {
     info: {
-      id: Provider.ID.make("acme"),
-      name: "Acme",
+      id: Provider.ID.make("xiaomi"),
+      name: "Xiaomi",
       activation: "auto",
       package: "@opencode/ai/providers/openai-compatible",
     },
     models: [
       {
-        id: Model.ID.make("acme-1"),
-        modelID: Model.ID.make("acme-1"),
-        providerID: Provider.ID.make("acme"),
-        name: "Acme One",
+        id: Model.ID.make("mimo-1"),
+        modelID: Model.ID.make("mimo-1"),
+        providerID: Provider.ID.make("xiaomi"),
+        name: "MiMo One",
         compatibility: { reasoningField: "vendor_reasoning" },
         family: undefined,
         package: undefined,
-        settings: { provider: "acme" },
+        settings: { provider: "xiaomi" },
         capabilities: { tools: true, input: [], output: [] },
         variants: [],
         time: { released: Date.parse("2026-01-01") },
@@ -81,20 +83,20 @@ const fixtureSnapshot = [
         body: undefined,
       },
     ],
-    environment: ["ACME_API_KEY"],
+    environment: ["XIAOMI_API_KEY"],
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
 const fixture2 = {
-  beta: {
-    id: "beta",
-    name: "Beta",
-    env: ["BETA_API_KEY"],
+  "xiaomi-token-plan-cn": {
+    id: "xiaomi-token-plan-cn",
+    name: "Xiaomi Token Plan CN",
+    env: ["XIAOMI_API_KEY"],
     npm: "@ai-sdk/openai-compatible",
     models: {
-      "beta-1": {
-        id: "beta-1",
-        name: "Beta One",
+      "mimo-2": {
+        id: "mimo-2",
+        name: "MiMo Two",
         release_date: "2026-02-01",
         attachment: false,
         reasoning: true,
@@ -109,20 +111,20 @@ const fixture2 = {
 const fixture2Snapshot = [
   {
     info: {
-      id: Provider.ID.make("beta"),
-      name: "Beta",
+      id: Provider.ID.make("xiaomi-token-plan-cn"),
+      name: "Xiaomi Token Plan CN",
       activation: "auto",
       package: "@opencode/ai/providers/openai-compatible",
     },
     models: [
       {
-        id: Model.ID.make("beta-1"),
-        modelID: Model.ID.make("beta-1"),
-        providerID: Provider.ID.make("beta"),
-        name: "Beta One",
+        id: Model.ID.make("mimo-2"),
+        modelID: Model.ID.make("mimo-2"),
+        providerID: Provider.ID.make("xiaomi-token-plan-cn"),
+        name: "MiMo Two",
         family: undefined,
         package: undefined,
-        settings: { provider: "beta" },
+        settings: { provider: "xiaomi-token-plan-cn" },
         capabilities: { tools: false, input: [], output: [] },
         variants: [],
         time: { released: Date.parse("2026-02-01") },
@@ -143,7 +145,7 @@ const fixture2Snapshot = [
         body: undefined,
       },
     ],
-    environment: ["BETA_API_KEY"],
+    environment: ["XIAOMI_API_KEY"],
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
@@ -237,40 +239,28 @@ describe("ModelsDev Service", () => {
   it.live("maps models.dev npm packages onto native packages", () =>
     Effect.gen(function* () {
       const cache = makeCache()
+      const model = { ...fixture.xiaomi.models["mimo-1"] }
       writeCache(cache, {
-        acme: {
-          ...fixture.acme,
-          models: {
-            "acme-1": {
-              ...fixture.acme.models["acme-1"],
-              provider: { npm: "@ai-sdk/openai" },
-            },
-          },
+        xiaomi: {
+          ...fixture.xiaomi,
+          models: { "mimo-1": { ...model, provider: { npm: "@ai-sdk/anthropic" } } },
         },
-        "cloudflare-workers-ai": {
-          id: "cloudflare-workers-ai",
-          name: "Cloudflare Workers AI",
-          env: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"],
+        "zai-coding-plan": {
+          id: "zai-coding-plan",
+          name: "Z.AI Coding Plan",
+          env: ["ZHIPU_API_KEY"],
           npm: "@ai-sdk/openai-compatible",
-          api: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
-          models: {},
-        },
-        azure: {
-          id: "azure",
-          name: "Azure",
-          env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"],
-          npm: "@ai-sdk/azure",
           models: {
-            "gpt-5": {
-              ...fixture.acme.models["acme-1"],
-              id: "gpt-5",
-            },
-            "custom-chat": {
-              ...fixture.acme.models["acme-1"],
-              id: "custom-chat",
-              provider: { shape: "completions" },
-            },
+            "glm-5": { ...model, id: "glm-5" },
+            "glm-5-messages": { ...model, id: "glm-5-messages", provider: { npm: "@ai-sdk/anthropic" } },
           },
+        },
+        deepseek: {
+          id: "deepseek",
+          name: "DeepSeek",
+          env: ["DEEPSEEK_API_KEY"],
+          npm: "@ai-sdk/openai-compatible",
+          models: {},
         },
       })
       const state = yield* Ref.make(initialState)
@@ -280,14 +270,63 @@ describe("ModelsDev Service", () => {
         ModelsDev.Service.use((service) => service.get()),
       )
       expect(result[0]?.info.package).toBe("@opencode/ai/providers/openai-compatible")
-      expect(result[0]?.models[0]?.package).toBe("@opencode/ai/providers/openai")
-      expect(result[1]?.info.package).toBe("@opencode/ai/providers/cloudflare-workers-ai")
-      expect(result[1]?.info.settings).toBeUndefined()
-      expect(result[2]?.info.package).toBe("@opencode/ai/providers/azure/responses")
-      expect(result[2]?.models.find((model) => model.id === "gpt-5")?.package).toBeUndefined()
-      expect(result[2]?.models.find((model) => model.id === "custom-chat")?.package).toBe(
-        "@opencode/ai/providers/azure/chat",
+      expect(result[0]?.models[0]?.package).toBe("@opencode/ai/providers/anthropic")
+      expect(result[1]?.info.package).toBe("@opencode/ai/providers/zai-coding-plan/chat")
+      expect(result[1]?.models.find((model) => model.id === "glm-5")?.package).toBeUndefined()
+      expect(result[1]?.models.find((model) => model.id === "glm-5-messages")?.package).toBe(
+        "@opencode/ai/providers/zai-coding-plan/messages",
       )
+      expect(result[2]?.info.package).toBe("@opencode/ai/providers/deepseek")
+    }),
+  )
+
+  it.live("drops unsupported vendors from every source", () =>
+    Effect.gen(function* () {
+      const registry = {
+        ...fixture,
+        openai: { ...fixture.xiaomi, id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"] },
+        opencode: { ...fixture.xiaomi, id: "opencode", name: "OpenCode", env: [] },
+      }
+      const ids = (snapshots: readonly ModelsDev.Snapshot[]) => snapshots.map((snapshot) => String(snapshot.info.id))
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(registry) })
+      const file = path.join((yield* tmpdirScoped()).path, "registry.json")
+      yield* Effect.promise(() => Bun.write(file, JSON.stringify(registry)))
+      const fromFile = yield* ModelsDev.Service.use((service) => service.get()).pipe(
+        Effect.provide(buildLayer(state, makeCache(), { fetch: false, file })),
+      )
+      const fromFetch = yield* ModelsDev.Service.use((service) => service.get()).pipe(
+        Effect.provide(buildLayer(state, makeCache(), { fetch: true, snapshot: false })),
+      )
+      const fromSnapshot = yield* provided(
+        state,
+        makeCache(),
+        ModelsDev.Service.use((service) => service.get()),
+      )
+      expect(ids(fromFile)).toEqual(["xiaomi"])
+      expect(ids(fromFetch)).toEqual(["xiaomi"])
+      expect(ids(fromSnapshot)).toContain("deepseek")
+      expect(ids(fromSnapshot)).not.toContain("openai")
+      expect(ids(fromSnapshot)).not.toContain("opencode")
+      expect(ids(fromSnapshot)).not.toContain("anthropic")
+    }),
+  )
+
+  it.live("discards a cache written before the vendor allowlist and serves the bundled snapshot", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, { ...fixture, openai: { ...fixture.xiaomi, id: "openai", name: "OpenAI" } })
+      const state = yield* Ref.make(initialState)
+      const result = yield* provided(
+        state,
+        cache,
+        ModelsDev.Service.use((service) => service.get()),
+      )
+      const ids = result.map((snapshot) => String(snapshot.info.id))
+      expect(ids).toContain("deepseek")
+      expect(ids).not.toContain("openai")
+      expect(result.flatMap((snapshot) => snapshot.models.map((model) => String(model.id)))).not.toContain("mimo-1")
+      expect(cache.values.has(cacheKey)).toBe(false)
+      expect((yield* Ref.get(state)).calls).toEqual([])
     }),
   )
 
@@ -304,6 +343,18 @@ describe("ModelsDev Service", () => {
     }),
   )
 
+  it.live("never fetches unless the options opt in", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      const state = yield* Ref.make(initialState)
+      const result = yield* ModelsDev.Service.use((s) => s.get()).pipe(
+        Effect.provide(buildLayer(state, cache, { snapshot: false })),
+      )
+      expect(result).toEqual([])
+      expect((yield* Ref.get(state)).calls).toEqual([])
+    }),
+  )
+
   it.live("get() falls back to the bundled snapshot when KV is empty and fetch is disabled", () =>
     Effect.gen(function* () {
       const cache = makeCache()
@@ -314,8 +365,8 @@ describe("ModelsDev Service", () => {
         ModelsDev.Service.use((s) => s.get()),
       )
       expect(result.length).toBeGreaterThan(0)
-      const anthropic = result.find((snapshot) => snapshot.info.id === "anthropic")
-      expect(anthropic?.environment).toContain("ANTHROPIC_API_KEY")
+      const deepseek = result.find((snapshot) => snapshot.info.id === "deepseek")
+      expect(deepseek?.environment).toContain("DEEPSEEK_API_KEY")
       const final = yield* Ref.get(state)
       expect(final.calls).toEqual([])
     }),
@@ -430,6 +481,61 @@ describe("ModelsDev Service", () => {
       expect(final.calls.length).toBe(1)
       expect(final.calls[0].url).toContain("/api.json")
       expect(final.calls[0].userAgent).toContain("/opencode")
+    }),
+  )
+
+  it.live("refresh(true) caches only the supported vendors", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      const registry = { ...fixture2, openai: { ...fixture2["xiaomi-token-plan-cn"], id: "openai" } }
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(registry) })
+      const result = yield* provided(
+        state,
+        cache,
+        Effect.gen(function* () {
+          const svc = yield* ModelsDev.Service
+          yield* svc.refresh(true)
+          return yield* svc.get()
+        }),
+      )
+      expect(result).toEqual(fixture2Snapshot)
+      expect(cache.values.get(cacheKey)).toMatchObject({
+        body: JSON.stringify(fixture2),
+        digest: bodyDigest(JSON.stringify(fixture2)),
+      })
+    }),
+  )
+
+  it.live("refresh(false) stays quiet when only unsupported vendors changed", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, fixture, Date.now() - 10 * 60 * 1000)
+      const seeded = structuredClone(cache.values.get(cacheKey))
+      const registry = { ...fixture, openai: { ...fixture.xiaomi, id: "openai" } }
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(registry) })
+      yield* provided(
+        state,
+        cache,
+        Effect.gen(function* () {
+          const svc = yield* ModelsDev.Service
+          const bus = yield* Bus.Service
+          const event = yield* bus.subscribe(ModelsDev.Event.Refreshed).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped,
+            Effect.flatMap((fiber) =>
+              Effect.gen(function* () {
+                yield* Effect.yieldNow
+                yield* svc.refresh(false)
+                return yield* Fiber.join(fiber).pipe(Effect.timeoutOption("50 millis"))
+              }),
+            ),
+          )
+          expect(event._tag).toBe("None")
+        }),
+      )
+      expect((yield* Ref.get(state)).calls.length).toBe(1)
+      expect(cache.values.get(cacheKey)).toEqual(seeded)
     }),
   )
 

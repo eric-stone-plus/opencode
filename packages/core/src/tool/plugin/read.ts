@@ -11,6 +11,7 @@ import { SessionInstructions } from "../../session/instructions.js"
 import { AbsolutePath } from "../../schema.js"
 import { ReadToolFileSystem } from "../read-filesystem.js"
 import { Environment } from "../../environment/index.js"
+import { ForkPdfText } from "../fork/pdf-text.js"
 
 export const name = "read"
 const FILENAME = "AGENTS.md"
@@ -34,6 +35,7 @@ export const Plugin = {
     const sessionInstructions = yield* SessionInstructions.Service
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
+    const environment = yield* Environment.Service
 
     yield* ctx.tool
       .transform((editor) =>
@@ -41,7 +43,7 @@ export const Plugin = {
           name,
           options: { codemode: false },
           description:
-            "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.",
+            "Read the contents of a file or directory. Supports text files, images, and PDFs. Images are presented directly to the model; PDFs are read as extracted text. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.",
           input: Input,
           output: Output,
           execute: (input, context) => {
@@ -105,6 +107,13 @@ export const Plugin = {
                 Effect.catch(() => Effect.void),
                 Effect.catchDefect(() => Effect.void),
               )
+              // PDFs are read as text and never attached: inline media is dead weight for text-only models and is
+              // persisted with the session.
+              if (result.content.type === "file" && result.content.mime === "application/pdf") {
+                const text = yield* ForkPdfText.extract(environment.spawner, result.target.absolute)
+                if (text === undefined) return yield* new ToolFailure({ message: ForkPdfText.unreadable(result.path) })
+                return { output: { ...result.content, content: text, encoding: "utf8" as const }, path: result.path }
+              }
               if (
                 result.content.type === "file" &&
                 result.content.encoding === "base64" &&

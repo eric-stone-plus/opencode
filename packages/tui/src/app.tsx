@@ -88,7 +88,6 @@ import { openUrl } from "@opencode/util/open"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
 import { Config, ConfigProvider, useConfig } from "./config"
 import { newSessionLocation } from "./config/new-session-location"
-import { UpdateNotificationProvider, useUpdateNotification, type UpdateSource } from "./context/update-notification"
 import { PluginProvider, usePlugin, type PackageSource } from "./plugin/context"
 import { localPluginDirectories } from "./plugin/discovery"
 import { PluginRoute, Slot } from "./plugin/render"
@@ -97,6 +96,8 @@ import { COMMAND_PALETTE_COMMAND, Keymap, type KeymapCommand } from "./context/k
 
 import { DialogVariant } from "./component/dialog-variant"
 import { destroyRenderer } from "./util/renderer"
+import { applyRenderBudget, IDLE_FPS } from "./util/render-budget"
+import { animating } from "./ui/animation"
 import { cliErrorMessage, errorFormat } from "./util/error"
 import { AttentionProvider } from "./context/attention"
 import { StorageProvider, useStorage } from "./context/storage"
@@ -156,7 +157,6 @@ const appBindingCommands = [
   "provider.connect",
   "opencode.settings",
   "opencode.status",
-  "opencode.update",
   "server.pair",
   "service.restart",
   "location.reload",
@@ -188,7 +188,6 @@ export type TuiInput = {
   }
   args: Args
   config: Config.Interface
-  updater?: UpdateSource
   packages: PackageSource
   environment?: Readonly<Record<string, string>>
   terminalHandoff?: () => Promise<
@@ -233,7 +232,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
     Effect.gen(function* () {
       const options = {
         externalOutputMode: "passthrough",
-        targetFps: 60,
+        targetFps: IDLE_FPS,
+        maxFps: IDLE_FPS,
         gatherStats: false,
         exitOnCtrlC: false,
         useKittyKeyboard: {},
@@ -288,7 +288,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       )
       renderer.once("destroy", () => shutdown.openUnsafe())
       yield* Effect.tryPromise(async () => {
-        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(1000)) ?? "dark"
+        // A terminal that never answers the theme query (Ptyxis, tmux) must not hold up first paint;
+        // the THEME_MODE event corrects the mode afterwards.
+        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(100)) ?? "dark"
         if (renderer.isDestroyed) return
 
         await render(() => {
@@ -390,18 +392,14 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                                                                     <PromptRefProvider>
                                                                       <EditorContextProvider>
                                                                         <AttentionProvider>
-                                                                          <UpdateNotificationProvider
-                                                                            updater={input.updater}
-                                                                          >
-                                                                            <PanelProvider>
-                                                                              <PluginProvider
-                                                                                packages={input.packages}
-                                                                                directories={pluginDirectories}
-                                                                              >
-                                                                                <App />
-                                                                              </PluginProvider>
-                                                                            </PanelProvider>
-                                                                          </UpdateNotificationProvider>
+                                                                          <PanelProvider>
+                                                                            <PluginProvider
+                                                                              packages={input.packages}
+                                                                              directories={pluginDirectories}
+                                                                            >
+                                                                              <App />
+                                                                            </PluginProvider>
+                                                                          </PanelProvider>
                                                                         </AttentionProvider>
                                                                       </EditorContextProvider>
                                                                     </PromptRefProvider>
@@ -467,7 +465,6 @@ function App() {
   const event = useEvent()
   const client = useClient()
   const toast = useToast()
-  const updater = useUpdateNotification()
   const theme = useTheme()
   const { mode, supports, setMode, locked, lock, unlock, afterPaint } = useThemes()
   const data = useData()
@@ -483,6 +480,10 @@ function App() {
     paletteTimer = setTimeout(afterPaint, 50)
   }
   onMount(() => renderer.once(CliRenderEvents.FRAME, afterFrame))
+  // Re-evaluated after every frame: a running session or an in-flight transition lifts the budget from the next frame on.
+  const budgetFrame = () => applyRenderBudget(renderer, data.session.active().length > 0 || animating())
+  onMount(() => renderer.on(CliRenderEvents.FRAME, budgetFrame))
+  onCleanup(() => renderer.off(CliRenderEvents.FRAME, budgetFrame))
   onCleanup(() => {
     renderer.off(CliRenderEvents.FRAME, afterFrame)
     if (paletteTimer) clearTimeout(paletteTimer)
@@ -976,17 +977,6 @@ function App() {
         },
         category: "System",
       },
-      ...(updater.open
-        ? [
-            {
-              name: "opencode.update",
-              title: "Update OpenCode",
-              slash: { name: "update" },
-              run: () => updater.open?.("manual"),
-              category: "System",
-            },
-          ]
-        : []),
       {
         name: "server.pair",
         title: "Pair device",
