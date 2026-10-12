@@ -164,6 +164,8 @@ import type {
   CredentialActivateOutput,
   CredentialRemoveInput,
   CredentialRemoveOutput,
+  CredentialPurgeInput,
+  CredentialPurgeOutput,
   ProjectListInput,
   ProjectListOutput,
   ProjectUpdateInput,
@@ -1096,12 +1098,30 @@ const EndpointCredentialRemove = (raw: RawClient["server.credential"]) => (input
     raw["credential.remove"]({ params: { credentialID: input["credentialID"] } }).pipe(Effect.mapError(mapClientError)),
   )
 
+const EndpointCredentialPurge = (raw: RawClient["server.credential"]) => (input?: CredentialPurgeInput) =>
+  preserveEffect<CredentialPurgeOutput>()(
+    raw["credential.purge"]({
+      payload: {
+        integrationIDs: input?.["integrationIDs"],
+        all: input?.["all"],
+        files: input?.["files"],
+        history: input?.["history"],
+        compact: input?.["compact"],
+        dryRun: input?.["dryRun"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const adaptGroupCredential = (raw: RawClient["server.credential"]) => ({
   list: EndpointCredentialList(raw),
   create: EndpointCredentialCreate(raw),
   update: EndpointCredentialUpdate(raw),
   activate: EndpointCredentialActivate(raw),
   remove: EndpointCredentialRemove(raw),
+  purge: EndpointCredentialPurge(raw),
 })
 
 const EndpointProjectList = (raw: RawClient["server.project"]) => (input?: ProjectListInput) =>

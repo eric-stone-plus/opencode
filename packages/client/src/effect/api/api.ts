@@ -1658,12 +1658,26 @@ export type CredentialRemoveOperation<E = never> = (
   input: CredentialRemoveInput,
 ) => Effect.Effect<CredentialRemoveOutput, E>
 
+export type CredentialPurgeInput = {
+  readonly integrationIDs?: ReadonlyArray<Integration.ID> | undefined
+  readonly all?: boolean | undefined
+  readonly files?: boolean | undefined
+  readonly history?: boolean | undefined
+  readonly compact?: boolean | undefined
+  readonly dryRun?: boolean | undefined
+}
+export type CredentialPurgeOutput = Credential.PurgeResult
+export type CredentialPurgeOperation<E = never> = (
+  input?: CredentialPurgeInput,
+) => Effect.Effect<CredentialPurgeOutput, E>
+
 export interface CredentialApi<E = never> {
   readonly list: CredentialListOperation<E>
   readonly create: CredentialCreateOperation<E>
   readonly update: CredentialUpdateOperation<E>
   readonly activate: CredentialActivateOperation<E>
   readonly remove: CredentialRemoveOperation<E>
+  readonly purge: CredentialPurgeOperation<E>
 }
 
 export type ProjectListInput = { readonly archived?: boolean | undefined }

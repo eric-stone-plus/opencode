@@ -7802,6 +7802,75 @@
         "summary": "Activate credential"
       }
     },
+    "/api/credential/purge": {
+      "post": {
+        "tags": ["credential"],
+        "operationId": "credential.purge",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Credential.PurgeResult"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Remove every stored credential of the listed integrations, or of all integrations, and optionally sweep other copies of the removed secret values from the server host's credential files, environment, session history, saved tool output, and logs. Reports counts and locations, never secret values. Fails with an invalid request when neither integrationIDs nor all is given, or when both are, and with a conflict when compact is requested while sessions are running.",
+        "summary": "Purge credentials",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credential.PurgeInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
     "/api/project": {
       "get": {
         "tags": ["project"],
@@ -14739,6 +14808,148 @@
           }
         },
         "required": ["type", "methodID", "refresh", "access", "expires"],
+        "additionalProperties": false
+      },
+      "Credential.PurgeCompact": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["done", "skipped", "failed"]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      },
+      "Credential.PurgeCredential": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Credential.ID"
+          },
+          "integrationID": {
+            "$ref": "#/components/schemas/Integration.ID"
+          },
+          "label": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean"
+          }
+        },
+        "required": ["id", "integrationID", "label", "removed"],
+        "additionalProperties": false
+      },
+      "Credential.PurgeInput": {
+        "type": "object",
+        "properties": {
+          "integrationIDs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Integration.ID"
+            }
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "boolean"
+          },
+          "history": {
+            "type": "boolean"
+          },
+          "compact": {
+            "type": "boolean"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Credential.PurgeLocation": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "credential",
+              "auth",
+              "env",
+              "environment.d",
+              "service",
+              "systemd",
+              "process",
+              "database",
+              "tool-output",
+              "log"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": ["kind", "location", "count"],
+        "additionalProperties": false
+      },
+      "Credential.PurgeResult": {
+        "type": "object",
+        "properties": {
+          "dryRun": {
+            "type": "boolean"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Credential.PurgeCredential"
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "properties": {
+              "distinct": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "shared": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "short": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": ["distinct", "shared", "short"],
+            "additionalProperties": false
+          },
+          "swept": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Credential.PurgeLocation"
+            }
+          },
+          "remaining": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Credential.PurgeLocation"
+            }
+          },
+          "compact": {
+            "$ref": "#/components/schemas/Credential.PurgeCompact"
+          }
+        },
+        "required": ["dryRun", "credentials", "secrets", "swept", "remaining"],
         "additionalProperties": false
       },
       "Credential.Value": {

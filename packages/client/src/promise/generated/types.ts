@@ -228,6 +228,25 @@ export type McpResourceTemplate = {
   mimeType?: string
 }
 
+export type CredentialPurgeLocation = {
+  kind:
+    | "credential"
+    | "auth"
+    | "env"
+    | "environment.d"
+    | "service"
+    | "systemd"
+    | "process"
+    | "database"
+    | "tool-output"
+    | "log"
+  location: string
+  count: number
+  error?: string
+}
+
+export type CredentialPurgeCompact = { status: "done" | "skipped" | "failed"; reason?: string }
+
 export type ProjectVcs = string
 
 export type ProjectIcon = { url?: string; override?: string; color?: string }
@@ -657,6 +676,13 @@ export type CredentialExternal = {
   type: "external"
   methodID: IntegrationMethodID
   metadata?: { [x: string]: JsonValue }
+}
+
+export type CredentialPurgeCredential = {
+  id: CredentialID
+  integrationID: IntegrationID
+  label: string
+  removed: boolean
 }
 
 export type ConnectionCredentialInfo = {
@@ -1916,6 +1942,15 @@ export type CredentialKey = {
   key: string
   metadata?: { [x: string]: JsonValue }
   configuration?: FormAnswer
+}
+
+export type CredentialPurgeResult = {
+  dryRun: boolean
+  credentials: Array<CredentialPurgeCredential>
+  secrets: { distinct: number; shared: number; short: number }
+  swept: Array<CredentialPurgeLocation>
+  remaining: Array<CredentialPurgeLocation>
+  compact?: CredentialPurgeCompact
 }
 
 export type ConnectionInfo = ConnectionCredentialInfo | ConnectionEnvInfo
@@ -6146,6 +6181,59 @@ export type CredentialActivateOutput = void
 export type CredentialRemoveInput = { readonly credentialID: { readonly credentialID: string }["credentialID"] }
 
 export type CredentialRemoveOutput = void
+
+export type CredentialPurgeInput = {
+  readonly integrationIDs?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["integrationIDs"]
+  readonly all?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["all"]
+  readonly files?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["files"]
+  readonly history?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["history"]
+  readonly compact?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["compact"]
+  readonly dryRun?: {
+    readonly integrationIDs?: ReadonlyArray<string>
+    readonly all?: boolean
+    readonly files?: boolean
+    readonly history?: boolean
+    readonly compact?: boolean
+    readonly dryRun?: boolean
+  }["dryRun"]
+}
+
+export type CredentialPurgeOutput = { data: CredentialPurgeResult }["data"]
 
 export type ProjectListInput = { readonly archived?: { readonly archived?: boolean | undefined }["archived"] }
 

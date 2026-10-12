@@ -217,6 +217,41 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
             ),
           },
         }),
+        Spec.make("purge", {
+          description: "remove saved credentials and every stale copy of their values",
+          params: {
+            ...ServerParams,
+            targets: Argument.String("target").pipe(
+              Argument.withDescription("Integration ID or name, matched case-insensitively by substring"),
+              Argument.variadic({ min: 0 }),
+            ),
+            all: Flag.Boolean("all").pipe(
+              Flag.withDescription("Purge every integration that holds a saved credential"),
+              Flag.withDefault(false),
+            ),
+            yes: Flag.Boolean("yes").pipe(
+              Flag.withAlias("y"),
+              Flag.withDescription("Skip the confirmation prompt (required without an interactive terminal)"),
+              Flag.withDefault(false),
+            ),
+            dryRun: Flag.Boolean("dry-run").pipe(
+              Flag.withDescription("Show what would be removed without changing anything"),
+              Flag.withDefault(false),
+            ),
+            files: Flag.Boolean("files").pipe(
+              Flag.withDescription("Sweep copies in credential files and environment (disable with --no-files)"),
+              Flag.withDefault(true),
+            ),
+            history: Flag.Boolean("history").pipe(
+              Flag.withDescription("Redact the values in session history, saved tool output, and logs"),
+              Flag.withDefault(false),
+            ),
+            compact: Flag.Boolean("compact").pipe(
+              Flag.withDescription("Rewrite the database file if copies remain in unused pages (implies --history)"),
+              Flag.withDefault(false),
+            ),
+          },
+        }),
       ],
     }),
     Spec.make("mcp", {
