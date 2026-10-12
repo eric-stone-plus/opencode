@@ -139,16 +139,16 @@ const CompareSearchProviders = {
   render: () => (
     <CurrentSessionTimelineStory
       title="Compare web search providers"
-      description="Search results identify Parallel, Exa, and the generic provider clearly."
+      description="Search results identify Relay, Axis, and the generic provider clearly."
       document={storyDocument([
         storyTool(
           "tool_search_parallel",
           "websearch",
           "completed",
-          { query: "parallel" },
-          { metadata: { provider: "parallel" } },
+          { query: "relay" },
+          { metadata: { provider: "relay" } },
         ),
-        storyTool("tool_search_exa", "websearch", "completed", { query: "exa" }, { metadata: { provider: "exa" } }),
+        storyTool("tool_search_exa", "websearch", "completed", { query: "axis" }, { metadata: { provider: "axis" } }),
         storyTool("tool_search_generic", "websearch", "completed", { query: "generic" }),
       ])}
     />

@@ -76,10 +76,10 @@ story("transitions shell and question through running error outcomes", async ({ 
 // Moved from packages/app/e2e/regression/session-timeline-tool-projection.spec.ts
 story("labels all web search provider variants", async ({ mount }) => {
   const timeline = await mount("current-session-research-agents--agent-research", { args: { scenario: "providers" } })
-  await timeline.getByRole("button", { name: "Used 3 Parallel Web Search, Exa Web Search, Web Search" }).click()
+  await timeline.getByRole("button", { name: "Used 3 Relay Web Search, Axis Web Search, Web Search" }).click()
   const tools = timeline.locator('[data-component="context-tool-group-list"]')
-  await expect(tools.getByRole("button", { name: /Parallel Web Search/ })).toBeVisible()
-  await expect(tools.getByRole("button", { name: /Exa Web Search/ })).toBeVisible()
+  await expect(tools.getByRole("button", { name: /Relay Web Search/ })).toBeVisible()
+  await expect(tools.getByRole("button", { name: /Axis Web Search/ })).toBeVisible()
   await expect(tools.getByRole("button", { name: /^Web Search/ })).toBeVisible()
 })
 

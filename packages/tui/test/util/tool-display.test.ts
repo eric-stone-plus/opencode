@@ -21,10 +21,10 @@ test("normalizes shared tool primitives", () => {
 
 describe("webSearchProviderLabel", () => {
   test("labels known providers", () => {
-    expect(webSearchProviderLabel("parallel")).toBe("Web Search via Parallel")
-    expect(webSearchProviderLabel("exa")).toBe("Web Search via Exa")
-    expect(webSearchProviderLabel("firecrawl")).toBe("Web Search via Firecrawl")
-    expect(webSearchProviderLabel("tavily")).toBe("Web Search via Tavily")
+    expect(webSearchProviderLabel("relay")).toBe("Web Search via Relay")
+    expect(webSearchProviderLabel("axis")).toBe("Web Search via Axis")
+    expect(webSearchProviderLabel("navigator")).toBe("Web Search via Navigator")
+    expect(webSearchProviderLabel("vector")).toBe("Web Search via Vector")
     expect(webSearchProviderLabel("opencode")).toBe("Web Search via OpenCode")
   })
 
@@ -48,7 +48,7 @@ describe("webSearchProviderLabel", () => {
 
 describe("toolDisplayMetadata", () => {
   test("returns tool metadata for non-pending states", () => {
-    const metadata = { provider: "parallel", numResults: 3 }
+    const metadata = { provider: "relay", numResults: 3 }
 
     expect(toolDisplayMetadata({ status: "running", metadata })).toBe(metadata)
     expect(toolDisplayMetadata({ status: "completed", metadata })).toBe(metadata)
@@ -56,7 +56,7 @@ describe("toolDisplayMetadata", () => {
   })
 
   test("does not expose pending or malformed metadata", () => {
-    expect(toolDisplayMetadata({ status: "streaming", metadata: { provider: "exa" } })).toEqual({})
+    expect(toolDisplayMetadata({ status: "streaming", metadata: { provider: "axis" } })).toEqual({})
     expect(toolDisplayMetadata({ status: "completed" })).toEqual({})
     expect(toolDisplayMetadata({ status: "completed", metadata: null })).toEqual({})
     expect(toolDisplayMetadata({ status: "completed", metadata: [] })).toEqual({})

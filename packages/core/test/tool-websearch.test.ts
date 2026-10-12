@@ -33,8 +33,8 @@ const webSearchToolNode = makeLocationNode({
 
 const sessionID = Session.ID.make("ses_websearch_test")
 const providers = [
-  { id: WebSearch.ID.make("exa"), name: "Exa" },
-  { id: WebSearch.ID.make("parallel"), name: "Parallel" },
+  { id: WebSearch.ID.make("axis"), name: "Axis" },
+  { id: WebSearch.ID.make("relay"), name: "Relay" },
 ]
 
 class Fixture {
@@ -101,7 +101,7 @@ describe("WebSearchTool registration", () => {
     Effect.gen(function* () {
       const fixture = yield* setup
       const registry = fixture.registry
-      yield* fixture.websearch.select(WebSearch.ID.make("exa"))
+      yield* fixture.websearch.select(WebSearch.ID.make("axis"))
 
       expect((yield* toolDefinitions(registry)).map((tool) => tool.name)).toEqual(["websearch", "execute"])
       expect(
@@ -142,12 +142,12 @@ describe("WebSearchTool registration", () => {
   it.effect("keeps normalized results in structured output", () =>
     Effect.gen(function* () {
       const fixture = yield* setup
-      yield* fixture.websearch.select(WebSearch.ID.make("parallel"))
+      yield* fixture.websearch.select(WebSearch.ID.make("relay"))
       fixture.results = [
         {
           url: "https://effect.website",
           title: "Effect",
-          content: "parallel results",
+          content: "downlink results",
           time: { published: Date.parse("2026-07-25T00:00:00.000Z") },
         },
       ]
@@ -157,17 +157,17 @@ describe("WebSearchTool registration", () => {
         yield* executeTool(registry, {
           sessionID,
           ...toolIdentity,
-          call: { type: "tool-call", id: "call-parallel", name: "websearch", input: { query: "effect layers" } },
+          call: { type: "tool-call", id: "call-relay", name: "websearch", input: { query: "effect layers" } },
         }),
       ).toEqual({
         status: "completed",
         output: {
-          provider: "parallel",
+          provider: "relay",
           results: [
             {
               url: "https://effect.website",
               title: "Effect",
-              content: "parallel results",
+              content: "downlink results",
               time: { published: Date.parse("2026-07-25T00:00:00.000Z") },
             },
           ],
@@ -175,10 +175,10 @@ describe("WebSearchTool registration", () => {
         content: [
           {
             type: "text",
-            text: "## [Effect](https://effect.website)\nPublished: 2026-07-25T00:00:00.000Z\n\nparallel results",
+            text: "## [Effect](https://effect.website)\nPublished: 2026-07-25T00:00:00.000Z\n\ndownlink results",
           },
         ],
-        metadata: { provider: "parallel" },
+        metadata: { provider: "relay" },
       })
     }),
   )
@@ -186,7 +186,7 @@ describe("WebSearchTool registration", () => {
   it.effect("uses the concise no-results fallback", () =>
     Effect.gen(function* () {
       const fixture = yield* setup
-      yield* fixture.websearch.select(WebSearch.ID.make("exa"))
+      yield* fixture.websearch.select(WebSearch.ID.make("axis"))
       fixture.results = []
       const registry = fixture.registry
 
@@ -215,7 +215,7 @@ describe("WebSearchTool registration", () => {
         call: { type: "tool-call", id: "call-enable", name: "websearch", input: { query: "effect" } },
       })
       expect(first.status).toBe("completed")
-      expect(["exa", "parallel"]).toContain(first.metadata?.provider)
+      expect(["axis", "relay"]).toContain(first.metadata?.provider)
       expect(fixture.websearch.sessionIDs).toEqual([sessionID, sessionID])
       expect(yield* fixture.kv.get(WebSearch.ProviderKey)).toBe("random")
       expect(fixture.websearch.queries).toHaveLength(2)
@@ -234,7 +234,7 @@ describe("WebSearchTool registration", () => {
               options: [
                 {
                   value: "allow",
-                  label: "Allow search via Exa, Parallel",
+                  label: "Allow search via Axis, Relay",
                 },
                 {
                   value: "choose",
@@ -253,7 +253,7 @@ describe("WebSearchTool registration", () => {
         call: { type: "tool-call", id: "call-enabled", name: "websearch", input: { query: "effect schema" } },
       })
       expect(second.status).toBe("completed")
-      expect(["exa", "parallel"]).toContain(second.metadata?.provider)
+      expect(["axis", "relay"]).toContain(second.metadata?.provider)
       expect(second.metadata?.provider).toBe(first.metadata?.provider)
       expect(fixture.formRequests).toHaveLength(1)
       expect(fixture.websearch.queries).toHaveLength(3)
@@ -284,7 +284,7 @@ describe("WebSearchTool registration", () => {
       const fixture = yield* setup
       fixture.formResponses.push(
         { status: "answered", answer: { choice: "choose" } },
-        { status: "answered", answer: { provider: "parallel" } },
+        { status: "answered", answer: { provider: "relay" } },
       )
       const registry = fixture.registry
 
@@ -294,10 +294,10 @@ describe("WebSearchTool registration", () => {
           ...toolIdentity,
           call: { type: "tool-call", id: "call-choose", name: "websearch", input: { query: "effect" } },
         }),
-      ).toMatchObject({ status: "completed", metadata: { provider: "parallel" } })
-      expect(yield* fixture.kv.get(WebSearch.ProviderKey)).toBe(WebSearch.ID.make("parallel"))
+      ).toMatchObject({ status: "completed", metadata: { provider: "relay" } })
+      expect(yield* fixture.kv.get(WebSearch.ProviderKey)).toBe(WebSearch.ID.make("relay"))
       expect(fixture.websearch.queries).toHaveLength(2)
-      expect(fixture.websearch.queries[1]?.providerID).toBe(WebSearch.ID.make("parallel"))
+      expect(fixture.websearch.queries[1]?.providerID).toBe(WebSearch.ID.make("relay"))
       expect(fixture.formRequests[1]).toEqual({
         sessionID,
         title: "Choose a web search provider",
@@ -310,8 +310,8 @@ describe("WebSearchTool registration", () => {
             required: true,
             custom: false,
             options: [
-              { value: "exa", label: "Exa" },
-              { value: "parallel", label: "Parallel" },
+              { value: "axis", label: "Axis" },
+              { value: "relay", label: "Relay" },
             ],
           },
         ],
@@ -390,7 +390,7 @@ describe("WebSearchTool registration", () => {
             progress.push(metadata)
           }),
       })
-      const replacement = WebSearch.ID.make(first === "exa" ? "parallel" : "exa")
+      const replacement = WebSearch.ID.make(first === "axis" ? "relay" : "axis")
       expect(progress).toEqual([{ provider: first }, { provider: replacement }])
       expect(result).toMatchObject({
         output: { provider: replacement, results: fixture.results },
@@ -420,7 +420,7 @@ describe("WebSearchTool registration", () => {
             type: "tool.execution",
             message: "Web search rate limited (HTTP 429)",
           })
-          expect(error.metadata).toMatchObject({ provider: expect.stringMatching(/^(exa|parallel)$/) })
+          expect(error.metadata).toMatchObject({ provider: expect.stringMatching(/^(axis|relay)$/) })
         }),
       )
       expect(fixture.events.filter((event) => event === "query")).toHaveLength(2)
@@ -433,7 +433,7 @@ describe("WebSearchTool registration", () => {
       const fixture = yield* setup
       const registry = fixture.registry
       const tools = yield* registry.snapshot()
-      yield* fixture.websearch.select(WebSearch.ID.make("exa"))
+      yield* fixture.websearch.select(WebSearch.ID.make("axis"))
 
       yield* Effect.forEach(
         [
@@ -443,7 +443,7 @@ describe("WebSearchTool registration", () => {
         ],
         ({ status, message }, index) =>
           Effect.gen(function* () {
-            fixture.error = TestWebSearch.httpError(status, undefined, "https://mcp.exa.ai/mcp?exaApiKey=secret")
+            fixture.error = TestWebSearch.httpError(status, undefined, "https://mcp.example.com/mcp?apiKey=secret")
             const progress: Tool.Metadata[] = []
             const error = yield* tools
               .execute({
@@ -462,8 +462,8 @@ describe("WebSearchTool registration", () => {
             const sessionError = toSessionError(error)
             expect(sessionError).toEqual({ type: "tool.execution", message })
             expect(sessionError.message).not.toContain("secret")
-            expect(error.metadata).toEqual({ provider: "exa" })
-            expect(progress).toEqual([{ provider: "exa" }])
+            expect(error.metadata).toEqual({ provider: "axis" })
+            expect(progress).toEqual([{ provider: "axis" }])
           }),
         { discard: true },
       )

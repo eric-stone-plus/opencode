@@ -767,7 +767,7 @@ export const webResearchDocument = document([
           "https://www.inthepocket.design/blog/figma-mcp",
           "https://designagentlab.com/community",
         ].join("\n"),
-        metadata: { provider: "firecrawl" },
+        metadata: { provider: "navigator" },
       }),
       completedTool({
         id: "tool_web_fetch",

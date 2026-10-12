@@ -67,7 +67,7 @@ describe("Config.Entry", () => {
     const decode = Schema.decodeUnknownSync(Config.Info)
 
     expect(decode({ websearch: false }).websearch).toBe(false)
-    expect(decode({ websearch: { provider: "exa" } }).websearch).toEqual({ provider: WebSearch.ID.make("exa") })
+    expect(decode({ websearch: { provider: "axis" } }).websearch).toEqual({ provider: WebSearch.ID.make("axis") })
     expect(decode({ websearch: { provider: "random" } }).websearch).toEqual({ provider: "random" })
   })
 

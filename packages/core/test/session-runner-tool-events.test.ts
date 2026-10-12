@@ -265,11 +265,11 @@ test("local failure metadata completes the progress snapshot", async () => {
   await Effect.runPromise(publisher.publish(call))
   await Effect.runPromise(publisher.progress(call.id, { phase: "running", provider: "old" }))
   await Effect.runPromise(
-    publisher.failTool(call.id, { type: "tool.execution", message: "failed" }, { provider: "exa" }),
+    publisher.failTool(call.id, { type: "tool.execution", message: "failed" }, { provider: "axis" }),
   )
 
   expect(published.find((event) => event.type === "session.tool.failed.2")?.data).toMatchObject({
-    metadata: { phase: "running", provider: "exa" },
+    metadata: { phase: "running", provider: "axis" },
   })
 })
 

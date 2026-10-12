@@ -20,8 +20,8 @@ const provider: FormCreated["data"]["form"] = {
       required: true,
       custom: false,
       options: [
-        { value: "exa", label: "Exa" },
-        { value: "parallel", label: "Parallel" },
+        { value: "axis", label: "axis" },
+        { value: "relay", label: "relay" },
       ],
     },
   ],
@@ -84,7 +84,7 @@ describe("web search desktop consent", () => {
     const input = fixture()
     await replyWebSearch({
       ...input,
-      selection: "parallel",
+      selection: "relay",
       reply: async (answer) => {
         input.replies.push(answer)
 
@@ -93,14 +93,14 @@ describe("web search desktop consent", () => {
     })
     expect(input.replies).toEqual([
       { sessionID: consent.sessionID, formID: consent.id, answer: { choice: "choose" } },
-      { sessionID: consent.sessionID, formID: provider.id, answer: { provider: "parallel" } },
+      { sessionID: consent.sessionID, formID: provider.id, answer: { provider: "relay" } },
     ])
     expect(input.listeners.size).toBe(0)
   })
 
   test("ignores questions, other sessions, and repeated consent forms during handoff", async () => {
     const input = fixture()
-    const pending = replyWebSearch({ ...input, selection: "exa" })
+    const pending = replyWebSearch({ ...input, selection: "axis" })
     input.create({ ...provider, sessionID: "ses_other" })
     input.create({ ...provider, metadata: { kind: "question" } })
     input.create(consent)
@@ -121,8 +121,8 @@ describe("web search desktop consent", () => {
 
   test("supports direct entry into the provider form", async () => {
     const input = fixture()
-    await replyWebSearch({ ...input, form: provider, selection: "exa" })
-    expect(input.replies).toEqual([{ sessionID: consent.sessionID, formID: provider.id, answer: { provider: "exa" } }])
+    await replyWebSearch({ ...input, form: provider, selection: "axis" })
+    expect(input.replies).toEqual([{ sessionID: consent.sessionID, formID: provider.id, answer: { provider: "axis" } }])
     expect(input.listeners.size).toBe(0)
   })
 
@@ -134,7 +134,7 @@ describe("web search desktop consent", () => {
 
   test.each(["cancel", "other-client", "abort"])("ends a pending handoff on %s", async (action) => {
     const input = fixture()
-    const pending = replyWebSearch({ ...input, selection: "exa" })
+    const pending = replyWebSearch({ ...input, selection: "axis" })
 
     if (action === "cancel") input.cancel(consent.id)
 
@@ -152,7 +152,7 @@ describe("web search desktop consent", () => {
     await expect(
       replyWebSearch({
         ...input,
-        selection: "exa",
+        selection: "axis",
         reply: async (answer) => {
           if (answer.formID === failing) throw new Error("offline")
           input.create()

@@ -2842,7 +2842,7 @@ describe("V2 mini transport", () => {
         sessionID: "ses_1",
         assistantMessageID: "msg_websearch",
         id: "call_websearch",
-        metadata: { provider: "exa" },
+        metadata: { provider: "axis" },
       },
     })
     events.push({
@@ -2855,7 +2855,7 @@ describe("V2 mini transport", () => {
         assistantMessageID: "msg_websearch",
         id: "call_websearch",
         error: { type: "tool.execution", message: "Web search request failed (HTTP 403)" },
-        metadata: { provider: "exa" },
+        metadata: { provider: "axis" },
         executed: true,
       },
     })
@@ -2865,7 +2865,7 @@ describe("V2 mini transport", () => {
     expect(commits.map((item) => item.phase)).toEqual(["start", "final"])
     const start = commits[0]
     if (!start) throw new Error("Expected web search start commit")
-    expect(entryBody(start)).toEqual({ type: "text", content: '◈ Web Search via Exa "effect"' })
+    expect(entryBody(start)).toEqual({ type: "text", content: '◈ Web Search via Axis "effect"' })
     await transport.close()
   })
 

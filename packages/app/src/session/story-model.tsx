@@ -199,9 +199,9 @@ function SessionSurfaceState(props: SessionPreviewProps & { onReset: () => void 
       websearch: {
         request: () => (state.request?.type === "websearch" ? state.request.value : undefined),
         options: () => [
-          { value: "exa", label: "Exa" },
-          { value: "parallel", label: "Parallel" },
-          { value: "tavily", label: "Tavily" },
+          { value: "axis", label: "axis" },
+          { value: "relay", label: "relay" },
+          { value: "vector", label: "vector" },
         ],
         selected: () => state.searchProvider,
         specific: () => false,

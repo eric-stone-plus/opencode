@@ -286,11 +286,9 @@ function webSearchProviderLabel(provider: unknown, i18n: ReturnType<typeof useI1
   const name =
     typeof provider !== "string" || !provider
       ? undefined
-      : provider === "tinyfish"
-        ? "TinyFish"
-        : provider === "opencode"
-          ? "OpenCode"
-          : `${provider[0].toUpperCase()}${provider.slice(1)}`
+      : provider === "opencode"
+        ? "OpenCode"
+        : `${provider[0].toUpperCase()}${provider.slice(1)}`
 
   if (name) return i18n.t("ui.tool.websearch.provider", { provider: name })
 
@@ -500,15 +498,15 @@ function ExaOutput(props: { output?: string }) {
 
   return (
     <Show when={links().length > 0}>
-      <div data-component="exa-tool-output">
-        <div data-slot="exa-tool-links">
+      <div data-component="websearch-tool-output">
+        <div data-slot="websearch-tool-links">
           <For each={visibleLinks()}>
             {(url, index) => (
               <a
                 ref={(el) => {
                   if (index() === 10) firstRevealedRef = el
                 }}
-                data-slot="exa-tool-link"
+                data-slot="websearch-tool-link"
                 class="webfetch-link"
                 href={url}
                 target="_blank"
@@ -521,7 +519,7 @@ function ExaOutput(props: { output?: string }) {
             )}
           </For>
           <Show when={!showAll() && remaining() > 0}>
-            <button type="button" data-slot="exa-tool-more" onClick={expand}>
+            <button type="button" data-slot="websearch-tool-more" onClick={expand}>
               {i18n.plural("ui.common.moreCount", remaining())}
             </button>
           </Show>
@@ -1834,7 +1832,7 @@ ToolRegistry.register({
         trigger={{
           title: title(),
           subtitle: query(),
-          subtitleClass: "exa-tool-query",
+          subtitleClass: "websearch-tool-query",
         }}
       >
         <ExaOutput output={props.output} />

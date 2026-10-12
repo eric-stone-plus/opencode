@@ -133,21 +133,21 @@ describe("run permission shared", () => {
       permissionInfo(
         req({
           action: "websearch",
-          metadata: { provider: "parallel" },
+          metadata: { provider: "relay" },
           source: { type: "tool", messageID: "msg-search", id: "call-search" },
           tool: canonicalToolPart(
             "websearch",
             {
               status: "running",
               input: { query: "current releases" },
-              metadata: { provider: "exa", retained: true },
+              metadata: { provider: "axis", retained: true },
             },
             "call-search",
           ),
         }),
       ),
     ).toMatchObject({
-      title: 'Web Search via Parallel "current releases"',
+      title: 'Web Search via Relay "current releases"',
       lines: ["Query: current releases"],
     })
   })

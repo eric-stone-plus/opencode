@@ -44,7 +44,7 @@ it.effect("applies Code Mode defaults for known MCP servers unless codemode is c
         server: { type: "remote", url: "https://executor.sh/example/mcp", codemode: false },
         codemode: false,
       },
-      { name: "exa", server: { type: "remote", url: "https://mcp.exa.ai/mcp" }, codemode: undefined },
+      { name: "search", server: { type: "remote", url: "https://mcp.example.com/mcp" }, codemode: undefined },
       { name: "unrelated", server: { type: "remote", url: "https://example.com/mcp" }, codemode: undefined },
       {
         name: "posthog",

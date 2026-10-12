@@ -96,7 +96,6 @@ import { ForkPlanExitPlugin } from "./fork/plan-exit.js"
 import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
-import { WebSearchPlugins } from "./websearch/index.js"
 import { SkillPlugin } from "./skill.js"
 import { VcsHgPlugin } from "./vcs/hg.js"
 import { ToolInputRepairPlugin } from "./tool-input-repair.js"
@@ -231,7 +230,9 @@ const pre = [
   VcsHgPlugin.Plugin,
   ModelsDevPlugin,
   ...ProviderPlugins,
-  ...WebSearchPlugins,
+  // Fork policy: no built-in web-search provider integrations. The upstream
+  // five (exa/firecrawl/parallel/tavily/tinyfish) registered themselves here;
+  // a search provider is opt-in via an external plugin's `ctx.websearch.transform`.
   PatchTool.Plugin,
   IdentityPlugin.Plugin,
   EditTool.Plugin,

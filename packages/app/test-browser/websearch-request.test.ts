@@ -13,8 +13,8 @@ const consent: FormCreated["data"]["form"] = {
 }
 
 const options = [
-  { value: "exa", label: "Exa" },
-  { value: "parallel", label: "Parallel" },
+  { value: "axis", label: "axis" },
+  { value: "relay", label: "relay" },
 ]
 
 const provider: FormCreated["data"]["form"] = {
@@ -123,7 +123,7 @@ describe("web search request state", () => {
     await ready(() => !input.model.loading())
     expect(input.loads).toEqual(["ses_child"])
     expect(input.model.selected()).toBe("random")
-    input.model.select("exa")
+    input.model.select("axis")
     expect(input.replies).toEqual([])
     await input.model.submit(false)
     expect(input.replies[0]?.answer).toEqual({ choice: "disable" })
@@ -140,15 +140,15 @@ describe("web search request state", () => {
   test("holds the card across both forms and prevents duplicate submissions", async () => {
     const input = fixture()
     await ready(() => !input.model.loading())
-    input.model.select("parallel")
-    const pending = input.model.submit("parallel")
-    await input.model.submit("parallel")
+    input.model.select("relay")
+    const pending = input.model.submit("relay")
+    await input.model.submit("relay")
     expect(input.state.request).toBeUndefined()
     expect(input.model.request()?.id).toBe(consent.id)
     expect(input.model.sending()).toBe(true)
     input.create()
     await pending
-    expect(input.replies.map((reply) => reply.answer)).toEqual([{ choice: "choose" }, { provider: "parallel" }])
+    expect(input.replies.map((reply) => reply.answer)).toEqual([{ choice: "choose" }, { provider: "relay" }])
     expect(input.model.request()).toBeUndefined()
     expect(input.model.sending()).toBe(false)
     expect(input.listeners.size).toBe(0)
@@ -161,28 +161,28 @@ describe("web search request state", () => {
     expect(input.model.specific()).toBe(true)
     expect(input.model.options()).toEqual(options)
     expect(input.replies).toEqual([])
-    await input.model.submit("exa")
-    expect(input.replies.map((reply) => reply.answer)).toEqual([{ provider: "exa" }])
+    await input.model.submit("axis")
+    expect(input.replies.map((reply) => reply.answer)).toEqual([{ provider: "axis" }])
   })
 
   test("keeps the selected provider after failure and retries only the provider form", async () => {
     const input = fixture()
     await ready(() => !input.model.loading())
-    input.model.select("parallel")
-    const pending = input.model.submit("parallel")
+    input.model.select("relay")
+    const pending = input.model.submit("relay")
     input.setState("replyFails", true)
     input.create()
     await pending
     expect(input.model.failed()).toBe(true)
     expect(input.model.sending()).toBe(false)
     expect(input.model.request()?.id).toBe(provider.id)
-    expect(input.model.selected()).toBe("parallel")
+    expect(input.model.selected()).toBe("relay")
     input.setState("replyFails", false)
-    await input.model.submit("parallel")
+    await input.model.submit("relay")
     expect(input.replies.map((reply) => reply.answer)).toEqual([
       { choice: "choose" },
-      { provider: "parallel" },
-      { provider: "parallel" },
+      { provider: "relay" },
+      { provider: "relay" },
     ])
     expect(input.model.request()).toBeUndefined()
   })
@@ -205,7 +205,7 @@ describe("web search request state", () => {
   test.each(["navigate", "disconnect", "dispose", "cancel"])("stops automatic replies on %s", async (action) => {
     const input = fixture()
     await ready(() => !input.model.loading())
-    const pending = input.model.submit("exa")
+    const pending = input.model.submit("axis")
 
     if (action === "navigate") input.setState("owner", "ses_other")
 
