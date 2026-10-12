@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema, SchemaGetter } from "effect"
 import { LLM } from "../src/index.js"
-import { AnthropicMessages, Gemini, OpenAIChat, OpenAIResponses } from "../src/protocols.js"
+import { AnthropicMessages, OpenAIChat } from "../src/protocols.js"
 import { ToolSchemaProjection } from "../src/protocols/utils/tool-schema.js"
 import { Tool, toDefinitions } from "../src/tool.js"
 import { Auth } from "../src/route.js"
@@ -129,30 +129,11 @@ describe("tool schema projections", () => {
       })),
     },
     {
-      route: OpenAIResponses.route,
-      tools: schemas.map((parameters, index) => ({
-        type: "function",
-        name: names[index],
-        parameters,
-      })),
-    },
-    {
       route: AnthropicMessages.route,
       tools: schemas.map((input_schema, index) => ({
         name: names[index],
         input_schema,
       })),
-    },
-    {
-      route: Gemini.route,
-      tools: [
-        {
-          functionDeclarations: schemas.map((parametersJsonSchema, index) => ({
-            name: names[index],
-            parametersJsonSchema,
-          })),
-        },
-      ],
     },
   ]) {
     it.effect(`${scenario.route.id} prepares empty Effect Struct tools alongside nonempty and raw schemas`, () =>

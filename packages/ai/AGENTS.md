@@ -1,5 +1,9 @@
 # AI Package Guide
 
+## Fork scope
+
+This fork ships providers for Alibaba, DeepSeek, Zhipu/Z.AI and Xiaomi MiMo only (ADR 0005), carried by two protocol families: OpenAI-style Chat Completions and Anthropic Messages. Every other provider, protocol, recording and SDK dependency is deleted, not disabled. The generic frameworks (routes, schema, tools, and the image/video/speech/transcription modality contracts) stay as upstream has them even where no bundled route uses them. When a merge from upstream touches a deleted provider or protocol file, resolve it with `git rm`.
+
 ## Effect
 
 - Prefer `HttpClient.HttpClient` / `HttpClientResponse.HttpClientResponse` over web `fetch` / `Response` at package boundaries.
@@ -50,7 +54,7 @@ The intended callsite is:
 
 ```ts
 const request = LLM.request({
-  model: OpenAI.configure({ apiKey }).responses("gpt-4o-mini"),
+  model: DeepSeek.configure({ apiKey }).model("deepseek-chat"),
   system: "You are concise.",
   prompt: "Say hello.",
 })
@@ -68,10 +72,10 @@ Filter or narrow `LLMEvent` streams with `LLMEvent.is.*` (camelCase guards, e.g.
 
 A route is the runnable composition of four orthogonal pieces:
 
-- **`Protocol`** (`src/route/protocol.ts`) — semantic API contract. Owns request body construction (`body.from`), the body schema (`body.schema`), the streaming-event schema (`stream.event`), and the event-to-`LLMEvent` state machine (`stream.step`). `Route.make(...)` validates and JSON-encodes the body from `body.schema` and decodes frames with `stream.event`. Examples: `OpenAIChat.protocol`, `OpenResponses.protocol`, `OpenAIResponses.protocol`, `AnthropicMessages.protocol`, `Gemini.protocol`, `BedrockConverse.protocol`.
+- **`Protocol`** (`src/route/protocol.ts`) — semantic API contract. Owns request body construction (`body.from`), the body schema (`body.schema`), the streaming-event schema (`stream.event`), and the event-to-`LLMEvent` state machine (`stream.step`). `Route.make(...)` validates and JSON-encodes the body from `body.schema` and decodes frames with `stream.event`. Examples: `OpenAIChat.protocol`, `AlibabaChat.protocol`, `ZAIChat.protocol`, `AnthropicMessages.protocol`.
 - **`Endpoint`** (`src/route/endpoint.ts`) — URL construction. The host, path, and route query live on the endpoint. `Endpoint.path("/chat/completions", { baseURL })` is the common case; pass a function for paths that embed the model id or a body field (e.g. `Endpoint.path(({ body }) => `/model/${body.modelId}/converse-stream`)`).
-- **`Auth`** (`src/route/auth.ts`) — per-request transport authentication. Provider facades configure credentials onto the route before model selection, usually via `Auth.bearer(apiKey)` or `Auth.header(name, apiKey)`. Routes that need per-request signing (Bedrock SigV4, future Vertex IAM, Azure AAD) implement `Auth` as a function that signs the body and merges signed headers into the result.
-- **`Framing`** (`src/route/framing.ts`) — bytes → frames. SSE (`Framing.sse`) is shared; Bedrock keeps its AWS event-stream framing as a typed `Framing<object>` value alongside its protocol.
+- **`Auth`** (`src/route/auth.ts`) — per-request transport authentication. Provider facades configure credentials onto the route before model selection, usually via `Auth.bearer(apiKey)` or `Auth.header(name, apiKey)`. Routes that need per-request signing implement `Auth` as a function that signs the body and merges signed headers into the result.
+- **`Framing`** (`src/route/framing.ts`) — bytes → frames. SSE (`Framing.sse`) is shared; a protocol with a different wire framing keeps it as a typed `Framing<object>` value alongside its protocol.
 
 Compose them via `Route.make(...)`:
 
@@ -90,9 +94,9 @@ export const route = Route.make({
 
 Route defaults are request-shaping defaults such as `headers`, `limits`, `generation`, `providerOptions`, and `http`. Endpoint host/query belongs on the route endpoint. Selected `LanguageModel` values carry only model id, provider id, and the configured route value. Model capability/catalog metadata lives outside this package; protocol support is enforced by request lowering and typed `AIError`s.
 
-The four-axis decomposition is the reason DeepSeek, TogetherAI, Cerebras, Baseten, Fireworks, and DeepInfra all reuse `OpenAIChat.protocol` verbatim — each provider owns a small `Route.make(...)` composition instead of a protocol clone. Bug fixes in one protocol propagate to every consumer of that protocol in a single commit.
+The four-axis decomposition is the reason DeepSeek, Alibaba Chat, and Z.AI Chat all reuse `OpenAIChat.protocol` (and Alibaba and Z.AI Messages reuse `AnthropicMessages.protocol`) verbatim — each provider owns a small `Route.make(...)` composition instead of a protocol clone. Bug fixes in one protocol propagate to every consumer of that protocol in a single commit.
 
-When a provider supports multiple physical transports, selection remains execution policy below its semantic route. `OpenResponsesChannel.transport(...)` owns the provider-neutral Responses WebSocket concept: it prepares one final request, executes HTTP by default, strips WebSocket-disallowed fields, and passes a generic channel exchange to a per-call `WebSocketChannelExecutor` when supplied. Provider-specific Responses routes opt in with handshake and connection-age policy. `Route.streamPrepared` owns decoding and acknowledges channel completion only after successful full consumption.
+When a provider supports multiple physical transports, selection remains execution policy below its semantic route. The transport layer (`src/route/transport/`) keeps the generic WebSocket channel contract: a route that opts in receives a per-call `WebSocketChannelExecutor` through `StreamOptions`, while HTTP stays the default. No bundled route opts in. `Route.streamPrepared` owns decoding and acknowledges channel completion only after successful full consumption.
 
 ### Media Routes
 
@@ -102,39 +106,35 @@ Media does not fit the SSE-frames-to-event-state-machine LLM route. `MediaRoute.
 
 `MediaProtocol.stream` is the incremental kind every speech route uses, with the same discipline as LLM protocols. `MediaRoute.stream` submits the caller's request as `MediaProtocol.Addressed<Request>` (`{ ...request, mode }`, `mode: "generate" | "stream"`), so one provider stays one protocol: `body.from`, the endpoint path, and `frames` read `request.mode` to pick the body, path, and framing. `frames(bytes, context)` returns frames — `Framing.sse`, `Framing.lines`, `Framing.document` (a single-document response shaped like a streamed record), or the raw `bytes` for chunked audio. `initial()` is fresh per-response parser state; `step` folds each frame into it and emits modality events; `finish(state, context)` runs once after the last frame with the request, body, and observed `http` (header-only usage lives there) and emits exactly one terminal event or fails with `route.incomplete()`. Keep parser state to real accumulators and derive anything the request or body determines in `finish`. `generate` runs the same stream and folds it with the modality's `collect`. Request-derived URL parameters go on the body's `query` (array values repeat the parameter), applied before route and caller `http.query`. Decode frames with `route.decodeFrame` and raise stream-time failures with `route.frameError` (the frame stays on `reason.body`); protocols never thread HTTP context, because the route fills `reason.http` on stream errors that lack it. Speech protocols share `protocols/utils/speech-stream.ts` for deltas, timestamps, voice ids, PCM and container descriptions, and the terminal asset.
 
-Every modality route is the inline | stream | queued union (transcription uses all three: OpenAI and Gemini stream, Deepgram and ElevenLabs are inline, AssemblyAI is queued), every client is `MediaClient.make(Service, { modality, responseEvents })` (`src/media-client.ts`), which dispatches on the route's `kind`, and every model composes through `composeRoute`. fal queue protocols come from `protocols/utils/fal-queue.ts`, bodies are `json`, `multipart`, or `binary` (a raw upload), and a queued protocol that must upload media before submitting implements `start.prepare` (`MediaProtocol.Prepare`; AssemblyAI `/v2/upload`).
+Every modality route is the inline | stream | queued union, every client is `MediaClient.make(Service, { modality, responseEvents })` (`src/media-client.ts`), which dispatches on the route's `kind`, and every model composes through `composeRoute`. fal queue protocols come from `protocols/utils/fal-queue.ts`, bodies are `json`, `multipart`, or `binary` (a raw upload), and a queued protocol that must upload media before submitting implements `start.prepare` (`MediaProtocol.Prepare`; AssemblyAI `/v2/upload`).
 
 ### URL Construction
 
-`Endpoint` owns `{ baseURL, path, query }`. Each protocol route includes a canonical endpoint when the provider has one (e.g. `https://api.openai.com/v1`); provider helpers override endpoint fields by configuring the route before selecting a model. Generic OpenAI-compatible routes have no canonical URL and require configuration before execution.
+`Endpoint` owns `{ baseURL, path, query }`. Each protocol route includes a canonical endpoint when the provider has one (e.g. `https://api.deepseek.com/v1`); provider helpers override endpoint fields by configuring the route before selecting a model. Generic OpenAI-compatible routes have no canonical URL and require configuration before execution.
 
-For providers where the URL is derived from typed inputs (Azure resource name, Bedrock region), the provider helper configures the route endpoint before calling `.model(...)`. Use `AtLeastOne<T>` from `route/auth-options.ts` for inputs that accept either of two derivation paths (Azure: `resourceName` or `baseURL`).
+For providers where the URL is derived from typed inputs (Alibaba region and workspace), the provider helper configures the route endpoint before calling `.model(...)`. Use `AtLeastOne<T>` from `route/auth-options.ts` for inputs that accept either of two derivation paths (Alibaba: `region` or `baseURL`).
 
 ### Provider Facades
 
-Provider-facing APIs are configured facades over route values. Endpoint/auth/resource/API-version setup happens before model selection, and model selectors accept only a model or deployment id. Media models use per-modality selectors on the same facade (`openai.image(id)`, `.speech(id)`, `.transcription(id)`, `google.video(id)`) that mirror `openai.responses(id)`; the one-word overlap with the request namespace is accepted over a second construction path:
+Provider-facing APIs are configured facades over route values. Endpoint/auth/resource/API-version setup happens before model selection, and model selectors accept only a model or deployment id. Media models would use per-modality selectors on the same facade (`.image(id)`, `.speech(id)`, `.transcription(id)`, `.video(id)`) that mirror `.chat(id)`; no bundled provider ships one, but the framework keeps the contract:
 
 ```ts
-const openai = OpenAI.configure({ apiKey, baseURL })
-const model = openai.responses("gpt-4o-mini")
-const image = openai.image("gpt-image-2")
+const deepseek = DeepSeek.configure({ apiKey, baseURL })
+const model = deepseek.model("deepseek-chat")
 
-const azure = Azure.configure({ resourceName, apiKey, apiVersion: "v1" })
-const deployment = azure.responses("my-deployment")
-
-const gateway = CloudflareAIGateway.configure({ accountId, gatewayId, gatewayApiKey, apiKey })
-const proxied = gateway.model("openai/gpt-4o-mini")
+const alibaba = Alibaba.configure({ region: "ap-southeast-1", apiKey })
+const messages = alibaba.messages("qwen3.8-max") // `.model` / `.chat` select Chat Completions
 ```
 
 Keep provider facades small and explicit:
 
 - Use branded `ProviderID.make(...)` and `ModelID.make(...)` where ids are constructed directly.
-- Use `model` for the default API path and named methods for provider-native alternatives such as OpenAI `responses` and `chat`.
+- Use `model` for the default API path and named methods for provider-native alternatives such as Alibaba `chat` and `messages`.
 - Put provider-specific setup on `.configure(...)`; do not add `model(id, overrides)` as a duplicate construction path.
 - Export lower-level `routes` arrays separately only when advanced internal wiring needs them.
 - Prefer `apiKey` as provider-specific sugar and `auth` as the explicit override; keep them mutually exclusive in provider option types with `ProviderAuthOption`.
 - Resolve `apiKey` → `Auth` with `AuthOptions.bearer(options, "<PROVIDER>_API_KEY")` (it honors an explicit `auth` override and falls back to `Auth.config(envVar)` so missing keys surface a typed `Authentication` error rather than a runtime crash).
-- Use separate top-level facades for products with different required setup, such as `CloudflareAIGateway` and `CloudflareWorkersAI`.
+- Use separate top-level facades for products with different required setup, such as `ZAI` and `ZAICodingPlan`.
 - Give every named provider its own file and top-level export. Keep its endpoint, auth defaults, and route setup in that file. Compose shared protocols directly; do not nest named provider presets under generic compatible facades or keep their endpoints in a shared provider profile registry.
 
 `Provider.make(...)` remains available for simple static provider definitions, but new built-in providers should prefer plain configured facades unless a helper removes real duplication without adding runtime behavior.
@@ -144,19 +144,19 @@ Keep provider facades small and explicit:
 Catalog-selected native providers use package-like export paths from `@opencode/ai`. They are internal entrypoints in one npm package, not separately published provider packages. Every entrypoint implements `ProviderPackage.Definition` and exposes `model(modelID, settings)`, where settings are one flat serializable object: the connection keys the entrypoint declares (`apiKey`, `baseURL`, `region`, …), the common `headers` and `body` overlays, and the protocol's request options (`reasoningEffort`, `thinking`, …) side by side. Each entrypoint destructures its own connection keys and passes the rest to the route as `providerOptions`; there is no nested `providerOptions` at the entrypoint.
 
 ```ts
-import { model } from "@opencode/ai/providers/openai/responses"
+import { model } from "@opencode/ai/providers/zai-coding-plan/messages"
 
-const selected = model("gpt-5", {
+const selected = model("glm-5.3", {
   apiKey,
-  reasoningEffort: "high",
+  effort: "high",
 })
 ```
 
-Keep semantic APIs as separate entrypoints, such as OpenAI `chat` and `responses`. Transport is execution policy: OpenAI Responses uses HTTP by default and may receive a per-call WebSocket channel executor through `StreamOptions` without changing model or route identity.
+Keep semantic APIs as separate entrypoints, such as Alibaba `chat` and `messages`. Transport is execution policy: routes use HTTP by default and may receive a per-call WebSocket channel executor through `StreamOptions` without changing model or route identity.
 
 Do not expose `Route` in provider package settings. Route composition stays an implementation detail behind `model(...)`.
 
-The dependency arrow points down: `providers/*.ts` files import protocol routes and auth-option utilities; protocol modules import `endpoint`, `auth`, `framing`, and transport pieces. Protocols do not import provider facades. Lower-level modules know nothing about provider catalog metadata. `OpenAIResponses` composes the provider-neutral `OpenResponses` protocol; the baseline never imports the OpenAI extension.
+The dependency arrow points down: `providers/*.ts` files import protocol routes and auth-option utilities; protocol modules import `endpoint`, `auth`, `framing`, and transport pieces. Protocols do not import provider facades. Lower-level modules know nothing about provider catalog metadata. Protocol variants such as `AlibabaChat` and `ZAIChat` compose the base `OpenAIChat` protocol; the baseline never imports its extensions.
 
 ### Shared protocol helpers
 
@@ -175,7 +175,7 @@ If you find yourself copying a 3-to-5-line snippet between two protocols, lift i
 
 `LLMRequest.system` is the initial privileged prompt that applies ahead of the conversation. `Message.system(...)` is a separate, provider-neutral chronological operator update inside `LLMRequest.messages`; it applies only from its position in history onward and accepts text content only.
 
-Native chronological system messages are route/model-specific. Open Responses lowers them to standard `developer` messages, while Anthropic Messages lowers them to native system messages for Claude Opus 4.8 (`claude-opus-4-8`). Other routes and models intentionally lower the update in place into ordinary user-compatible text using this stable escaped representation:
+Native chronological system messages are route/model-specific. Anthropic Messages lowers them to native system messages for Claude Opus 4.8 (`claude-opus-4-8`). Other routes and models intentionally lower the update in place into ordinary user-compatible text using this stable escaped representation:
 
 ```text
 <system-update>
@@ -187,7 +187,7 @@ The wrapped-user fallback preserves ordering while visibly lowering authority. N
 
 ### Effort Updates
 
-`Message.effort({ effort, previous })` is a chronological "reasoning effort changed here" marker (`undefined` means the model default). Changing a top-level effort invalidates the whole provider prompt cache, so protocols with a native per-message update (`Protocol.supportsEffortUpdates`) keep the top-level effort at the first marker's `previous` and lower each marker in place: Anthropic Messages emits an empty `role: "system"` message with `output_config.effort` plus the `mid-conversation-output-config-2026-07-01` beta, and OpenAI Responses emits `configuration_update` items. `applyEffortUpdates` runs in `prepareRequest` and strips the markers for every other route, so a protocol without support keeps today's plain top-level behaviour. When the last marker disagrees with the effort the request asks for (reverted or forked history), `resolveEffortUpdates` strips the markers and falls back to a plain top-level change.
+`Message.effort({ effort, previous })` is a chronological "reasoning effort changed here" marker (`undefined` means the model default). Changing a top-level effort invalidates the whole provider prompt cache, so protocols with a native per-message update (`Protocol.supportsEffortUpdates`) keep the top-level effort at the first marker's `previous` and lower each marker in place: Anthropic Messages emits an empty `role: "system"` message with `output_config.effort` plus the `mid-conversation-output-config-2026-07-01` beta. `applyEffortUpdates` runs in `prepareRequest` and strips the markers for every other route, so a protocol without support keeps today's plain top-level behaviour. When the last marker disagrees with the effort the request asks for (reverted or forked history), `resolveEffortUpdates` strips the markers and falls back to a plain top-level change.
 
 ### Tools
 
@@ -247,13 +247,13 @@ Errors must be expressed as `ToolFailure`. The runtime catches it and emits a `t
 - Input failed the `parameters` Schema.
 - The handler returned a `ToolFailure`.
 
-Provider-defined / hosted tools (Anthropic `web_search` / `code_execution` / `web_fetch`, OpenAI Responses `web_search_call` / `file_search_call` / `code_interpreter_call` / `mcp_call` / `image_generation_call` / `computer_use_call`) pass through the runtime untouched:
+Provider-defined / hosted tools (Anthropic `web_search` / `code_execution` / `web_fetch`) pass through the runtime untouched:
 
 - Routes surface the model's call as a `tool-call` event with `providerExecuted: true`, and the provider's result as a matching `tool-result` event with `providerExecuted: true`.
 - Callers detect `providerExecuted` on `tool-call` and **skip local dispatch** — no handler is invoked and no `tool-error` is raised for "unknown tool". The provider already executed it.
-- Callers that continue should retain both events in explicit history when the protocol requires it. Anthropic encodes them back as `server_tool_use` + `web_search_tool_result` (or `code_execution_tool_result` / `web_fetch_tool_result`) blocks; OpenAI Responses callers typically use `previous_response_id` instead of resending hosted-tool items.
+- Callers that continue should retain both events in explicit history when the protocol requires it. Anthropic encodes them back as `server_tool_use` + `web_search_tool_result` (or `code_execution_tool_result` / `web_fetch_tool_result`) blocks.
 
-Add provider-defined tools to `request.tools` (no runtime entry needed). The matching route must know how to lower the tool definition into the provider-native shape; right now Anthropic accepts `web_search` / `code_execution` / `web_fetch` and OpenAI Responses accepts the hosted tool names listed above.
+Add provider-defined tools to `request.tools` (no runtime entry needed). The matching route must know how to lower the tool definition into the provider-native shape; right now Anthropic accepts `web_search` / `code_execution` / `web_fetch`.
 
 ## Protocol File Style
 

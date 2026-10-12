@@ -13,7 +13,6 @@ import { ModelsDev } from "@opencode/core/models-dev"
 import { ModelsDevPlugin } from "@opencode/core/plugin/models-dev"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
-import { ProviderPlugins } from "@opencode/core/plugin/provider"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { withEnv } from "../fixture/env"
@@ -718,13 +717,13 @@ describe("ModelsDevPlugin", () => {
       )
       expect(yield* integrations.list()).toEqual([
         Integration.Info.make({
-          id: Integration.ID.make("acme"),
-          name: "Acme",
+          id: Integration.ID.make("xiaomi"),
+          name: "Xiaomi",
           methods: [
             { type: "key" },
             {
               type: "env",
-              names: ["ACME_API_KEY"],
+              names: ["XIAOMI_API_KEY"],
             },
           ],
           connections: [],
@@ -857,116 +856,6 @@ describe("ModelsDevPlugin", () => {
     }),
   )
 
-  it.effect("omits legacy provider aliases", () =>
-    Effect.gen(function* () {
-      const integrations = yield* Integration.Service
-      const providers = yield* Provider.Service
-      const snapshots = [
-        ["azure", "Azure", "AZURE_API_KEY", "@ai-sdk/azure"],
-        ["azure-cognitive-services", "Azure Cognitive Services", "AZURE_COGNITIVE_SERVICES_API_KEY", "@ai-sdk/azure"],
-        ["google-vertex", "Google Vertex", "GOOGLE_APPLICATION_CREDENTIALS", "@ai-sdk/google-vertex"],
-        [
-          "google-vertex-anthropic",
-          "Google Vertex Anthropic",
-          "GOOGLE_APPLICATION_CREDENTIALS",
-          "@ai-sdk/google-vertex/anthropic",
-        ],
-      ].map(([id, name, environment, packageName]) => ({
-        info: {
-          id: Provider.ID.make(id),
-          name,
-          activation: "auto",
-          package: Provider.aisdk(packageName),
-        },
-        environment: id === "azure" ? ["AZURE_RESOURCE_NAME", environment] : [environment],
-        models: [],
-      })) satisfies readonly ModelsDev.Snapshot[]
-
-      yield* ModelsDevPlugin.effect(
-        host({
-          provider: providerHost(providers),
-          integration: integrationHost(integrations),
-        }),
-      ).pipe(
-        Effect.provideService(
-          ModelsDev.Service,
-          ModelsDev.Service.of({
-            get: () => Effect.succeed(snapshots),
-            refresh: () => Effect.void,
-          }),
-        ),
-      )
-
-      expect(yield* providers.get(Provider.ID.azure)).toBeDefined()
-      expect(yield* providers.get(Provider.ID.make("google-vertex"))).toBeDefined()
-      expect(yield* providers.get(Provider.ID.make("azure-cognitive-services"))).toBeUndefined()
-      expect(yield* providers.get(Provider.ID.make("google-vertex-anthropic"))).toBeUndefined()
-      expect(yield* integrations.get(Integration.ID.make("azure"))).toBeDefined()
-      expect(yield* integrations.get(Integration.ID.make("azure"))).toMatchObject({
-        methods: [{ type: "key" }, { type: "env", names: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] }],
-      })
-      expect(yield* integrations.get(Integration.ID.make("google-vertex"))).toBeDefined()
-      expect(yield* integrations.get(Integration.ID.make("azure-cognitive-services"))).toBeUndefined()
-      expect(yield* integrations.get(Integration.ID.make("google-vertex-anthropic"))).toBeUndefined()
-      expect(ProviderPlugins.map((plugin) => plugin.id)).not.toContain("opencode.provider.azure.cognitive.services")
-      expect(ProviderPlugins.map((plugin) => plugin.id)).not.toContain("opencode.provider.google.vertex.anthropic")
-    }),
-  )
-
-  it.effect("registers every listed environment variable for provider plugins to narrow", () =>
-    Effect.gen(function* () {
-      const integrations = yield* Integration.Service
-      const providers = yield* Provider.Service
-
-      yield* ModelsDevPlugin.effect(
-        host({
-          provider: providerHost(providers),
-          integration: integrationHost(integrations),
-        }),
-      ).pipe(
-        Effect.provideService(
-          ModelsDev.Service,
-          ModelsDev.Service.of({
-            get: () =>
-              Effect.succeed([
-                {
-                  info: {
-                    id: Provider.ID.make("cloudflare-workers-ai"),
-                    name: "Cloudflare Workers AI",
-                    activation: "auto",
-                    package: "@opencode/ai/providers/cloudflare-workers-ai",
-                  },
-                  environment: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"],
-                  models: [],
-                },
-                {
-                  info: {
-                    id: Provider.ID.make("google-vertex"),
-                    name: "Google Vertex",
-                    activation: "auto",
-                    package: "@opencode/ai/providers/google-vertex",
-                  },
-                  environment: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"],
-                  models: [],
-                },
-              ] satisfies readonly ModelsDev.Snapshot[]),
-            refresh: () => Effect.void,
-          }),
-        ),
-      )
-
-      expect(yield* integrations.get(Integration.ID.make("google-vertex"))).toMatchObject({
-        methods: [
-          { type: "key" },
-          { type: "env", names: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"] },
-        ],
-      })
-      expect(yield* integrations.get(Integration.ID.make("cloudflare-workers-ai"))).toMatchObject({
-        methods: [{ type: "key" }, { type: "env", names: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"] }],
-      })
-    }),
-  )
-
   it.effect("converts reasoning options into settings variants", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
@@ -980,110 +869,49 @@ describe("ModelsDevPlugin", () => {
       )
 
       yield* activate(providers)
-      const model = yield* modelState.get(Provider.ID.openai, Model.ID.make("gpt-reasoning"))
-      expect(model?.variants?.map((variant) => variant.id)).toEqual([
-        Model.VariantID.make("low"),
-        Model.VariantID.make("high"),
+      const deepseek = Provider.ID.make("deepseek")
+      const model = yield* modelState.get(deepseek, Model.ID.make("deepseek-reasoning"))
+      expect(model?.variants).toEqual([
+        { id: Model.VariantID.make("none"), body: { thinking: { type: "disabled" } } },
+        {
+          id: Model.VariantID.make("low"),
+          settings: { reasoningEffort: "low" },
+          body: { thinking: { type: "enabled" } },
+        },
+        {
+          id: Model.VariantID.make("high"),
+          settings: { reasoningEffort: "high" },
+          body: { thinking: { type: "enabled" } },
+        },
       ])
-      expect(model?.variants).toContainEqual({
-        id: Model.VariantID.make("low"),
-        settings: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          include: ["reasoning.encrypted_content"],
-        },
-      })
-      expect(model?.variants).toContainEqual({
-        id: Model.VariantID.make("high"),
-        settings: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          include: ["reasoning.encrypted_content"],
-        },
-      })
 
-      const mode = yield* modelState.get(Provider.ID.openai, Model.ID.make("gpt-reasoning-high"))
+      const mode = yield* modelState.get(deepseek, Model.ID.make("deepseek-reasoning-high"))
       expect(mode).toMatchObject({
-        id: "gpt-reasoning-high",
-        name: "GPT Reasoning High",
+        id: "deepseek-reasoning-high",
+        name: "DeepSeek Reasoning High",
         headers: { "x-mode": "high" },
         body: { service_tier: "priority" },
       })
       expect(mode?.variants?.map((variant) => variant.id)).toEqual([
+        Model.VariantID.make("none"),
         Model.VariantID.make("low"),
         Model.VariantID.make("high"),
       ])
 
-      const pro = yield* modelState.get(Provider.ID.openai, Model.ID.make("gpt-reasoning-pro"))
+      const pro = yield* modelState.get(deepseek, Model.ID.make("deepseek-reasoning-pro"))
       expect(pro).toMatchObject({
-        id: "gpt-reasoning-pro",
+        id: "deepseek-reasoning-pro",
         body: { reasoning: { mode: "pro" } },
       })
 
-      const budgetModel = yield* modelState.get(Provider.ID.anthropic, Model.ID.make("claude-budget"))
-      expect(budgetModel?.variants).toContainEqual({
-        id: Model.VariantID.make("high"),
-        settings: { thinking: { type: "enabled", budgetTokens: 16000 } },
-      })
-      expect(budgetModel?.variants).toContainEqual({
-        id: Model.VariantID.make("max"),
-        settings: { thinking: { type: "enabled", budgetTokens: 31999 } },
-      })
-
-      const anthropicEffortModel = yield* modelState.get(Provider.ID.anthropic, Model.ID.make("claude-opus-4.7"))
-      expect(anthropicEffortModel?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { thinking: { type: "disabled" } } },
-        {
-          id: Model.VariantID.make("low"),
-          settings: { thinking: { type: "adaptive", display: "summarized" }, effort: "low" },
-        },
-      ])
-
-      const anthropicToggleModel = yield* modelState.get(Provider.ID.anthropic, Model.ID.make("claude-toggle"))
-      expect(anthropicToggleModel?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { thinking: { type: "disabled" } } },
-        {
-          id: Model.VariantID.make("thinking"),
-          settings: { thinking: { type: "adaptive", display: "summarized" } },
-        },
-      ])
-
-      const opus45 = yield* modelState.get(Provider.ID.anthropic, Model.ID.make("claude-opus-4-5"))
-      expect(opus45?.variants).toEqual([
-        {
-          id: Model.VariantID.make("low"),
-          settings: { effort: "low", thinking: { type: "enabled", budgetTokens: 8191 } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { effort: "high", thinking: { type: "enabled", budgetTokens: 8191 } },
-        },
-      ])
-
-      const grok = yield* modelState.get(Provider.ID.make("xai"), Model.ID.make("grok-4.5"))
-      expect(grok?.variants).toEqual(
-        ["low", "medium", "high"].map((id) => ({
-          id: Model.VariantID.make(id),
-          settings: { reasoningEffort: id, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
-        })),
-      )
-
-      const minimax = yield* modelState.get(Provider.ID.make("opencode-go"), Model.ID.make("minimax-m3"))
-      expect(minimax?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { thinking: { type: "disabled" } } },
-        {
-          id: Model.VariantID.make("thinking"),
-          settings: { thinking: { type: "adaptive", display: "summarized" } },
-        },
-      ])
-
-      const toggle = yield* modelState.get(Provider.ID.make("alibaba"), Model.ID.make("toggle-only"))
+      const alibaba = Provider.ID.make("alibaba")
+      const toggle = yield* modelState.get(alibaba, Model.ID.make("toggle-only"))
       expect(toggle?.variants).toEqual([
         { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
         { id: Model.VariantID.make("thinking"), settings: { enableThinking: true } },
       ])
 
-      const combined = yield* modelState.get(Provider.ID.make("alibaba"), Model.ID.make("toggle-budget"))
+      const combined = yield* modelState.get(alibaba, Model.ID.make("toggle-budget"))
       expect(combined?.variants).toEqual([
         { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
         {
@@ -1096,208 +924,41 @@ describe("ModelsDevPlugin", () => {
         },
       ])
 
-      const gateway = yield* modelState.get(Provider.ID.make("vercel"), Model.ID.make("alibaba/qwen-toggle"))
-      expect(gateway?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { thinking: { type: "disabled" } } },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { thinking: { type: "enabled", budgetTokens: 8000 } },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: { thinking: { type: "enabled", budgetTokens: 16000 } },
-        },
+      const effort = yield* modelState.get(alibaba, Model.ID.make("qwen-effort"))
+      expect(effort?.variants).toEqual([
+        { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
+        ...["low", "medium", "xhigh"].map((id) => ({
+          id: Model.VariantID.make(id),
+          settings: { enableThinking: true, reasoningEffort: id },
+        })),
       ])
 
-      const gatewayNova = yield* modelState.get(Provider.ID.make("vercel"), Model.ID.make("amazon/nova-2-lite"))
-      expect(gatewayNova?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { thinking: { type: "disabled" } },
-        },
-        {
-          id: Model.VariantID.make("low"),
-          settings: { reasoningEffort: "low" },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { reasoningEffort: "high" },
-        },
-      ])
-
-      const gatewayFallback = yield* modelState.get(
-        Provider.ID.make("vercel"),
-        Model.ID.make("deepseek/deepseek-toggle"),
+      const messages = yield* modelState.get(alibaba, Model.ID.make("qwen-messages"))
+      expect(messages?.package).toBe("@opencode/ai/providers/alibaba/messages")
+      expect(messages?.variants).toEqual(
+        ["low", "medium", "xhigh"].map((id) => ({
+          id: Model.VariantID.make(id),
+          settings: { thinking: { type: "enabled" }, effort: id },
+        })),
       )
-      expect(gatewayFallback?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { thinking: { type: "disabled" } },
-        },
-        {
-          id: Model.VariantID.make("low"),
-          settings: { reasoningEffort: "low" },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { reasoningEffort: "high" },
-        },
-      ])
 
-      const openrouter = yield* modelState.get(Provider.ID.make("openrouter"), Model.ID.make("openrouter-toggle"))
-      expect(openrouter?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { reasoning: { enabled: false } } },
-        { id: Model.VariantID.make("thinking"), settings: { reasoning: { enabled: true } } },
-      ])
-
-      const google = yield* modelState.get(Provider.ID.make("google"), Model.ID.make("gemini-2.5-flash"))
-      expect(google?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { thinkingConfig: { includeThoughts: false, thinkingBudget: 0 } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { thinkingConfig: { includeThoughts: true, thinkingBudget: 8000 } },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: { thinkingConfig: { includeThoughts: true, thinkingBudget: 16000 } },
-        },
-      ])
-
-      const vertex = yield* modelState.get(Provider.ID.make("google-vertex"), Model.ID.make("gemini-2.5-flash-lite"))
-      expect(vertex?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { thinkingConfig: { includeThoughts: false, thinkingBudget: 0 } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { thinkingConfig: { includeThoughts: true, thinkingBudget: 8000 } },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: { thinkingConfig: { includeThoughts: true, thinkingBudget: 16000 } },
-        },
-      ])
-
-      const bedrock = yield* modelState.get(
-        Provider.ID.make("amazon-bedrock"),
-        Model.ID.make("us.amazon.nova-2-lite-v1:0"),
+      const zai = Provider.ID.make("zai-coding-plan")
+      const glm = yield* modelState.get(zai, Model.ID.make("glm-effort"))
+      expect(glm?.variants).toEqual(
+        ["low", "high", "max"].map((id) => ({
+          id: Model.VariantID.make(id),
+          settings: { thinking: { type: "enabled", clear_thinking: false }, reasoningEffort: id },
+        })),
       )
-      expect(bedrock?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          body: { additionalModelRequestFields: { reasoningConfig: { type: "disabled" } } },
-        },
-        {
-          id: Model.VariantID.make("low"),
-          body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "low" } } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } } },
-        },
-      ])
 
-      const sapGemini = yield* modelState.get(Provider.ID.make("sap-ai-core"), Model.ID.make("gemini-2.5-flash"))
-      expect(sapGemini?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { modelParams: { thinkingConfig: { includeThoughts: false, thinkingBudget: 0 } } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { modelParams: { thinkingConfig: { includeThoughts: true, thinkingBudget: 8000 } } },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: { modelParams: { thinkingConfig: { includeThoughts: true, thinkingBudget: 16000 } } },
-        },
-      ])
-
-      const sapNova = yield* modelState.get(Provider.ID.make("sap-ai-core"), Model.ID.make("amazon--nova-lite"))
-      expect(sapNova?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: {
-            modelParams: { additionalModelRequestFields: { thinking: { type: "disabled" } } },
-          },
-        },
-        {
-          id: Model.VariantID.make("low"),
-          settings: {
-            modelParams: { additionalModelRequestFields: { output_config: { effort: "low" } } },
-          },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: {
-            modelParams: { additionalModelRequestFields: { output_config: { effort: "high" } } },
-          },
-        },
-      ])
-
-      const sapCohere = yield* modelState.get(
-        Provider.ID.make("sap-ai-core"),
-        Model.ID.make("cohere--command-a-reasoning"),
+      const glmMessages = yield* modelState.get(zai, Model.ID.make("glm-messages"))
+      expect(glmMessages?.package).toBe("@opencode/ai/providers/zai-coding-plan/messages")
+      expect(glmMessages?.variants).toEqual(
+        ["high", "max"].map((id) => ({
+          id: Model.VariantID.make(id),
+          settings: { thinking: { type: "enabled" }, effort: id },
+        })),
       )
-      expect(sapCohere?.variants).toEqual([
-        {
-          id: Model.VariantID.make("none"),
-          settings: { modelParams: { thinking: { type: "disabled" } } },
-        },
-        {
-          id: Model.VariantID.make("low"),
-          settings: { modelParams: { reasoning_effort: "low" } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { modelParams: { reasoning_effort: "high" } },
-        },
-      ])
-
-      const sapAnthropicEffort = yield* modelState.get(
-        Provider.ID.make("sap-ai-core"),
-        Model.ID.make("anthropic--claude-4.7-opus"),
-      )
-      expect(sapAnthropicEffort?.variants).toEqual([
-        {
-          id: Model.VariantID.make("low"),
-          settings: {
-            modelParams: {
-              additionalModelRequestFields: {
-                thinking: { type: "adaptive", display: "summarized" },
-                output_config: { effort: "low" },
-              },
-            },
-          },
-        },
-      ])
-
-      const sapAnthropicBudget = yield* modelState.get(
-        Provider.ID.make("sap-ai-core"),
-        Model.ID.make("anthropic--claude-4-sonnet"),
-      )
-      expect(sapAnthropicBudget?.variants).toEqual([
-        {
-          id: Model.VariantID.make("high"),
-          settings: {
-            modelParams: {
-              additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: 8000 } },
-            },
-          },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: {
-            modelParams: {
-              additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: 16000 } },
-            },
-          },
-        },
-      ])
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "fixtures", "models-dev-reasoning.json")))),
   )
 })

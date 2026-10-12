@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema, Stream } from "effect"
 import { CacheHint, LLM, LLMEvent, LLMResponse, ToolEntry, ToolNamespace } from "../src/index.js"
-import { OpenAI } from "../src/providers.js"
+import { OpenAICompatible } from "../src/providers.js"
 import * as OpenAIChat from "../src/protocols/openai-chat.js"
-import * as OpenAIResponses from "../src/protocols/openai-responses.js"
+import * as AnthropicMessages from "../src/protocols/anthropic-messages.js"
 import {
   GenerationOptions,
   LLMRequest,
@@ -18,12 +18,12 @@ import { fixedResponse } from "./lib/http.js"
 import { sseEvents } from "./lib/sse.js"
 
 const chatRoute = OpenAIChat.route
-const responsesRoute = OpenAIResponses.route
+const messagesRoute = AnthropicMessages.route
 
 describe("llm constructors", () => {
   test("normalizes recursive tool namespaces", () => {
     const request = LLM.request({
-      model: LanguageModel.make({ id: "fake-model", provider: "fake", route: responsesRoute }),
+      model: LanguageModel.make({ id: "fake-model", provider: "fake", route: messagesRoute }),
       tools: [
         {
           type: "namespace",
@@ -150,7 +150,7 @@ describe("llm constructors", () => {
       route: chatRoute,
     })
     const updated = LanguageModel.update(base, {
-      route: responsesRoute,
+      route: messagesRoute,
       defaults: { generation: { maxTokens: 20 } },
       compatibility: { sanitizer: "gemini", requireFinishReason: false },
     })
@@ -158,7 +158,7 @@ describe("llm constructors", () => {
 
     expect(updated).toBeInstanceOf(LanguageModel)
     expect(String(updated.id)).toBe("fake-model")
-    expect(updated.route).toBe(responsesRoute)
+    expect(updated.route).toBe(messagesRoute)
     expect(updated.defaults?.generation).toEqual({ maxTokens: 20 })
     expect(updated.compatibility).toEqual({ sanitizer: "gemini", requireFinishReason: false })
     expect(updatedInput.defaults).toBe(updated.defaults)
@@ -244,7 +244,7 @@ describe("llm constructors", () => {
   })
 
   test("generates and streams from input or a prebuilt request", async () => {
-    const model = OpenAI.configure({ apiKey: "test", baseURL: "https://openai.test/v1" }).chat("gpt-4o-mini")
+    const model = OpenAICompatible.configure({ apiKey: "test", baseURL: "https://openai.test/v1" }).model("gpt-4o-mini")
     const layer = fixedResponse(
       sseEvents({ choices: [{ delta: { content: "Hello" } }] }, { choices: [{ delta: {}, finish_reason: "stop" }] }),
     )

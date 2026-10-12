@@ -182,21 +182,6 @@ describe("ConfigNormalize", () => {
     expect(() => Schema.decodeUnknownSync(Info)(result.encoded)).not.toThrow()
   })
 
-  test("renames legacy provider IDs in the top-level model", () => {
-    expect(normalized({ model: "google-vertex-anthropic/claude#high" }).encoded.model).toEqual({
-      providerID: "google-vertex",
-      model: "claude",
-      variant: "high",
-    })
-    expect(
-      normalized({ model: { providerID: "azure-cognitive-services", model: "deployment" } }).encoded.model,
-    ).toEqual({ providerID: "azure", model: "deployment" })
-    expect(normalized({ model: "anthropic/claude" }).encoded.model).toEqual({
-      providerID: "anthropic",
-      model: "claude",
-    })
-  })
-
   test("migrates the legacy small model to the title agent", () => {
     const result = normalized({ small_model: "anthropic/claude-haiku-4-5" })
     expect(result.encoded.agents).toEqual({
@@ -261,20 +246,6 @@ describe("ConfigNormalize", () => {
     expect(result.encoded.providers).toEqual({
       demo: { name: "Demo", models: { demo: { name: "Demo", capabilities: { input: ["text"], output: ["text"] } } } },
     })
-  })
-
-  test("uses a valid retired provider alias when the canonical legacy entry is malformed", () => {
-    const result = normalized({
-      provider: {
-        "azure-cognitive-services": { models: { deployment: {} } },
-        azure: { env: [1] },
-      },
-    })
-    expect(result.encoded.providers).toHaveProperty("azure.models.deployment")
-    expect(result.diagnostics.filter((item) => item.kind === "invalid").map((item) => item.path)).toContainEqual([
-      "provider",
-      "azure",
-    ])
   })
 
   test("preserves permission source order and appends native rules", () => {

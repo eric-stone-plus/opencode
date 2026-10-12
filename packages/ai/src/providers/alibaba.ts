@@ -2,7 +2,6 @@ import { Struct } from "effect"
 import type { ProviderPackage } from "../provider-package.js"
 import { AlibabaChat } from "../protocols/alibaba-chat.js"
 import { AlibabaMessages } from "../protocols/alibaba-messages.js"
-import { AlibabaResponses } from "../protocols/alibaba-responses.js"
 import { AuthOptions, type AtLeastOne, type ProviderAuthOption } from "../route/auth-options.js"
 import { Route, type RouteDefaultsInput } from "../route/client.js"
 import { Endpoint } from "../route/endpoint.js"
@@ -21,7 +20,6 @@ export type Region =
   | (string & {})
 export type ChatOptionsInput = AlibabaChat.OptionsInput
 export type MessagesOptionsInput = AlibabaMessages.OptionsInput
-export type ResponsesOptionsInput = AlibabaResponses.OptionsInput
 
 type Location = AtLeastOne<{
   readonly region: Region
@@ -32,7 +30,7 @@ type Location = AtLeastOne<{
 export type Config = Location &
   Omit<RouteDefaultsInput, "providerOptions"> &
   ProviderAuthOption<"optional"> & {
-    readonly providerOptions?: ChatOptionsInput | MessagesOptionsInput | ResponsesOptionsInput
+    readonly providerOptions?: ChatOptionsInput | MessagesOptionsInput
   }
 export type Settings<Options = ChatOptionsInput> = Location &
   ProviderPackage.Settings &
@@ -63,16 +61,8 @@ const messagesRoute = Route.make({
   framing: Framing.sse,
   headers: () => ({ "anthropic-version": "2023-06-01" }),
 })
-const responsesRoute = Route.make({
-  id: "alibaba-responses",
-  provider: id,
-  providerMetadataKey: "alibaba",
-  protocol: AlibabaResponses.protocol,
-  endpoint: Endpoint.path("/responses"),
-  framing: Framing.sse,
-})
 
-export const routes = [chatRoute, messagesRoute, responsesRoute]
+export const routes = [chatRoute, messagesRoute]
 
 export const configure = (input: Config) => {
   const { apiKey: _key, auth: _auth, region, workspaceID, baseURL, ...rest } = input
@@ -102,8 +92,7 @@ export const configure = (input: Config) => {
         endpoint: { baseURL: baseURL ?? `https://${host}/apps/anthropic/v1` },
       })
       .model<MessagesOptionsInput>({ id, compatibility: { requireSignature: false } })
-  const responses = (id: string | ModelID) => responsesRoute.with(common).model<ResponsesOptionsInput>({ id })
-  return { id, model: chat, chat, messages, responses, configure }
+  return { id, model: chat, chat, messages, configure }
 }
 
 export const provider = { id, configure }
@@ -114,10 +103,6 @@ export const messagesModel: ProviderPackage.Definition<
   Settings<MessagesOptionsInput>,
   MessagesOptionsInput
 >["model"] = (id, input) => fromSettings(input).messages(id)
-export const responsesModel: ProviderPackage.Definition<
-  Settings<ResponsesOptionsInput>,
-  ResponsesOptionsInput
->["model"] = (id, input) => fromSettings(input).responses(id)
 
 function fromSettings(input: Settings<Config["providerOptions"]>) {
   const { body, ...rest } = input

@@ -2,14 +2,13 @@ import { expect } from "bun:test"
 import { Effect } from "effect"
 import { LLM, Message, ToolCallPart } from "../../src/index.js"
 import { OpenAIChat } from "../../src/protocols/openai-chat.js"
-import { OpenAIResponses } from "../../src/protocols/openai-responses.js"
 import { Auth } from "../../src/route/auth.js"
 import { compileRequest } from "../../src/route/client.js"
 import { it } from "../lib/effect.js"
 
 const tool = { name: "lookup", description: "Look up a value", inputSchema: { type: "object", properties: {} } }
 
-for (const route of [OpenAIChat.route, OpenAIResponses.route]) {
+for (const route of [OpenAIChat.route]) {
   const model = route
     .with({ endpoint: { baseURL: "https://api.openai.test/v1" }, auth: Auth.bearer("test") })
     .model({ id: "gpt-4.1-mini" })
@@ -44,37 +43,9 @@ for (const route of [OpenAIChat.route, OpenAIResponses.route]) {
           LLM.request({ model, prompt: "Look up the value.", tools: [tool], toolChoice: choice }),
         )
         expect(prepared.body.tool_choice).toEqual(
-          choice.type !== "tool"
-            ? choice.type
-            : route.id === "openai-chat"
-              ? { type: "function", function: { name: "lookup" } }
-              : { type: "function", name: "lookup" },
+          choice.type !== "tool" ? choice.type : { type: "function", function: { name: "lookup" } },
         )
       }),
     )
   }
 }
-
-it.effect("OpenAI Responses omits allowed tool choice without tool definitions", () =>
-  Effect.gen(function* () {
-    const model = OpenAIResponses.route
-      .with({ endpoint: { baseURL: "https://api.openai.test/v1" }, auth: Auth.bearer("test") })
-      .model({ id: "gpt-4.1-mini" })
-    for (const tools of [[], [tool]]) {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model,
-          prompt: "Look up the value.",
-          tools,
-          toolChoice: "required",
-          providerOptions: { allowedTools: { mode: "required", toolNames: ["lookup"] } },
-        }),
-      )
-      expect(prepared.body.tool_choice).toEqual(
-        tools.length === 0
-          ? undefined
-          : { type: "allowed_tools", mode: "required", tools: [{ type: "function", name: "lookup" }] },
-      )
-    }
-  }),
-)

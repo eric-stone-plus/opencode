@@ -2,12 +2,22 @@ import { expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
 import { CompactionPart, CompactionResponse, LLMEvent, LLMResponse, Message, ProviderID } from "../src/schema/index.js"
 import { LLM, LLMClient, LLMRequest, LanguageModel } from "../src/index.js"
-import { OpenAI, Anthropic } from "../src/providers.js"
+import { Anthropic } from "../src/providers.js"
+import { OpenAIChat } from "../src/protocols/openai-chat.js"
+import { Auth } from "../src/route.js"
 import { testEffect } from "./lib/effect.js"
 import { fixedResponse } from "./lib/http.js"
 
+// No bundled route implements explicit compaction, so the fixture attaches a stub operation that must never run.
+const supported = OpenAIChat.route
+  .with({
+    endpoint: { baseURL: "https://fixture.test/v1" },
+    auth: Auth.bearer("test"),
+    compact: { endpoint: () => Effect.die("compaction fixture never reaches the route") },
+  })
+  .model({ id: "fixture" })
+
 test("runtime capability checks follow model and route updates", () => {
-  const supported = OpenAI.configure({ apiKey: "test" }).responses("fixture")
   const unsupported = Anthropic.configure({ apiKey: "test" }).model("fixture")
   const request = LLM.request({ model: supported, prompt: "hello" })
   expect(LLMClient.canCompact(request)).toBe(true)

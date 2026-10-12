@@ -98,11 +98,9 @@ const layer = Layer.effect(
       const agent = yield* agents.get(Agent.ID.make("title"))
       if (!agent) return
       const primary = yield* resolveModel(session).pipe(Effect.orElseSucceed(() => undefined))
-      const info = yield* Effect.gen(function* () {
-        if (agent.model) return yield* model.get(agent.model.providerID, agent.model.id)
-        if (!primary) return
-        return yield* model.small(primary.ref.providerID)
-      })
+      // Fork policy (ADR 0003): a small model is never inferred. Only a configured title model (`small_model`) is used,
+      // otherwise the title request runs on the session model.
+      const info = agent.model ? yield* model.get(agent.model.providerID, agent.model.id) : undefined
       const variant =
         agent.model?.variant ?? MINIMAL_REASONING_VARIANTS.find((id) => info?.variants.some((item) => item.id === id))
       const preferred =
