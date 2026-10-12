@@ -64,12 +64,15 @@ header for its fetch/merge semantics), or just copy the build output:
 
 ```sh
 mkdir -p ~/.opencode/bin
-cp packages/opencode/dist/<platform-arch>/bin/opencode ~/.opencode/bin/opencode
+(cd packages/cli && bun run script/build.ts --single --skip-install --skip-web-ui)
+cp packages/cli/dist/cli-<platform>-<arch>/bin/opencode ~/.opencode/bin/opencode
 chmod 755 ~/.opencode/bin/opencode
 ```
 
-`script/sync-upstream.ts` additionally installs `~/.config/opencode/tui.json`
-(`main()`), the vendored `skills/` (`installSkills`, rm+cp), and
+`script/sync-upstream.ts` additionally installs `~/.config/opencode/cli.json`
+(`installTuiConfig`: V2 migrates `tui.json` once and ignores later edits, so the
+repo's `dotfiles/opencode/cli.json` is deployed when present and the repo-root
+`tui.json` only as the fallback), the vendored `skills/` (`installSkills`, rm+cp), and
 `AGENTS.goal.md` + `autonomy.md` (`installGoalConfig`, rm+copyFile), and seeds
 `agent/goal.md`. It does NOT touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, or
 any other `command/*.md` / `agent/*.md`. Run it if you want its pieces.
@@ -95,7 +98,7 @@ overwritten are listed in §5.
 ### Step 4 — secret entry (the only manual step)
 
 Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth.json`
-(four provider keys) and the `environment.d` seed files per §3, then:
+(two provider keys: `deepseek`, `xiaomi-token-plan-cn`) and the `environment.d` seed files per §3, then:
 
 ```sh
 # install.sh created the skeleton if auth.json was absent:
@@ -154,23 +157,18 @@ better (live-edit). *Directory* symlinks for `skills/` and `command/` are
 
 ## 3. Secrets re-seed (values never vendored)
 
-`~/.local/share/opencode/auth.json` — four entries, each `{ "type": "api",
-"key": … }`:
+`~/.local/share/opencode/auth.json` — two entries (V2 imports it once into the
+`credential` table of an existing DB; a fresh DB needs `opencode auth import`), each
+`{ "type": "api", "key": … }`:
 
 | Provider id (auth.json / opencode.jsonc) | Endpoint | Where the key comes from |
 | --- | --- | --- |
-| `bailian-token-plan-personal` | `token-plan.cn-beijing.maas.aliyuncs.com` (Alibaba Cloud Model Studio) | `QIANWEN_TP_PERSONAL_KEY` — machine A's seed lives in `~/.config/opencode/env` (byte-identical to the auth.json entry; verified by comparison) and is mirrored in `environment.d/95-qwen-provider.conf` |
-| `glm-coding-plan` | `open.bigmodel.cn/api/anthropic/v1` (GLM Coding Plan) | GLM/Zhipu coding-plan console — **not** present in any env seed on machine A (verified); console-sourced. Do not confuse with `GLM_API_KEY` below (different, separately rotated) |
-| `zhipuai-coding-plan` | Zhipu open platform (coding plan) | Zhipu console (`open.bigmodel.cn` account) |
-| `xiaomi-token-plan-cn` | `token-plan-cn.xiaomimimo.com` (Xiaomi MiMo token plan — current default model track) | Xiaomi token-plan console |
+| `deepseek` | `api.deepseek.com` (DeepSeek, current default model track) | DeepSeek platform console |
+| `xiaomi-token-plan-cn` | `token-plan-cn.xiaomimimo.com` (Xiaomi MiMo token plan) | Xiaomi token-plan console |
 
-`~/.config/opencode/env` (seed file; NOT read by the binary, NOT sourced by the
-shell wrapper — keep it purely as the auth.json re-seed seed):
-
-| Var | Value on machine A | Secret? |
-| --- | --- | --- |
-| `QIANWEN_TP_PERSONAL_KEY` | see table above | yes |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` | `65536` | no (numeric cap; copy freely) |
+`~/.config/opencode/env` is a seed file only (NOT read by the binary, NOT sourced by
+the shell wrapper): keep the two provider keys there for the auth.json re-seed.
+`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` and the other V1 flags have no effect on V2.
 
 `~/.config/environment.d/` templates (names-only in `bootstrap/config/`):
 
@@ -401,3 +399,22 @@ bootstrap/
   `dotfiles/opencode/{autonomy.md,AGENTS.goal.md}`.
 * No secret values were copied into this bundle (verified: auth.json carries
   placeholders; environment.d templates carry names only).
+
+---
+
+## Service model (V2, decided 2026-10-12)
+
+Default = the shared background service (`opencode serve --service`), not
+`--standalone`. Measured with tmux from the sandbox HOME (fresh DB, linux-x64
+build, time from launch to the prompt on screen): standalone 1.73 s and 2.02 s,
+service cold start 2.06 s, service warm 1.52 s. With the real 3.5 GB DB the gap
+widens, because a standalone launch boots a private server (DB open, migrations,
+catalog load) every time while a warm service already did. One service is also one
+SQLite writer instead of one per open TUI.
+
+The service keeps the environment of the client that spawned it, so the pins must
+not depend on who spawns it: `~/.local/bin/opencode` exports `OPENCODE_DB` and
+`OPENCODE_DISABLE_MODELS_FETCH`, and `install.sh` step 3 persists the same two with
+`opencode service set env` (read at every spawn). Proxies are deliberately NOT
+persisted: the `opencode()` bash wrapper launches a proxied TUI session with
+`--standalone`, so a recovered direct connection needs no cleanup.

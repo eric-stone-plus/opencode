@@ -22,6 +22,14 @@
 #      only if all provider endpoints fail, fall back to the local causeway
 #      proxy chain (18880 -> 17878) for the session. Direct recovery
 #      automatically falls back to direct on the next launch.
+#   3. V2 service semantics: the TUI is a thin client and the shared background
+#      service (`opencode serve --service`) makes the model requests. The service
+#      keeps the environment of the client that spawned it, so a proxy exported by
+#      this wrapper would never reach an already running service. A proxied TUI
+#      launch therefore runs with --standalone (private server inheriting the
+#      proxy env); direct launches keep the default shared service, whose env is
+#      pinned by ~/.local/bin/opencode (OPENCODE_DB, OPENCODE_DISABLE_MODELS_FETCH)
+#      and by `opencode service set env` (bootstrap/install.sh step 3).
 #
 # DEVIATION LOG (the marker claim "UNMODIFIED machine-A text" is scoped below):
 #   2026-09-30 review F6 — probe set extended from two endpoints to three:
@@ -31,6 +39,13 @@
 #   opencode.jsonc provider.xiaomi-token-plan-cn.options.baseURL (no derived
 #   host assumption). Everything else stays machine-A verbatim.
 #
+#   2026-10-12 V2 re-base — probe set rewritten for the two live providers:
+#   deepseek https://api.deepseek.com/chat/completions and xiaomi
+#   https://token-plan-cn.xiaomimimo.com/v1/chat/completions (bailian/GLM probes
+#   dropped with those providers). The proxied branch passes --standalone for TUI
+#   launches (see 3 above). _oc_tty_reset/_oc_tty_flush_input and the
+#   18880 -> 17878 chain are unchanged.
+#
 # INSTALL (machine B):
 #   Option A (install.sh does this by default):
 #     append to ~/.bashrc, inside the interactive-only guard:
@@ -39,7 +54,7 @@
 #   Verify with: type opencode   (must show the wrapper function)
 #
 # DEPENDENCIES: bash (interactive), curl (egress probes), python3 (_oc_tty_flush_input).
-# DEGRADATION ON A BOX WITHOUT causeway: if none of the three probes succeeds and the
+# DEGRADATION ON A BOX WITHOUT causeway: if none of the two probes succeeds and the
 # 18880/17878 ports are dead, the wrapper runs `command opencode "$@"` directly
 # — correct behavior on a machine with healthy direct egress.
 #
@@ -99,19 +114,22 @@ _oc_tty_flush_input() {
     return 0
 }
 opencode() {
-    # 双端点任一通即直连：封 bigmodel 单挂时场景 B 的静默中途失败（2026-09-28 审计裁决）
-    # 2026-09-30 (review F6): third probe added for the default xiaomi provider
-    # (see DEVIATION LOG above) — any ONE reachable endpoint means direct is fine.
-    local ep_ali="https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
-    local ep_glm="https://open.bigmodel.cn/api/anthropic/v1/messages"
+    # 任一端点通即直连（2026-10-12 V2：只剩 deepseek 与 xiaomi 两个 provider）。
+    local ep_deepseek="https://api.deepseek.com/chat/completions"
     local ep_xiaomi="https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
     local rc
     _oc_tty_reset   # 启动前先清一遍：本终端可能残留着上一个硬死实例泄漏的鼠标模式
-    if _egress_direct_ok "$ep_ali" || _egress_direct_ok "$ep_glm" || _egress_direct_ok "$ep_xiaomi"; then
+    if _egress_direct_ok "$ep_deepseek" || _egress_direct_ok "$ep_xiaomi"; then
         command opencode "$@"
     elif _egress_18880_or_bail opencode; then
-        echo "opencode: 三端点直连皆不可达，本次会话走 $EGRESS_PROXY" >&2
-        _via_proxy opencode "$@"
+        echo "opencode: 两端点直连皆不可达，本次会话走 $EGRESS_PROXY" >&2
+        # V2 后台服务沿用“拉起它的客户端”的环境，代理变量传不进已在运行的服务；
+        # TUI 启动（无子命令）改用 --standalone，让私有服务器继承本次的代理环境。
+        if [[ $# -eq 0 || "$1" == -* || -d "$1" ]]; then
+            _via_proxy opencode --standalone "$@"
+        else
+            _via_proxy opencode "$@"
+        fi
     else
         command opencode "$@"
     fi
