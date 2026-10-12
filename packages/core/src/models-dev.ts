@@ -84,13 +84,7 @@ export type Snapshot = {
 
 function nativePackage(provider: SourceProvider, model?: SourceModel) {
   const npm = model?.provider?.npm ?? provider.npm
-  return (
-    AISDKNative.native(npm, {
-      providerID: provider.id,
-      modelID: model?.id,
-      shape: model?.provider?.shape,
-    }) ?? Provider.aisdk(npm)
-  )
+  return AISDKNative.native(npm, { providerID: provider.id, modelID: model?.id }) ?? Provider.aisdk(npm)
 }
 
 function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
@@ -104,9 +98,7 @@ function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
       name: item.name,
       activation: "auto",
       package: packageName,
-      ...(item.api && packageName !== "@opencode/ai/providers/cloudflare-workers-ai"
-        ? { settings: { baseURL: item.api } }
-        : {}),
+      ...(item.api ? { settings: { baseURL: item.api } } : {}),
     } satisfies Provider.Info
     const models: Model.Info[] = []
     for (const model of Object.values(item.models)) {

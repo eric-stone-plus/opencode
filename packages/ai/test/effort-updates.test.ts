@@ -4,9 +4,7 @@ import { LLM, Message, ToolCallPart } from "../src/index.js"
 import { Auth, LLMClient } from "../src/route.js"
 import { compileRequest } from "../src/route/client.js"
 import { AnthropicMessages } from "../src/protocols/anthropic-messages.js"
-import { OpenAIResponses } from "../src/protocols/openai-responses.js"
-import { Gemini } from "../src/protocols/gemini.js"
-import { AmazonBedrockMantle, GoogleVertexMessages, OpenAI } from "../src/providers.js"
+import { OpenAIChat } from "../src/protocols/openai-chat.js"
 import { applyEffortUpdates } from "../src/effort-updates.js"
 import { it, testEffect } from "./lib/effect.js"
 import { dynamicResponse } from "./lib/http.js"
@@ -17,22 +15,13 @@ const anthropic = (id: string, compatibility?: { readonly supportsEffortUpdates?
     .with({ endpoint: { baseURL: "https://api.anthropic.test/v1/" }, auth: Auth.header("x-api-key", "test") })
     .model({ id, compatibility })
 
-const openai = (id: string, compatibility?: { readonly supportsEffortUpdates?: boolean }) =>
-  OpenAIResponses.route
-    .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-    .model({ id, compatibility })
-
 const opus5 = anthropic("claude-opus-5")
-const astra = openai("gpt-6-astra")
 
 const lowFromHigh = Message.effort({ effort: "low", previous: "high" })
 const conversation = [Message.user("Before."), lowFromHigh, Message.user("After.")]
 
 const systemMessages = (body: AnthropicMessages.AnthropicMessagesBody) =>
   body.messages.filter((message) => message.role === "system")
-
-const updates = (body: OpenAIResponses.OpenAIResponsesBody) =>
-  body.input.filter((item) => "type" in item && item.type === "configuration_update")
 
 describe("applyEffortUpdates", () => {
   test("keeps the request identity without markers and for protocols that lower them", () => {
@@ -45,12 +34,9 @@ describe("applyEffortUpdates", () => {
 
   it.effect("compiles markers away for protocols without per-message effort", () =>
     Effect.gen(function* () {
-      const model = Gemini.route
-        .with({
-          endpoint: { baseURL: "https://generativelanguage.test/v1beta/" },
-          auth: Auth.header("x-goog-api-key", "test"),
-        })
-        .model({ id: "gemini-3.5-flash" })
+      const model = OpenAIChat.route
+        .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
+        .model({ id: "gpt-4o-mini" })
       const withMarkers = yield* compileRequest(LLM.request({ model, messages: conversation }))
       const withoutMarkers = yield* compileRequest(
         LLM.request({ model, messages: [Message.user("Before."), Message.user("After.")] }),
@@ -281,279 +267,6 @@ describe("Anthropic Messages effort updates", () => {
 
       expect(systemMessages(betweenTools.body)).toHaveLength(0)
       expect(betweenTools.body.output_config).toEqual({ effort: "low" })
-    }),
-  )
-
-  it.effect("strips markers for Opus 5.0 on Bedrock Mantle Messages while lowering Opus 5.5", () =>
-    Effect.gen(function* () {
-      const mantle = AmazonBedrockMantle.configure({ apiKey: "test", region: "us-east-1" })
-      const opus50 = yield* compileRequest(
-        LLM.request({
-          model: mantle.messages("anthropic.claude-opus-5"),
-          messages: conversation,
-          providerOptions: { effort: "low" },
-        }),
-      )
-      const opus55 = yield* compileRequest(
-        LLM.request({
-          model: mantle.messages("anthropic.claude-opus-5-5"),
-          messages: conversation,
-          providerOptions: { effort: "low" },
-        }),
-      )
-
-      expect(systemMessages(opus50.body)).toHaveLength(0)
-      expect(opus50.body.output_config).toEqual({ effort: "low" })
-      expect(systemMessages(opus55.body)).toEqual([{ role: "system", content: [], output_config: { effort: "low" } }])
-      expect(opus55.body.output_config).toEqual({ effort: "high" })
-    }),
-  )
-
-  it.effect("lowers markers on the Vertex Anthropic route for models that support them", () =>
-    Effect.gen(function* () {
-      const vertex = GoogleVertexMessages.configure({ accessToken: "test", location: "global", project: "test" })
-      const opus5 = yield* compileRequest(
-        LLM.request({
-          model: vertex.model("claude-opus-5"),
-          messages: conversation,
-          providerOptions: { effort: "low" },
-        }),
-      )
-      const opus48 = yield* compileRequest(
-        LLM.request({
-          model: vertex.model("claude-opus-4-8"),
-          messages: conversation,
-          providerOptions: { effort: "low" },
-        }),
-      )
-
-      expect(systemMessages(opus5.body)).toEqual([{ role: "system", content: [], output_config: { effort: "low" } }])
-      expect(opus5.body.output_config).toEqual({ effort: "high" })
-      expect(systemMessages(opus48.body)).toHaveLength(0)
-      expect(opus48.body.output_config).toEqual({ effort: "low" })
-    }),
-  )
-})
-
-describe("OpenAI Responses effort updates", () => {
-  it.effect("lowers markers to configuration_update items and freezes reasoning.effort", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({ model: astra, messages: conversation, providerOptions: { reasoningEffort: "low" } }),
-      )
-
-      expect(prepared.body.reasoning).toEqual({ effort: "high" })
-      expect(prepared.body.input).toEqual([
-        { type: "message", role: "user", content: [{ type: "input_text", text: "Before." }] },
-        { type: "configuration_update", reasoning: { effort: "low" } },
-        { type: "message", role: "user", content: [{ type: "input_text", text: "After." }] },
-      ])
-    }),
-  )
-
-  it.effect("coalesces consecutive updates so the newest wins", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model: astra,
-          messages: [
-            Message.user("Before."),
-            Message.effort({ effort: "low", previous: "medium" }),
-            Message.effort({ effort: "xhigh", previous: "low" }),
-            Message.user("After."),
-          ],
-          providerOptions: { reasoningEffort: "xhigh" },
-        }),
-      )
-
-      expect(prepared.body.reasoning).toEqual({ effort: "medium" })
-      expect(prepared.body.input).toEqual([
-        { type: "message", role: "user", content: [{ type: "input_text", text: "Before." }] },
-        { type: "configuration_update", reasoning: { effort: "xhigh" } },
-        { type: "message", role: "user", content: [{ type: "input_text", text: "After." }] },
-      ])
-    }),
-  )
-
-  it.effect("omits reasoning.effort for the model default and sends `medium` for a switch back to it", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model: astra,
-          messages: [
-            Message.user("One."),
-            Message.effort({ effort: "low" }),
-            Message.user("Two."),
-            Message.effort({ previous: "low" }),
-            Message.user("Three."),
-          ],
-        }),
-      )
-
-      expect(prepared.body.reasoning).toBeUndefined()
-      expect(updates(prepared.body)).toEqual([
-        { type: "configuration_update", reasoning: { effort: "low" } },
-        { type: "configuration_update", reasoning: { effort: "medium" } },
-      ])
-    }),
-  )
-
-  it.effect("falls back to a plain top-level effort when history drifted from the current effort", () =>
-    Effect.gen(function* () {
-      const drifted = yield* compileRequest(
-        LLM.request({ model: astra, messages: conversation, providerOptions: { reasoningEffort: "xhigh" } }),
-      )
-      const plain = yield* compileRequest(
-        LLM.request({
-          model: astra,
-          messages: [Message.user("Before."), Message.user("After.")],
-          providerOptions: { reasoningEffort: "xhigh" },
-        }),
-      )
-
-      expect(drifted.body).toEqual(plain.body)
-      expect(drifted.body.reasoning).toEqual({ effort: "xhigh" })
-    }),
-  )
-
-  it.effect("strips markers when automatic context management is enabled", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model: astra,
-          messages: conversation,
-          providerOptions: { reasoningEffort: "low", contextManagement: [{ type: "compaction" }] },
-        }),
-      )
-
-      expect(updates(prepared.body)).toEqual([])
-      expect(prepared.body.reasoning).toEqual({ effort: "low" })
-      expect(prepared.body.context_management).toEqual([{ type: "compaction" }])
-    }),
-  )
-
-  it.effect("strips markers when the body overlay selects pro reasoning mode", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model: OpenAI.configure({ apiKey: "fixture", http: { body: { reasoning: { mode: "pro" } } } }).responses(
-            "gpt-6-sol",
-          ),
-          messages: conversation,
-          providerOptions: { reasoningEffort: "low" },
-        }),
-      )
-
-      expect(updates(prepared.body)).toEqual([])
-      expect(prepared.body.reasoning).toEqual({ effort: "low" })
-    }),
-  )
-
-  for (const [id, supported] of [
-    ["gpt-6-astra", true],
-    ["openai/gpt-6-astra", true],
-    ["gpt-6-sol", true],
-    ["openai/gpt-6-sol", true],
-    ["gpt-6-luna", true],
-    ["openai/gpt-6-luna", true],
-    ["gpt-6", true],
-    ["gpt-6.1-sol", true],
-    ["openai/gpt-6.1-sol", true],
-    ["GPT-6.1-SOL", true],
-    ["gpt-6-astra-2026-09-01", true],
-    ["gpt-6-sol-pro", true],
-    ["gpt-6-luna-pro", true],
-    ["gpt-6-sol-fast", true],
-    ["gpt-7", true],
-    ["openai/gpt-7.2-new-family", true],
-    ["gpt-10.1", true],
-    ["gpt-5", false],
-    ["gpt-5.6-sol", false],
-    ["gpt-5.10", false],
-    ["not-gpt-6-sol", false],
-    ["gpt-6foo", false],
-    ["gpt-6.x-sol", false],
-    ["future-model", false],
-  ] as const) {
-    it.effect(`${supported ? "lowers" : "strips"} markers for ${id}`, () =>
-      Effect.gen(function* () {
-        const prepared = yield* compileRequest(
-          LLM.request({ model: openai(id), messages: conversation, providerOptions: { reasoningEffort: "low" } }),
-        )
-
-        expect(updates(prepared.body)).toHaveLength(supported ? 1 : 0)
-        expect(prepared.body.reasoning).toEqual({ effort: supported ? "high" : "low" })
-      }),
-    )
-  }
-
-  it.effect("honors the compatibility override in both directions", () =>
-    Effect.gen(function* () {
-      const enabled = yield* compileRequest(
-        LLM.request({
-          model: openai("gpt-5.5", { supportsEffortUpdates: true }),
-          messages: conversation,
-          providerOptions: { reasoningEffort: "low" },
-        }),
-      )
-      const disabled = yield* compileRequest(
-        LLM.request({
-          model: openai("gpt-6-astra", { supportsEffortUpdates: false }),
-          messages: conversation,
-          providerOptions: { reasoningEffort: "low" },
-        }),
-      )
-
-      expect(updates(enabled.body)).toHaveLength(1)
-      expect(updates(disabled.body)).toHaveLength(0)
-    }),
-  )
-
-  const checkpoint = { type: "compaction", id: "cmp_1", encrypted_content: "opaque" }
-  const compactRequest = LLM.request({
-    model: OpenAI.configure({ apiKey: "fixture" }).responses("gpt-6-astra"),
-    messages: conversation,
-    providerOptions: { reasoningEffort: "low" },
-  })
-
-  testEffect(
-    dynamicResponse(({ text, respond }) =>
-      Effect.sync(() => {
-        const body = JSON.parse(text)
-        expect(body.reasoning).toEqual({ effort: "high" })
-        expect(body.input).toEqual([
-          { type: "message", role: "user", content: [{ type: "input_text", text: "Before." }] },
-          { type: "configuration_update", reasoning: { effort: "low" } },
-          { type: "message", role: "user", content: [{ type: "input_text", text: "After." }] },
-          { type: "compaction_trigger" },
-        ])
-        return respond(sseEvents({ type: "response.completed", response: { id: "resp_1", output: [checkpoint] } }), {
-          headers: { "content-type": "text/event-stream" },
-        })
-      }),
-    ),
-  ).effect("keeps configuration updates in the checkpoint body", () =>
-    Effect.gen(function* () {
-      const result = yield* LLMClient.compact(compactRequest, { mechanism: "trigger" })
-      expect(result.checkpoint.encrypted).toBe("opaque")
-    }),
-  )
-
-  testEffect(
-    dynamicResponse(({ request, text, respond }) =>
-      Effect.sync(() => {
-        expect(new URL(request.url).pathname).toEndWith("/responses/compact")
-        expect(JSON.parse(text).input).toEqual([
-          { type: "message", role: "user", content: [{ type: "input_text", text: "Before." }] },
-          { type: "message", role: "user", content: [{ type: "input_text", text: "After." }] },
-        ])
-        return respond(JSON.stringify({ object: "response.compaction", output: [checkpoint] }))
-      }),
-    ),
-  ).effect("drops markers from the compaction endpoint body", () =>
-    Effect.gen(function* () {
-      const result = yield* LLMClient.compact(compactRequest, { mechanism: "endpoint" })
-      expect(result.replacement.map((message) => message.content[0]?.type)).toEqual(["compaction"])
     }),
   )
 })

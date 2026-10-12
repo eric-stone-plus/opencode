@@ -15,10 +15,7 @@ import {
   ToolDefinition,
   Usage,
 } from "../../src/index.js"
-import * as Azure from "../../src/providers/azure.js"
-import * as OpenAI from "../../src/providers/openai.js"
 import * as OpenAICompatible from "../../src/providers/openai-compatible.js"
-import * as XAI from "../../src/providers/xai.js"
 import * as OpenAIChat from "../../src/protocols/openai-chat.js"
 import { ProviderShared } from "../../src/protocols/shared.js"
 import { Auth, LLMClient } from "../../src/route.js"
@@ -234,26 +231,13 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
-  it.effect("maps OpenAI provider options to Chat options", () =>
-    Effect.gen(function* () {
-      const prepared = yield* compileRequest(
-        LLM.request({
-          model: OpenAI.configure({ baseURL: "https://api.openai.test/v1/", apiKey: "test" }).chat("gpt-4o-mini"),
-          prompt: "think",
-          providerOptions: { reasoningEffort: "max" },
-        }),
-      )
-
-      expect(prepared.body.store).toBe(false)
-      expect(prepared.body.reasoning_effort).toBe("max")
-    }),
-  )
-
   it.effect("keeps valid Chat options when a sibling option is malformed", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
         LLM.request({
-          model: OpenAI.configure({ baseURL: "https://api.openai.test/v1/", apiKey: "test" }).chat("gpt-4o-mini"),
+          model: OpenAICompatible.configure({ baseURL: "https://api.openai.test/v1/", apiKey: "test" }).model(
+            "gpt-4o-mini",
+          ),
           prompt: "think",
           providerOptions: { store: true, reasoningEffort: "max", topLogprobs: 25 },
         }),
@@ -312,31 +296,6 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
-  it.effect("maps the xAI Chat prompt cache key to conversation affinity header only", () =>
-    LLMClient.generate(
-      LLM.request({
-        model: XAI.configure({ apiKey: "test", baseURL: "https://api.x.ai/v1" }).chat("grok-4.5"),
-        prompt: "Hello",
-        promptCacheKey: "session_123",
-      }),
-    ).pipe(
-      Effect.provide(
-        dynamicResponse((input) =>
-          Effect.gen(function* () {
-            const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.headers.get("x-grok-conv-id")).toBe("session_123")
-            const body = decodeJson(yield* Effect.promise(() => web.text()))
-            // Chat uses the header; prompt_cache_key is Responses-only.
-            expect(ProviderShared.isRecord(body) ? body.prompt_cache_key : undefined).toBeUndefined()
-            return input.respond(sseEvents(deltaChunk({}, "stop")), {
-              headers: { "content-type": "text/event-stream" },
-            })
-          }),
-        ),
-      ),
-    ),
-  )
-
   it.effect("passes through custom OpenAI-compatible reasoning effort strings", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
@@ -364,32 +323,6 @@ describe("OpenAI Chat route", () => {
           Effect.gen(function* () {
             const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
             expect(web.url).toBe("https://api.openai.test/v1/chat/completions?api-version=v1")
-            return input.respond(sseEvents(deltaChunk({}, "stop")), {
-              headers: { "content-type": "text/event-stream" },
-            })
-          }),
-        ),
-      ),
-    ),
-  )
-
-  it.effect("uses Azure api-key header for static OpenAI Chat keys", () =>
-    LLMClient.generate(
-      LLMRequest.update(request, {
-        model: Azure.configure({
-          baseURL: "https://opencode-test.openai.azure.com/openai/",
-          apiKey: "azure-key",
-          headers: { authorization: "Bearer stale" },
-        }).chat("gpt-4o-mini"),
-      }),
-    ).pipe(
-      Effect.provide(
-        dynamicResponse((input) =>
-          Effect.gen(function* () {
-            const web = yield* HttpClientRequest.toWeb(input.request).pipe(Effect.orDie)
-            expect(web.url).toBe("https://opencode-test.openai.azure.com/openai/v1/chat/completions?api-version=v1")
-            expect(web.headers.get("api-key")).toBe("azure-key")
-            expect(web.headers.get("authorization")).toBeNull()
             return input.respond(sseEvents(deltaChunk({}, "stop")), {
               headers: { "content-type": "text/event-stream" },
             })
@@ -511,32 +444,23 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
-  it.effect("limits OpenAI and Azure Chat tool call IDs to 40 characters", () =>
+  it.effect("limits OpenAI Chat tool call IDs to 40 characters", () =>
     Effect.gen(function* () {
       const id = `call_${"a".repeat(48)}`
-      const models = [
-        model,
-        Azure.configure({ baseURL: "https://opencode-test.openai.azure.com/openai/", apiKey: "test" }).chat("gpt-4o"),
-      ]
-
-      yield* Effect.forEach(models, (selected) =>
-        Effect.gen(function* () {
-          const prepared = yield* compileRequest(
-            LLM.request({
-              model: selected,
-              messages: [
-                Message.assistant([ToolCallPart.make({ id, name: "lookup", input: {} })]),
-                Message.tool({ id, name: "lookup", result: "Sunny" }),
-              ],
-            }),
-          )
-
-          expect(prepared.body.messages).toMatchObject([
-            { role: "assistant", tool_calls: [{ id: id.slice(0, 40) }] },
-            { role: "tool", tool_call_id: id.slice(0, 40) },
-          ])
+      const prepared = yield* compileRequest(
+        LLM.request({
+          model,
+          messages: [
+            Message.assistant([ToolCallPart.make({ id, name: "lookup", input: {} })]),
+            Message.tool({ id, name: "lookup", result: "Sunny" }),
+          ],
         }),
       )
+
+      expect(prepared.body.messages).toMatchObject([
+        { role: "assistant", tool_calls: [{ id: id.slice(0, 40) }] },
+        { role: "tool", tool_call_id: id.slice(0, 40) },
+      ])
     }),
   )
 

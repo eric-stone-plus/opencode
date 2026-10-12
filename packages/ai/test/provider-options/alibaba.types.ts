@@ -16,10 +16,6 @@ LLM.request({
   model: provider.messages("qwen3.7-plus"),
   providerOptions: { thinking: { type: "enabled", budgetTokens: 512 } },
 })
-LLM.request({
-  model: provider.responses("qwen3.8-max"),
-  providerOptions: { reasoningEffort: "low", enableThinking: true, store: true, previousResponseId: "resp_previous" },
-})
 // @ts-expect-error Region or complete base URL is required.
 Alibaba.configure({ apiKey: "fixture" })
 LLM.request({
@@ -31,9 +27,4 @@ LLM.request({
   model: provider.messages("qwen3.8-max"),
   // @ts-expect-error Messages uses effort.
   providerOptions: { reasoningEffort: "high" },
-})
-LLM.request({
-  model: provider.responses("qwen3.8-max"),
-  // @ts-expect-error Responses does not use Chat thinking budgets.
-  providerOptions: { thinkingBudget: 512 },
 })

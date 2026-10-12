@@ -2,7 +2,7 @@ import { expect } from "bun:test"
 import { Effect, Schema } from "effect"
 import { LLM, LLMRequest, Message } from "../../src/index.js"
 import { LLMClient } from "../../src/route/client.js"
-import { Anthropic, GoogleVertexMessages } from "../../src/providers/index.js"
+import { Anthropic } from "../../src/providers/index.js"
 import { testEffect } from "../lib/effect.js"
 import { dynamicResponse, fixedResponse } from "../lib/http.js"
 import { sseEvents } from "../lib/sse.js"
@@ -59,10 +59,7 @@ for (const fixture of [
   )
 }
 
-for (const model of [
-  Anthropic.configure({ apiKey: "test" }).model("claude-opus-4-6"),
-  GoogleVertexMessages.configure({ accessToken: "test", project: "test" }).model("claude-opus-4-6"),
-]) {
+for (const model of [Anthropic.configure({ apiKey: "test" }).model("claude-opus-4-6")]) {
   for (const summary of ["Summary of the conversation", null]) {
     const block = { type: "compaction", content: summary }
     testEffect(

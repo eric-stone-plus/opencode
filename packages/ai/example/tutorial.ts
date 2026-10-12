@@ -1,34 +1,29 @@
 import { Config, Effect, Formatter, Schema, Stream } from "effect"
-import { NodeFileSystem } from "@effect/platform-node"
-import { AIClient, Image, LLM, LLMRequest, Media, Message, ProviderID, Tool, ToolRuntime } from "@opencode/ai"
+import { AIClient, LLM, LLMRequest, Message, ProviderID, Tool, ToolRuntime } from "@opencode/ai"
 import { Route, Auth, Endpoint, Framing, Protocol } from "@opencode/ai/route"
-import { OpenAI } from "@opencode/ai/providers"
+import { DeepSeek } from "@opencode/ai/providers"
 
 /**
  * A runnable walkthrough of the LLM package use-site API.
  *
- * Run from `packages/ai` with an OpenAI key in the environment:
+ * Run from `packages/ai` with a DeepSeek key in the environment:
  *
- *   OPENAI_API_KEY=... bun example/tutorial.ts
+ *   DEEPSEEK_API_KEY=... bun example/tutorial.ts
  *
  * The file is intentionally written as a normal TypeScript program. You can
  * hover imports and local values to see how the public API is typed.
  */
 
-const apiKey = Config.Redacted("OPENAI_API_KEY")
+const apiKey = Config.Redacted("DEEPSEEK_API_KEY")
 
 // 1. Configure a provider. The configured facade records provider identity,
-// deployment options, authentication, and defaults. Per-modality selectors pick
-// the API: `.responses(...)` / `.chat(...)` for LLM calls and `.image(...)` for
-// image generation.
-const openai = OpenAI.configure({
+// deployment options, authentication, and defaults. Providers with several APIs
+// expose one selector per API (for example `.chat(...)` and `.messages(...)`).
+const deepseek = DeepSeek.configure({
   apiKey,
   generation: { maxTokens: 160 },
-  providerOptions: {
-    store: false,
-  },
 })
-const model = openai.responses("gpt-4o-mini")
+const model = deepseek.model("deepseek-chat")
 
 // 2. Build a provider-neutral request. This is useful when reusing one request
 // across generate and stream examples.
@@ -39,8 +34,7 @@ const model = openai.responses("gpt-4o-mini")
 //     penalties, seed, and stop sequences.
 //   - `promptCacheKey`: stable cache affinity for protocols that support it.
 //   - `providerOptions`: model-typed provider-native behavior. For example,
-//     OpenAI store behavior, Anthropic thinking, Gemini thinking config, or
-//     OpenRouter routing/reasoning.
+//     reasoning effort or Anthropic thinking.
 //   - `http`: last-resort serializable overlays for final request body, headers,
 //     and query params. Prefer typed `providerOptions` when a field is stable.
 //
@@ -213,25 +207,6 @@ const FakeEcho = {
   }),
 }
 
-// 8. Image generation uses the same facade and the same request/generate shape.
-// `response.image` is a `Media.Asset`: bytes decode lazily and are cached, and
-// `Media.write` persists them through the Effect `FileSystem`.
-const generateImage = Effect.gen(function* () {
-  const response = yield* Image.generate({
-    model: openai.image("gpt-image-1-mini"),
-    prompt: "A flat black circle centered on a plain white background.",
-    size: "1024x1024",
-    format: "jpeg",
-    providerOptions: { quality: "low" },
-  })
-
-  console.log("\n== image ==")
-  console.log("media type:", response.image.mediaType)
-  console.log("bytes:", (yield* response.image.bytes()).byteLength)
-  console.log("usage", Formatter.formatJson(response.usage, { space: 2 }))
-  yield* Media.write(response.image, "tutorial-image.jpg").pipe(Effect.provide(NodeFileSystem.layer))
-})
-
 // Provide every modality client and the HTTP request executor once with
 // `AIClient.layer` (`AIClient.layerWith(executor)` swaps the executor). Keep one
 // path enabled at a time so the tutorial can demonstrate generate, stream, or
@@ -242,7 +217,6 @@ const program = Effect.gen(function* () {
   // yield* streamText
   // yield* generateStructuredObject
   // yield* generateDynamicObject.pipe(Effect.andThen((response) => Effect.sync(() => console.log(response.object))))
-  // yield* generateImage
   yield* streamWithTools
 }).pipe(Effect.provide(AIClient.layer))
 

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   AIError,
   CompactionPart,
-  CompactionCheckpointResponse,
   HttpContext,
   LLMEvent,
   LLMRequest,
@@ -17,7 +16,7 @@ import {
   UnknownProviderError,
 } from "@opencode/ai"
 import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
-import { AnthropicMessages, OpenAIResponses } from "@opencode/ai/protocols"
+import { AnthropicMessages } from "@opencode/ai/protocols"
 import { compileRequest } from "@opencode/ai/route/client"
 import { TestLLM } from "@opencode/ai/testing"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
@@ -54,7 +53,6 @@ import { SessionUsage } from "@opencode/core/session/usage"
 import { PluginSupervisor } from "@opencode/core/plugin/supervisor"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
-import { OptimizePlugin } from "@opencode/core/plugin/optimize"
 import { IdentityPlugin } from "@opencode/core/plugin/identity"
 import { QuestionTool } from "@opencode/core/tool/plugin/question"
 import { Agent } from "@opencode/core/agent"
@@ -119,7 +117,6 @@ const identity = (providerID: string, id: string) =>
   ["# Your Model", `- Name: ${id}`, `- Provider ID: ${providerID}`, `- Model ID: ${id}`].join("\n")
 const fakeIdentity = identity("fake", "fake-model")
 const replacementIdentity = identity("fake", "replacement")
-const gptIdentity = identity("openai", "gpt-5")
 const replacementModel = testModel("replacement")
 const compactModel = testModel("compact", { context: 4_000, output: 50 })
 const fullOutputModel = testModel("full-output", { context: 262_144, output: 262_144 })
@@ -530,9 +527,6 @@ const setup = Effect.gen(function* () {
     model: modelHost(models),
     provider: noProviders,
     session: { hook: (name, callback) => hooks.register("session", name, callback) },
-  })
-  yield* Effect.forEach(OptimizePlugin.Plugins, (plugin) => plugin.effect(pluginHost), {
-    discard: true,
   })
   yield* IdentityPlugin.Plugin.effect(pluginHost)
   yield* agents.transform((editor) => {
@@ -1738,41 +1732,6 @@ describe("SessionRunnerLLM", () => {
     expect(yield* s.messages).toHaveLength(3)
   })
 
-  scenario("uses the selected model family prompt when the agent does not override it", function* (s) {
-    s.currentModel = LanguageModel.make({ id: "gpt-5", provider: "openai", route: OpenAIChat.route })
-    yield* s.admit("First")
-
-    yield* s.llm.push(TestLLM.text("Done", "text-provider-prompt"))
-    yield* s.resume
-
-    expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual([
-      expect.stringContaining("# Delegation"),
-      gptIdentity,
-      "Initial context",
-    ])
-  })
-
-  scenario("uses the selected model family prompt when the agent system override is empty", function* (s) {
-    s.currentModel = LanguageModel.make({ id: "gpt-5", provider: "openai", route: OpenAIChat.route })
-    const agent = yield* Agent.Service
-    yield* agent.transform((editor) =>
-      editor.update(Agent.ID.make("build"), (agent) => {
-        agent.system = ""
-        agent.mode = "primary"
-      }),
-    )
-    yield* s.admit("First")
-
-    yield* s.llm.push(TestLLM.text("Done", "text-empty-agent-system"))
-    yield* s.resume
-
-    expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual([
-      expect.stringContaining("# Delegation"),
-      gptIdentity,
-      "Initial context",
-    ])
-  })
-
   scenario("includes the effective default agent system before durable context", function* (s) {
     const agent = yield* Agent.Service
     yield* agent.transform((editor) =>
@@ -2490,7 +2449,7 @@ describe("SessionRunnerLLM", () => {
     })
   })
 
-  for (const route of [OpenAIChat.route, OpenAIResponses.route, AnthropicMessages.route]) {
+  for (const route of [OpenAIChat.route, AnthropicMessages.route]) {
     for (const reason of ["manual", "auto"] as const) {
       scenario(`preserves the session request prefix during ${reason} compaction (${route.id})`, function* (s) {
         const agents = yield* Agent.Service
@@ -2581,7 +2540,7 @@ describe("SessionRunnerLLM", () => {
         // Compare wire content without the cache breakpoints that move to the new final message.
         const before = yield* compileRequest(LLMRequest.update(normal, { cache: "none" }))
         const after = yield* compileRequest(LLMRequest.update(compact, { cache: "none" }))
-        const key = route === OpenAIResponses.route ? "input" : "messages"
+        const key = "messages"
         const input = Schema.decodeUnknownSync(Schema.Array(Schema.Unknown))
         const prefix = input(before.body[key])
         expect(input(after.body[key]).slice(0, prefix.length)).toEqual([...prefix])
@@ -3131,88 +3090,6 @@ describe("SessionRunnerLLM", () => {
       summary: "## Objective\n- Preserve the updated task",
       recent: `[User]: ${"Newest exact request ".repeat(180)}`,
     })
-  })
-
-  scenario("automatically persists native windows, retains earlier users, and waits for fresh usage", function* (s) {
-    s.currentModel = LanguageModel.make({ id: "native", provider: "openai", route: OpenAIResponses.route })
-    modelLimits.set("native", { context: 11_000, output: 1_000 })
-    s.compaction = { type: "native" }
-    const agents = yield* Agent.Service
-    yield* agents.transform((editor) =>
-      editor.update(Agent.defaultID, (agent) => {
-        agent.steps = 2
-      }),
-    )
-    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "before-native", 10_000))
-    yield* s.runPrompt("First real request")
-    const checkpoint = (encrypted: string) =>
-      CompactionCheckpointResponse.make({
-        responseID: `resp_${encrypted}`,
-        checkpoint: { type: "compaction", provider: s.currentModel.provider, encrypted },
-      })
-    yield* s.llm.push(
-      checkpoint("first"),
-      TestLLM.tool("echo-native", "echo", { text: "continue" }),
-      TestLLM.text("No usage yet", "no-usage"),
-    )
-    yield* s.runPrompt("Second real request")
-    expect(s.requests).toHaveLength(4)
-    expect(s.requests[2].toolChoice).not.toEqual({ type: "none" })
-    expect(s.executions).toEqual(["continue"])
-    expect(JSON.stringify(s.requests[2].messages)).toContain("first")
-    const installed = (yield* s.messages).filter((message) => message.type === "compaction")
-    expect(installed).toMatchObject([{ status: "completed", reason: "auto", providerContext: { version: 1 } }])
-    // New input without a post-checkpoint usage anchor must not retrigger compaction.
-    yield* s.llm.push(TestLLM.textWithUsage("Measured", "measured", 10_000))
-    yield* s.runPrompt("Third real request")
-    expect(s.requests).toHaveLength(5)
-    yield* s.llm.push(checkpoint("second"), TestLLM.textWithUsage("Continued", "continued", 10_000))
-    yield* s.runPrompt("Fourth real request")
-    expect(s.requests).toHaveLength(7)
-    expect(userTexts(s.requests[6])).toEqual([
-      "First real request",
-      "Second real request",
-      "Third real request",
-      "Fourth real request",
-    ])
-    expect(JSON.stringify(s.requests[6].messages)).not.toContain('"encrypted":"first"')
-    const compaction = yield* SessionCompaction.Service
-    yield* compaction.transform((editor) => editor.configure({ auto: false }))
-    yield* replaySessionProjection(sessionID)
-    yield* s.llm.push(TestLLM.text("Disabled auto still replays", "disabled"))
-    yield* s.runPrompt("Fifth real request")
-    expect(s.requests).toHaveLength(8)
-    expect(JSON.stringify(s.requests[7].messages)).toContain('"encrypted":"second"')
-  })
-
-  scenario("recovers an overflowing native window with another native compaction", function* (s) {
-    s.currentModel = LanguageModel.make({ id: "native", provider: "openai", route: OpenAIResponses.route })
-    modelLimits.set("native", { context: 11_000, output: 1_000 })
-    s.compaction = { type: "native" }
-    const checkpoint = (encrypted: string) =>
-      CompactionCheckpointResponse.make({
-        responseID: `resp_${encrypted}`,
-        checkpoint: { type: "compaction", provider: s.currentModel.provider, encrypted },
-      })
-    yield* s.llm.push(TestLLM.textWithUsage("Earlier answer", "before-native", 10_000))
-    yield* s.runPrompt("Original durable request")
-    yield* s.llm.push(checkpoint("native-window"), TestLLM.text("After native", "after-native"))
-    yield* s.runPrompt("Before native checkpoint")
-    s.requests.length = 0
-    yield* s.llm.push(
-      [LLMEvent.providerError({ message: "prompt too long", classification: "context-overflow" })],
-      checkpoint("recovered-window"),
-      TestLLM.text("Recovered", "recovered"),
-    )
-    yield* s.runPrompt("Overflow request")
-    expect(s.requests).toHaveLength(3)
-    expect(JSON.stringify(s.requests[0].messages)).toContain("native-window")
-    expect(JSON.stringify(s.requests[2].messages)).toContain("recovered-window")
-    expect(JSON.stringify(s.requests[2].messages)).not.toContain('"encrypted":"native-window"')
-    expect(yield* s.context).toMatchObject([
-      { type: "compaction", status: "completed", providerContext: { version: 1 } },
-      { type: "assistant" },
-    ])
   })
 
   scenario("does not compact immediately when the advertised output limit fills the context", function* (s) {

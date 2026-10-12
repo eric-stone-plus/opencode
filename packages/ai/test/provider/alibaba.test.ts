@@ -17,7 +17,6 @@ const tool = ToolDefinition.make({
 const paths = {
   chat: "/compatible-mode/v1/chat/completions",
   messages: "/apps/anthropic/v1/messages",
-  responses: "/compatible-mode/v1/responses",
 }
 
 it.effect("Alibaba owns regional shared and workspace-specific endpoints", () =>
@@ -32,7 +31,7 @@ it.effect("Alibaba owns regional shared and workspace-specific endpoints", () =>
     ]) {
       const provider = Alibaba.configure({ region, workspaceID: "llm-fixture", apiKey: "fixture" })
       expect(provider.model).toBe(provider.chat)
-      for (const api of ["chat", "messages", "responses"] as const) {
+      for (const api of ["chat", "messages"] as const) {
         const model = provider[api]("qwen-plus-us")
         const request = LLM.request({ model, prompt: "Hello" })
         const compiled = yield* compileRequest(request)
@@ -63,7 +62,7 @@ it.effect("Alibaba owns regional shared and workspace-specific endpoints", () =>
       ["us-east-1", "dashscope-us.aliyuncs.com"],
     ]) {
       const provider = Alibaba.configure({ region, apiKey: "fixture" })
-      for (const api of ["chat", "messages", "responses"] as const) {
+      for (const api of ["chat", "messages"] as const) {
         const request = LLM.request({ model: provider[api]("qwen3.8-max") })
         const compiled = yield* compileRequest(request)
         expect(Endpoint.render(request.model.route.endpoint, { request, body: compiled.body }).toString()).toBe(
@@ -88,7 +87,7 @@ test("Alibaba requires explicit placement and supports complete base URL overrid
     { region: "future-region", workspaceID: "ignored", baseURL: "https://gateway.example/prefix" },
   ]) {
     const provider = Alibaba.configure(config)
-    for (const api of ["chat", "messages", "responses"] as const)
+    for (const api of ["chat", "messages"] as const)
       expect(provider[api]("unchanged-id").route.endpoint.baseURL).toBe(config.baseURL)
   }
   expect(
@@ -117,7 +116,7 @@ it.effect("Alibaba resolves explicit auth, API keys, and regional environment cr
       },
     ]) {
       const provider = Alibaba.configure({ region: "ap-southeast-1", ...item.config })
-      for (const api of ["chat", "messages", "responses"] as const) {
+      for (const api of ["chat", "messages"] as const) {
         const request = LLM.request({ model: provider[api]("qwen3.8-max") })
         const headers = yield* request.model.route.auth
           .apply({ request, method: "POST", url: "https://fixture", body: "{}", headers: Headers.empty })
@@ -138,13 +137,9 @@ it.effect("Alibaba keeps native reasoning controls and future efforts on their s
       const messages = yield* compileRequest(
         LLM.request({ model: provider.messages("qwen3.8-max"), providerOptions: { effort } }),
       )
-      const responses = yield* compileRequest(
-        LLM.request({ model: provider.responses("qwen3.8-max"), providerOptions: { reasoningEffort: effort } }),
-      )
       expect(chat.body.reasoning_effort).toBe(effort)
       expect(messages.body.output_config).toEqual({ effort })
-      expect(responses.body.reasoning).toEqual({ effort })
-      for (const result of [chat, messages, responses]) {
+      for (const result of [chat, messages]) {
         expect(result.body.thinking).toBeUndefined()
         expect(result.body.enable_thinking).toBeUndefined()
       }
@@ -187,17 +182,6 @@ it.effect("Alibaba keeps native reasoning controls and future efforts on their s
       expect(chat.body.tools).toEqual([
         expect.objectContaining({ function: expect.not.objectContaining({ strict: expect.anything() }) }),
       ])
-      const responses = yield* compileRequest(
-        LLM.request({
-          model: provider.responses("qwen3.7-plus"),
-          providerOptions: { enableThinking, store: false, previousResponseId: "resp_previous" },
-        }),
-      )
-      expect(responses.body).toMatchObject({
-        enable_thinking: enableThinking,
-        store: false,
-        previous_response_id: "resp_previous",
-      })
     }
     for (const thinking of [
       { type: "enabled" },
@@ -249,7 +233,6 @@ it.effect("Alibaba validates malformed options before execution", () =>
     for (const [api, providerOptions] of [
       ["chat", { preserveThinking: "false" }],
       ["messages", { thinking: { type: "enabled", budgetTokens: "512" } }],
-      ["responses", { enableThinking: "false" }],
     ] as const) {
       const model = provider[api]("qwen3.8-max").route.with({ providerOptions }).model({ id: "qwen3.8-max" })
       const error = yield* compileRequest(LLM.request({ model })).pipe(Effect.flip)
@@ -324,81 +307,6 @@ it.effect("Alibaba serializes Messages configuration, per-request controls, and 
               },
               { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
               { type: "message_stop" },
-            ),
-            { headers: { "content-type": "text/event-stream" } },
-          )
-        }),
-      ),
-    ),
-  ),
-)
-
-it.effect("Alibaba Responses lowers hosted tools and named selection using HTTP even with a WebSocket executor", () =>
-  Effect.gen(function* () {
-    const request = LLM.request({
-      model: Alibaba.configure({ region: "ap-southeast-1", apiKey: "fixture" }).responses("qwen3.8-max"),
-      tools: [Alibaba.webSearch(), Alibaba.webExtractor(), Alibaba.codeInterpreter(), tool],
-      prompt: "Hello",
-    })
-    const compiled = yield* compileRequest(request)
-    expect(compiled.body.tools).toMatchObject([
-      { type: "web_search" },
-      { type: "web_extractor" },
-      { type: "code_interpreter" },
-      { type: "function", name: "lookup" },
-    ])
-    const named = yield* compileRequest(
-      LLMRequest.update(request, { tools: [tool], toolChoice: { type: "tool", name: "lookup" } }),
-    )
-    expect(named.body.tool_choice).toEqual({
-      type: "allowed_tools",
-      mode: "required",
-      tools: [{ type: "function", name: "lookup" }],
-    })
-    const response = yield* LLMClient.generate(request, {
-      webSocket: { execute: () => Effect.die("Unexpected WebSocket") },
-    })
-    expect(response.toolCalls).toMatchObject([
-      {
-        name: "web_extractor",
-        providerExecuted: true,
-        input: { urls: ["https://example.com"], goal: "Read the page" },
-      },
-    ])
-    const replay = yield* compileRequest(
-      LLMRequest.update(request, { messages: [...request.messages, response.message, Message.user("Continue")] }),
-    )
-    expect(replay.body.input).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "web_extractor_call",
-          id: "extract_1",
-          urls: ["https://example.com"],
-          goal: "Read the page",
-          result: { text: "fixture" },
-        }),
-      ]),
-    )
-  }).pipe(
-    Effect.provide(
-      dynamicResponse((input) =>
-        Effect.sync(() => {
-          expect(input.request.url).toBe("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses")
-          return input.respond(
-            sseEvents(
-              {
-                type: "response.output_item.done",
-                output_index: 0,
-                item: {
-                  type: "web_extractor_call",
-                  id: "extract_1",
-                  status: "completed",
-                  urls: ["https://example.com"],
-                  goal: "Read the page",
-                  result: { text: "fixture" },
-                },
-              },
-              { type: "response.completed", response: {} },
             ),
             { headers: { "content-type": "text/event-stream" } },
           )

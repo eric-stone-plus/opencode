@@ -15,7 +15,6 @@ import {
 import { Auth, LLMClient } from "../src/route.js"
 import * as AnthropicMessages from "../src/protocols/anthropic-messages.js"
 import * as OpenAIChat from "../src/protocols/openai-chat.js"
-import * as OpenAIResponses from "../src/protocols/openai-responses.js"
 import { Tool, ToolFailure, type ToolExecuteContext } from "../src/tool.js"
 import { ToolRuntime } from "../src/tool-runtime.js"
 import { it } from "./lib/effect.js"
@@ -622,80 +621,6 @@ describe("LLMClient tools", () => {
             ],
           },
           { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1" }] },
-        ],
-      })
-    }),
-  )
-
-  it.effect("replays encrypted OpenAI reasoning items with tool outputs", () =>
-    Effect.gen(function* () {
-      const bodies: unknown[] = []
-      const layer = dynamicResponse((input) =>
-        Effect.sync(() => {
-          bodies.push(decodeJson(input.text))
-          return input.respond(
-            bodies.length === 1
-              ? sseEvents(
-                  {
-                    type: "response.output_item.added",
-                    item: { type: "reasoning", id: "rs_1", encrypted_content: null },
-                  },
-                  { type: "response.reasoning_summary_part.added", item_id: "rs_1", summary_index: 0 },
-                  { type: "response.reasoning_summary_part.done", item_id: "rs_1", summary_index: 0 },
-                  {
-                    type: "response.output_item.done",
-                    item: { type: "reasoning", id: "rs_1", encrypted_content: "encrypted-state" },
-                  },
-                  {
-                    type: "response.output_item.added",
-                    item: {
-                      type: "function_call",
-                      id: "item_1",
-                      call_id: "call_1",
-                      name: "get_weather",
-                      arguments: "",
-                    },
-                  },
-                  { type: "response.function_call_arguments.delta", item_id: "item_1", delta: '{"city":"Paris"}' },
-                  {
-                    type: "response.output_item.done",
-                    item: {
-                      type: "function_call",
-                      id: "item_1",
-                      call_id: "call_1",
-                      name: "get_weather",
-                      arguments: '{"city":"Paris"}',
-                    },
-                  },
-                  { type: "response.completed", response: {} },
-                )
-              : sseEvents(
-                  { type: "response.output_text.delta", item_id: "msg_1", delta: "Done." },
-                  { type: "response.completed", response: {} },
-                ),
-            { headers: { "content-type": "text/event-stream" } },
-          )
-        }),
-      )
-
-      yield* TestToolRuntime.runTools({
-        request: LLM.request({
-          model: OpenAIResponses.route
-            .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
-            .model({ id: "gpt-5.5" }),
-          prompt: "Use the tool.",
-          providerOptions: { store: false, include: ["reasoning.encrypted_content"] },
-        }),
-        tools: { get_weather },
-      }).pipe(Stream.runCollect, Effect.provide(layer))
-
-      expect(bodies[1]).toMatchObject({
-        include: ["reasoning.encrypted_content"],
-        input: [
-          { role: "user" },
-          { type: "reasoning", summary: [], encrypted_content: "encrypted-state" },
-          { type: "function_call", call_id: "call_1", name: "get_weather" },
-          { type: "function_call_output", call_id: "call_1" },
         ],
       })
     }),

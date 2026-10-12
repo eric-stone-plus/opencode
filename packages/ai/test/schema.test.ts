@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema, Stream } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat.js"
-import * as OpenAIResponses from "../src/protocols/openai-responses.js"
+import * as AnthropicMessages from "../src/protocols/anthropic-messages.js"
 import {
   AIError,
   AIErrorReason,
@@ -59,14 +59,14 @@ describe("llm schema", () => {
 
   test("accepts custom route ids", () => {
     const decoded = decodeLLMRequest({
-      model: LanguageModel.update(model, { route: OpenAIResponses.route }),
+      model: LanguageModel.update(model, { route: AnthropicMessages.route }),
       system: [],
       messages: [],
       tools: [],
       generation: {},
     })
 
-    expect(decoded.model.route.id).toBe("openai-responses")
+    expect(decoded.model.route.id).toBe("anthropic-messages")
   })
 
   test("rejects invalid event type", () => {

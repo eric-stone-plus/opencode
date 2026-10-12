@@ -13,7 +13,6 @@ import { ModelsDev } from "@opencode/core/models-dev"
 import { ModelsDevPlugin } from "@opencode/core/plugin/models-dev"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
-import { ProviderPlugins } from "@opencode/core/plugin/provider"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { withEnv } from "../fixture/env"
@@ -854,116 +853,6 @@ describe("ModelsDevPlugin", () => {
       expect(Object.keys(copied ?? {})).toEqual(["__proto__", "keep"])
       expect(JSON.stringify(copied)).toBe(JSON.stringify(body))
       expect(copied).not.toHaveProperty("service_tier")
-    }),
-  )
-
-  it.effect("omits legacy provider aliases", () =>
-    Effect.gen(function* () {
-      const integrations = yield* Integration.Service
-      const providers = yield* Provider.Service
-      const snapshots = [
-        ["azure", "Azure", "AZURE_API_KEY", "@ai-sdk/azure"],
-        ["azure-cognitive-services", "Azure Cognitive Services", "AZURE_COGNITIVE_SERVICES_API_KEY", "@ai-sdk/azure"],
-        ["google-vertex", "Google Vertex", "GOOGLE_APPLICATION_CREDENTIALS", "@ai-sdk/google-vertex"],
-        [
-          "google-vertex-anthropic",
-          "Google Vertex Anthropic",
-          "GOOGLE_APPLICATION_CREDENTIALS",
-          "@ai-sdk/google-vertex/anthropic",
-        ],
-      ].map(([id, name, environment, packageName]) => ({
-        info: {
-          id: Provider.ID.make(id),
-          name,
-          activation: "auto",
-          package: Provider.aisdk(packageName),
-        },
-        environment: id === "azure" ? ["AZURE_RESOURCE_NAME", environment] : [environment],
-        models: [],
-      })) satisfies readonly ModelsDev.Snapshot[]
-
-      yield* ModelsDevPlugin.effect(
-        host({
-          provider: providerHost(providers),
-          integration: integrationHost(integrations),
-        }),
-      ).pipe(
-        Effect.provideService(
-          ModelsDev.Service,
-          ModelsDev.Service.of({
-            get: () => Effect.succeed(snapshots),
-            refresh: () => Effect.void,
-          }),
-        ),
-      )
-
-      expect(yield* providers.get(Provider.ID.azure)).toBeDefined()
-      expect(yield* providers.get(Provider.ID.make("google-vertex"))).toBeDefined()
-      expect(yield* providers.get(Provider.ID.make("azure-cognitive-services"))).toBeUndefined()
-      expect(yield* providers.get(Provider.ID.make("google-vertex-anthropic"))).toBeUndefined()
-      expect(yield* integrations.get(Integration.ID.make("azure"))).toBeDefined()
-      expect(yield* integrations.get(Integration.ID.make("azure"))).toMatchObject({
-        methods: [{ type: "key" }, { type: "env", names: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] }],
-      })
-      expect(yield* integrations.get(Integration.ID.make("google-vertex"))).toBeDefined()
-      expect(yield* integrations.get(Integration.ID.make("azure-cognitive-services"))).toBeUndefined()
-      expect(yield* integrations.get(Integration.ID.make("google-vertex-anthropic"))).toBeUndefined()
-      expect(ProviderPlugins.map((plugin) => plugin.id)).not.toContain("opencode.provider.azure.cognitive.services")
-      expect(ProviderPlugins.map((plugin) => plugin.id)).not.toContain("opencode.provider.google.vertex.anthropic")
-    }),
-  )
-
-  it.effect("registers every listed environment variable for provider plugins to narrow", () =>
-    Effect.gen(function* () {
-      const integrations = yield* Integration.Service
-      const providers = yield* Provider.Service
-
-      yield* ModelsDevPlugin.effect(
-        host({
-          provider: providerHost(providers),
-          integration: integrationHost(integrations),
-        }),
-      ).pipe(
-        Effect.provideService(
-          ModelsDev.Service,
-          ModelsDev.Service.of({
-            get: () =>
-              Effect.succeed([
-                {
-                  info: {
-                    id: Provider.ID.make("cloudflare-workers-ai"),
-                    name: "Cloudflare Workers AI",
-                    activation: "auto",
-                    package: "@opencode/ai/providers/cloudflare-workers-ai",
-                  },
-                  environment: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"],
-                  models: [],
-                },
-                {
-                  info: {
-                    id: Provider.ID.make("google-vertex"),
-                    name: "Google Vertex",
-                    activation: "auto",
-                    package: "@opencode/ai/providers/google-vertex",
-                  },
-                  environment: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"],
-                  models: [],
-                },
-              ] satisfies readonly ModelsDev.Snapshot[]),
-            refresh: () => Effect.void,
-          }),
-        ),
-      )
-
-      expect(yield* integrations.get(Integration.ID.make("google-vertex"))).toMatchObject({
-        methods: [
-          { type: "key" },
-          { type: "env", names: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"] },
-        ],
-      })
-      expect(yield* integrations.get(Integration.ID.make("cloudflare-workers-ai"))).toMatchObject({
-        methods: [{ type: "key" }, { type: "env", names: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"] }],
-      })
     }),
   )
 

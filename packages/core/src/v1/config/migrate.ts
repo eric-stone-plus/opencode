@@ -70,7 +70,7 @@ export function modelSelection(input?: string, variant?: string) {
   if (input === undefined || !/^[^/#]+\/[^#]+$/.test(input)) return undefined
   const separator = input.indexOf("/")
   return {
-    providerID: providerID(input.slice(0, separator)),
+    providerID: input.slice(0, separator),
     model: input.slice(separator + 1),
     ...(variant === undefined || variant.length === 0 || variant.includes("#") ? {} : { variant }),
   }
@@ -103,13 +103,7 @@ export function migrateMcp(info: ConfigMCPV1.Info) {
   }
 }
 
-export function migrateProvider(sourceID: string, info: ConfigProviderV1.Info) {
-  if (sourceID === "azure-cognitive-services") return migrateAzureCognitiveServicesProvider(info)
-  if (sourceID === "google-vertex-anthropic") return migrateGoogleVertexAnthropicProvider(info)
-  return migrateStandardProvider(info)
-}
-
-function migrateStandardProvider(info: ConfigProviderV1.Info) {
+export function migrateProvider(info: ConfigProviderV1.Info) {
   const options = ConfigProviderOptionsV1.provider(info.options ?? {})
   return {
     name: info.name,
@@ -122,48 +116,6 @@ function migrateStandardProvider(info: ConfigProviderV1.Info) {
       info.models &&
       Object.fromEntries(Object.entries(info.models).map(([name, model]) => [name, migrateModel(model)])),
   }
-}
-
-function migrateAzureCognitiveServicesProvider(info: ConfigProviderV1.Info) {
-  const standard = migrateStandardProvider(info)
-  const migrated = {
-    ...standard,
-    env: standard.env?.filter((name) => name !== "AZURE_COGNITIVE_SERVICES_RESOURCE_NAME"),
-  }
-  if (info.npm !== "@ai-sdk/openai-compatible" || info.api) return migrated
-  return {
-    ...migrated,
-    settings: {
-      ...migrated.settings,
-      baseURL: "https://${AZURE_COGNITIVE_SERVICES_RESOURCE_NAME}.cognitiveservices.azure.com/openai",
-    },
-  }
-}
-
-function migrateGoogleVertexAnthropicProvider(info: ConfigProviderV1.Info) {
-  const migrated = migrateStandardProvider(info)
-  const packageName = migrated.package ?? Provider.aisdk("@ai-sdk/google-vertex/anthropic")
-  return {
-    ...migrated,
-    // The current Google Vertex provider includes Gemini and Claude. Keep the Anthropic SDK on Claude models
-    // instead of changing the package inherited by every model on the provider.
-    package: undefined,
-    models:
-      migrated.models &&
-      Object.fromEntries(
-        Object.entries(migrated.models).map(([name, model]) => [
-          name,
-          model.package ? model : { ...model, package: packageName },
-        ]),
-      ),
-  }
-}
-
-// Renames retired provider IDs in V1 fields and the shared top-level model.
-export function providerID(input: string) {
-  if (input === "azure-cognitive-services") return "azure"
-  if (input === "google-vertex-anthropic") return "google-vertex"
-  return input
 }
 
 function migrateModel(info: typeof ConfigProviderV1.Model.Type) {
