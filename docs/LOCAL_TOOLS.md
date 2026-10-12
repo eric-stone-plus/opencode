@@ -1,14 +1,14 @@
 # Local planning, diagrams, and document conversion
 
-Install the fork's lightweight extensions without rebuilding or replacing a
-running TUI binary:
+The three tools ship as the V2 plugin `bootstrap/plugin/local-tools.ts`
+(installed to `~/.config/opencode/plugin/local-tools.ts` by `bootstrap/install.sh`
+step 7; presence is audited by `bootstrap/verify.sh`). Its support files — the
+drawio XML validator and the three skill files — are deployed separately:
 
 ```bash
 bun run script/install-local-tools.ts
 ```
 
-This copies exactly three tools, their private support files, and three skills to
-`~/.config/opencode/{tools,lib,skills}`. Unrelated tools/configuration are preserved.
 A hash manifest makes later installs refuse locally modified managed files.
 Open a new OpenCode process to load the extensions; an already running host may
 retain its cached registry. No provider/model settings or API keys are changed.
@@ -19,10 +19,11 @@ retain its cached registry. No provider/model settings or API keys are changed.
 | `drawio` | Current model creates/edits XML locally; edits use cell IDs and SHA-256 | Editable `.drawio` plus basic `.drawio.svg` preview |
 | `marker` | Local PDF conversion through a separate CPU CLI; explicit text fallback | New workspace directory with Markdown/JSON/HTML artifacts |
 
-All tools use the host's existing `context.ask` permissions. File access requests
-read/edit permissions and paths outside the worktree request external-directory
-permission. Subprocesses request bash permission and receive timeout/cancel
-signals. The user's permission policy remains authoritative.
+All tools gate through the host's permission service (`ctx.permission.assert`),
+the same blocking gate the built-in tools use: file access requests read/edit
+permission, paths outside the session location request `external_directory`
+permission, and subprocesses request shell permission. Subprocesses receive
+timeout/cancel signals. The user's permission policy remains authoritative.
 
 ## Planning and the existing goal
 
@@ -88,14 +89,17 @@ redistribution or uses outside the owner's local setup.
 
 ## Verification
 
-From `packages/opencode`:
+Standalone battery for the tools plugin (from the repo root):
 
 ```bash
-bun test test/tool/local-tools.test.ts
-bun typecheck
+cd script && bun test local-tools.test.ts
 ```
 
-Tests cover recovery, nonoverwriting initialization, stale-edit refusal, permission
+The plugin file is covered by `bootstrap/plugin/tsconfig.json`
+(`../../packages/plugin/node_modules/.bin/tsgo --noEmit -p bootstrap/plugin/tsconfig.json`),
+and the permission gate it calls is pinned by
+`packages/core/test/plugin/promise-tool-permission.test.ts`. Tests cover
+recovery, nonoverwriting initialization, stale-edit refusal, permission
 denials, real XML validation/edits, invalid graph refusal, child cancellation and
 timeout, and real Poppler conversion. Marker itself is verified separately after
 the isolated CLI/models are installed; stub results are never reported as a real

@@ -45,12 +45,9 @@ export const MANAGED_FILES: Mapping[] = [
   // bootstrap/plugin-v1/ and are deliberately not installed until they are ported
   // to the V2 plugin API, so they are not managed files.
   { source: "bootstrap/plugin/secret-path-guard.ts", destination: ".config/opencode/plugin/secret-path-guard.ts" },
+  { source: "bootstrap/plugin/local-tools.ts", destination: ".config/opencode/plugin/local-tools.ts" },
   { source: "bootstrap/shell/bashrc-opencode-block.sh", destination: ".config/opencode/shell/bashrc-opencode-block.sh" },
   { source: "bootstrap/config/environment.d/10-opencode-db.conf", destination: ".config/environment.d/10-opencode-db.conf" },
-  { source: "dotfiles/opencode/tools/planning.ts", destination: ".config/opencode/tools/planning.ts" },
-  { source: "dotfiles/opencode/tools/drawio.ts", destination: ".config/opencode/tools/drawio.ts" },
-  { source: "dotfiles/opencode/tools/marker.ts", destination: ".config/opencode/tools/marker.ts" },
-  { source: "dotfiles/opencode/lib/local-tools.ts", destination: ".config/opencode/lib/local-tools.ts" },
   { source: "dotfiles/opencode/lib/drawio.py", destination: ".config/opencode/lib/drawio.py" },
   { source: "dotfiles/opencode/skills/planning-with-files/SKILL.md", destination: ".config/opencode/skills/planning-with-files/SKILL.md" },
   { source: "dotfiles/opencode/skills/drawio/SKILL.md", destination: ".config/opencode/skills/drawio/SKILL.md" },

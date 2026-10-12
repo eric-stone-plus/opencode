@@ -990,13 +990,11 @@ done
 say ""
 say "-- step 7: plugin/"
 PL="$TARGET_HOME/.config/opencode/plugin"
-# open-code-review.ts ships as-is like the rest: it value-imports
-# @opencode-ai/plugin at run time, but the fork's config loader installs that
-# dependency into the config dir's node_modules on launch (npmSvc.install
-# background fiber; verify.sh's log sweep watches its failure mode), so no
-# npm step is needed here. It spawns `ocr` from PATH (npm i -g
-# @alibaba-group/open-code-review on the target seat).
-for f in block-unsafe-kill.ts secret-path-guard.ts; do
+# The installed plugins are V2-API with no runtime package imports (effect and
+# @opencode/plugin resolve through the host's module shim). local-tools.ts is
+# the V2 port of the old dotfiles/opencode/tools trio; its drawio validator
+# lives at lib/drawio.py (script/install-local-tools.ts deploys it).
+for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts; do
   STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done

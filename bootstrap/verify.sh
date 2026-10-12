@@ -534,11 +534,25 @@ fi
 
 # --- 8. plugins --------------------------------------------------------------
 echo "-- plugin/"
-for f in block-unsafe-kill.ts secret-path-guard.ts; do
+for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts; do
   if [ -f "$CFG/plugin/$f" ]; then
     pass "plugin/$f present"
   else
     fail "plugin/$f missing"
+  fi
+done
+# Support file and skills for the local-tools plugin (script/install-local-tools.ts;
+# the drawio tool fails closed without lib/drawio.py, the skills only lose guidance).
+if [ -f "$CFG/lib/drawio.py" ]; then
+  pass "lib/drawio.py present"
+else
+  warn "lib/drawio.py missing (drawio tool will refuse; run: bun run script/install-local-tools.ts)"
+fi
+for s in drawio marker planning-with-files; do
+  if [ -d "$CFG/skills/$s" ]; then
+    pass "skill present: $s"
+  else
+    warn "skill missing: $s (run: bun run script/install-local-tools.ts)"
   fi
 done
 

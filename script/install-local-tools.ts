@@ -3,11 +3,12 @@ import { homedir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+// Deploys the local-tools support files. The tools themselves are the V2 plugin
+// bootstrap/plugin/local-tools.ts (installed by bootstrap/install.sh step 7);
+// this script owns the pieces that plugin reads from the config tree: the drawio
+// validator and the three skill files. A hash manifest makes later installs
+// refuse locally modified managed files.
 const managed = [
-  "tools/planning.ts",
-  "tools/drawio.ts",
-  "tools/marker.ts",
-  "lib/local-tools.ts",
   "lib/drawio.py",
   "skills/planning-with-files/SKILL.md",
   "skills/drawio/SKILL.md",
@@ -47,5 +48,5 @@ export async function installLocalTools(destination = path.join(homedir(), ".con
 
 if (import.meta.main) {
   for (const file of await installLocalTools(process.argv[2])) console.log(`installed ${file}`)
-  console.log("Open a new OpenCode session/process to discover the tools and skills. The runtime binary was not changed.")
+  console.log("Support files updated. The tools plugin itself is bootstrap/install.sh step 7; open a new OpenCode process to pick up changes.")
 }

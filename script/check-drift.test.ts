@@ -60,9 +60,9 @@ describe("collectDrift", () => {
 
   test("a managed file that differs is drift", async () => {
     const { root, home } = await mirror()
-    await write(path.join(home, ".config/opencode/tui.json"), "edited\n")
+    await write(path.join(home, ".config/opencode/cli.json"), "edited\n")
     const rows = await collectDrift(root, home)
-    expect(row(rows, "tui.json")).toEqual({ label: "tui.json", status: "drift", detail: "~/.config/opencode/tui.json differs" })
+    expect(row(rows, "cli.json")).toEqual({ label: "cli.json", status: "drift", detail: "~/.config/opencode/cli.json differs" })
     expect(summarize(rows).drift).toBe(1)
   })
 
@@ -148,21 +148,21 @@ describe("collectDrift", () => {
 
   test("a symlinked seat file is drift", async () => {
     const { root, home } = await mirror()
-    const target = path.join(home, ".config/opencode/tui.json")
+    const target = path.join(home, ".config/opencode/cli.json")
     await rm(target)
-    await symlink(path.join(root, "tui.json"), target)
+    await symlink(path.join(root, "cli.json"), target)
     const rows = await collectDrift(root, home)
-    expect(row(rows, "tui.json")?.status).toBe("drift")
-    expect(row(rows, "tui.json")?.detail).toContain("symlink")
+    expect(row(rows, "cli.json")?.status).toBe("drift")
+    expect(row(rows, "cli.json")?.detail).toContain("symlink")
   })
 
   test("a directory where a seat file belongs is drift, not a crash", async () => {
     const { root, home } = await mirror()
-    const target = path.join(home, ".config/opencode/tui.json")
+    const target = path.join(home, ".config/opencode/cli.json")
     await rm(target)
     await mkdir(target, { recursive: true })
     const rows = await collectDrift(root, home)
-    expect(row(rows, "tui.json")?.status).toBe("drift")
+    expect(row(rows, "cli.json")?.status).toBe("drift")
     expect(summarize(rows).missing).toBe(0)
   })
 
@@ -176,7 +176,7 @@ describe("collectDrift", () => {
     const script = path.join(import.meta.dir, "check-drift.ts")
     const clean = Bun.spawn([process.execPath, script, "--root", root, "--home", home], { stdout: "pipe", stderr: "pipe" })
     expect(await clean.exited).toBe(0)
-    await write(path.join(home, ".config/opencode/tui.json"), "edited\n")
+    await write(path.join(home, ".config/opencode/cli.json"), "edited\n")
     const drifted = Bun.spawn([process.execPath, script, "--root", root, "--home", home], { stdout: "pipe", stderr: "pipe" })
     expect(await drifted.exited).toBe(1)
   })

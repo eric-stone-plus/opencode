@@ -256,7 +256,7 @@ import specifier, so it must be absolute).
 ### Repo ↔ seat drift
 
 From the fork checkout, `bun run check-drift` compares every file this repo
-deploys (dotfiles managed files, `tui.json`, agent-hooks, plugins, the shell
+deploys (dotfiles managed files, `cli.json`, agent-hooks, plugins, the shell
 block, the `environment.d` DB pin, the `install-local-tools` set, vendored
 skills, skills-extra, and the `bootstrap/config/opencode.jsonc` snapshot)
 against the live seat, checks the bundle↔dotfiles goal-file mirrors, and exits
@@ -367,9 +367,9 @@ bootstrap/
 │   └── longrun-stability-audit/  SKILL.md + references/
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
-│   ├── mpskills-update.ts        as-is (self-contained; fetches + vendors on first skill call)
 │   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
-│   ├── open-code-review.ts       ocr tools (ocr_review/ocr_health) + /ocr-review,/ocr-health (2026-10-07)
+│   └── local-tools.ts            drawio/marker/planning tools (V2 port, 2026-10-12)
+├── plugin-v1/                    V1-API plugins parked until ported (not installed)
 ├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
@@ -389,8 +389,10 @@ bootstrap/
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
   against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
   the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
-* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts,open-code-review.ts}` and
-  `skills-extra/` are the portable source of truth: install.sh copies them
+* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts}`, the parked
+  `plugin-v1/` sources, `skills-extra/`, and the local-tools support files
+  (`dotfiles/opencode/lib/drawio.py` + three skill files, deployed by
+  `script/install-local-tools.ts`) are the portable source of truth: install.sh copies them
   bundle → `~/.config/agent-hooks/`, `~/.config/opencode/plugin/` and
   `~/.config/opencode/skills/`. Edits land in the bundle first and are
   redeployed to the seat copies, which must stay byte-identical afterwards
