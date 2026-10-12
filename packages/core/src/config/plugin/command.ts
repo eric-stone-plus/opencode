@@ -130,6 +130,7 @@ export const Plugin = define({
                   ...input.prompt,
                   sessionID: input.sessionID,
                   text,
+                  metadata: { command: name },
                   delivery: input.delivery,
                 })
               }).pipe(Effect.asVoid),
