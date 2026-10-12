@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store"
 import { dedupeWith } from "effect/Array"
+import { topVariant } from "@opencode/util/variant"
 import { createSimpleContext } from "./helper"
 import { batch, createMemo, onCleanup } from "solid-js"
 import { useEvent } from "./event"
@@ -475,6 +476,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           },
           current() {
             return this.selected()
+          },
+          // Display-only companion to the server's ladder-top default: when no explicit or
+          // agent variant is selected, the effort that actually runs is the ladder top
+          // (packages/core/src/variant.ts effective), so the prompt footer must show it
+          // instead of hiding the effort. Never feeds back into a request or the store.
+          display() {
+            return this.selected() ?? topVariant(this.list())
           },
           list() {
             const m = currentSelection()

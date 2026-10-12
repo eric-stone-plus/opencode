@@ -196,6 +196,37 @@ describe("ModelResolver", () => {
     }),
   )
 
+  it.effect("unset and default variants resolve to the ladder top", () =>
+    Effect.gen(function* () {
+      const catalog = model(Provider.aisdk("@ai-sdk/openai-compatible"), {
+        settings: { baseURL: "https://compatible.example/v1" },
+        variants: [
+          { id: VariantID.make("low"), settings: {}, headers: {}, body: { reasoning_effort: "low" } },
+          { id: VariantID.make("max"), settings: {}, headers: {}, body: { reasoning_effort: "max" } },
+        ],
+      })
+      // Unset: the ladder top overlay runs, so effort never falls to the
+      // provider's default by omission (2026-10-10 policy).
+      const fallback = yield* ModelResolver.resolveModel(catalog, undefined)
+      expect(fallback.route.defaults.http?.body).toEqual({
+        custom_extension: { enabled: true },
+        reasoning_effort: "max",
+      })
+      // The `default` sentinel means the same thing when the ladder defines no real default tier.
+      const sentinel = yield* ModelResolver.resolveModel(catalog, VariantID.make("default"))
+      expect(sentinel.route.defaults.http?.body).toEqual({
+        custom_extension: { enabled: true },
+        reasoning_effort: "max",
+      })
+      // Explicit picks are still honored.
+      const explicit = yield* ModelResolver.resolveModel(catalog, VariantID.make("low"))
+      expect(explicit.route.defaults.http?.body).toEqual({
+        custom_extension: { enabled: true },
+        reasoning_effort: "low",
+      })
+    }),
+  )
+
   it.effect("overlays selected Anthropic variant settings", () =>
     Effect.gen(function* () {
       const catalog = model(Provider.aisdk("@ai-sdk/anthropic"), {

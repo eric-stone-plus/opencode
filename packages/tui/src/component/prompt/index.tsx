@@ -1551,7 +1551,7 @@ export function Prompt(props: PromptProps) {
         agentColor: agent ? local.agent.color(agent.id) : undefined,
         modelLabel: model.model,
         providerLabel: model.provider,
-        variant: local.model.variant.current(),
+        variant: local.model.variant.display(),
       }
     },
     {

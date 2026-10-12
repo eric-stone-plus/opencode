@@ -1,5 +1,6 @@
 export * as Variant from "./variant.js"
 
+import { topVariant } from "@opencode/util/variant"
 import { Model } from "./model.js"
 
 export type Support =
@@ -21,6 +22,24 @@ export function resolve(model: Model.Info, supports: readonly Support[] = [{ typ
   const main = effort ? protocol(model, effort) : budget ? protocol(model, budget) : toggle
   const variants = [...toggle.filter((variant) => variant.id === "none"), ...main]
   return variants.filter((variant, index) => variants.findIndex((other) => other.id === variant.id) === index)
+}
+
+/**
+ * The variant a request runs with (2026-10-10 policy, ported from the V1
+ * fork): an explicit pick is honored — unknown ones still fail in
+ * `withVariant` — while the unset variant and the `default` sentinel resolve
+ * to the ladder's top rung, so effort never falls to the provider's
+ * "default" by omission. A ladder that defines a real `default` tier keeps
+ * the explicit pick's usual meaning when that tier is named directly.
+ */
+export function effective(model: Model.Info, variant: Model.VariantID | undefined): Model.VariantID | undefined {
+  if (variant !== undefined && variant !== "default") return variant
+  const ladder = model.variants?.map((item) => item.id) ?? []
+  // A real "default" tier (groq qwen3-32b's "none"|"default" axis) makes the
+  // sentinel an explicit pick of that tier, exactly as V1 honored it.
+  if (variant === "default" && ladder.some((id) => String(id) === "default"))
+    return Model.VariantID.make("default")
+  return topVariant(ladder)
 }
 
 const EFFORTS = ["low", "medium", "high"]

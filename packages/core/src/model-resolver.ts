@@ -10,6 +10,7 @@ import { Integration } from "./integration.js"
 import { Capabilities, ID, Info, Model, Ref, VariantID } from "./model.js"
 import type { RuntimeInfo } from "./model.js"
 import { Npm } from "@opencode/util/npm"
+import { Variant } from "./variant.js"
 import { Provider } from "./provider.js"
 
 export class VariantUnavailableError extends Schema.TaggedError<VariantUnavailableError>()(
@@ -345,7 +346,10 @@ export const resolveModel = (
   variant: VariantID | undefined,
   credential?: Credential.Value,
   dependencies?: Dependencies,
-) => withVariant(model, variant).pipe(Effect.flatMap((model) => fromCatalogModel(model, credential, dependencies)))
+) =>
+  withVariant(model, Variant.effective(model, variant)).pipe(
+    Effect.flatMap((model) => fromCatalogModel(model, credential, dependencies)),
+  )
 
 export const hasPackage = (model: Info) => Boolean(model.package)
 
@@ -364,7 +368,10 @@ export const layer = Layer.effect(
         provider?.integrationID ?? Integration.ID.make(selected.providerID),
       )
       const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
-      const selectedVariant = yield* withVariant(selected, variant)
+      // Unset and `default` resolve to the ladder's top rung (2026-10-10 policy): every request
+      // records and runs the effort it actually uses instead of the provider's silent default.
+      const effective = Variant.effective(selected, variant)
+      const selectedVariant = yield* withVariant(selected, effective)
       const runtimeInfo: RuntimeInfo = {
         ...selectedVariant,
         settings: Provider.mergeOverlay(provider?.settings, Provider.modelSettings(selectedVariant.settings)),
@@ -385,7 +392,7 @@ export const layer = Layer.effect(
         ref: Ref.make({
           id: selected.id,
           providerID: selected.providerID,
-          ...(variant === undefined ? {} : { variant }),
+          ...(effective === undefined ? {} : { variant: effective }),
         }),
         capabilities: selected.capabilities,
         cost: selected.cost,

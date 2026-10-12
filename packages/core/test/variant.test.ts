@@ -56,3 +56,25 @@ test("caps Alibaba thinking budget variants at 64k", () => {
     { id: "max", settings: { enableThinking: true, thinkingBudget: 32_767 } },
   ])
 })
+
+test("effective defaults to the ladder top and honors explicit picks", () => {
+  const ladder = (ids: string[]) =>
+    ids.map((id) => ({ id: Model.VariantID.make(id), settings: {}, headers: {}, body: {} }))
+  const model = (ids: string[]) => {
+    const result = Model.Info.default(Provider.ID.make("test"), Model.ID.make("variant-model")) as Model.MutableInfo
+    result.variants = ladder(ids) as Model.MutableInfo["variants"]
+    return Model.Info.make(result)
+  }
+
+  // Unset and the `default` sentinel both resolve to the top rung.
+  expect(String(Variant.effective(model(["low", "high", "max"]), undefined))).toBe("max")
+  expect(String(Variant.effective(model(["low", "high", "max"]), Model.VariantID.make("default")))).toBe("max")
+  // A ladder that lists a real `default` tier honors the sentinel as an
+  // explicit pick of that tier (groq qwen3-32b's "none"|"default" axis).
+  expect(String(Variant.effective(model(["none", "default"]), Model.VariantID.make("default")))).toBe("default")
+  // An explicit pick is honored.
+  expect(String(Variant.effective(model(["low", "high", "max"]), Model.VariantID.make("low")))).toBe("low")
+  // A model without variants resolves to nothing.
+  expect(Variant.effective(model([]), undefined)).toBeUndefined()
+  expect(Variant.effective(model([]), Model.VariantID.make("default"))).toBeUndefined()
+})
