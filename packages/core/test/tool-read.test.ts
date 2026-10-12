@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect } from "bun:test"
+import { mkdtemp, rm } from "fs/promises"
+import { tmpdir } from "os"
 import path from "path"
 import { Effect, Exit, Layer, Result } from "effect"
 import { Config } from "@opencode/core/config"
@@ -36,6 +38,7 @@ const readToolNode = makeLocationNode({
     SessionInstructions.node,
     FSUtil.node,
     Location.node,
+    Environment.node,
   ],
 })
 
@@ -134,6 +137,18 @@ const readLayer = (imageLayer: Layer.Layer<Image.Service>) =>
 const it = testEffect(readLayer(imageLayer))
 const itWithoutResizer = testEffect(readLayer(unavailableImage))
 const sessionID = Session.ID.make("ses_read_tool_test")
+const SAMPLE_PDF = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 44>>stream
+BT /F1 18 Tf 20 50 Td (Fork PDF text) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R/Size 6>>
+%%EOF
+`
 
 describe("ReadTool", () => {
   beforeEach(() => {
@@ -521,32 +536,61 @@ describe("ReadTool", () => {
     }),
   )
 
-  it.effect("returns PDFs as native media", () =>
+  const withPdf = <A, E, R>(body: (file: string) => Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
-      const pdf = "JVBERi0xLjcK"
+      const directory = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), "oc-read-pdf-")))
+      const file = path.join(directory, "sample.pdf")
+      yield* Effect.promise(() => Bun.write(file, SAMPLE_PDF))
       readResult = {
         type: "file",
-        uri: "file:///document.pdf",
+        uri: `file://${file}`,
+        name: "sample.pdf",
+        content: Buffer.from(SAMPLE_PDF).toString("base64"),
+        encoding: "base64",
+        mime: "application/pdf",
+      }
+      return yield* body(file).pipe(Effect.ensuring(Effect.promise(() => rm(directory, { recursive: true }))))
+    })
+
+  const pdftotext = Bun.which("pdftotext") ? it.effect : it.effect.skip
+
+  pdftotext("returns PDF text instead of attaching the document", () =>
+    withPdf((file) =>
+      Effect.gen(function* () {
+        const registry = yield* Tool.Service
+        const result = yield* executeTool(registry, {
+          sessionID,
+          ...toolIdentity,
+          call: { type: "tool-call", id: "call-pdf", name: "read", input: { path: file } },
+        })
+        expect(result.status).toBe("completed")
+        expect(result.content).toEqual([expect.objectContaining({ type: "text" })])
+        expect(JSON.stringify(result.content)).toContain("Fork PDF text")
+        expect(JSON.stringify(result)).not.toContain("application/pdf;base64")
+        expect(JSON.stringify(result)).not.toContain(Buffer.from(SAMPLE_PDF).toString("base64"))
+      }),
+    ),
+  )
+
+  it.effect("fails with a no-text-layer message instead of attaching a PDF that has no extractable text", () =>
+    Effect.gen(function* () {
+      readResult = {
+        type: "file",
+        uri: "file:///missing/document.pdf",
         name: "document.pdf",
-        content: pdf,
+        content: "JVBERi0xLjcK",
         encoding: "base64",
         mime: "application/pdf",
       }
       const registry = yield* Tool.Service
-
-      expect(
-        yield* executeTool(registry, {
-          sessionID,
-          ...toolIdentity,
-          call: { type: "tool-call", id: "call-pdf", name: "read", input: { path: "document.pdf" } },
-        }),
-      ).toMatchObject({
-        status: "completed",
-        content: [
-          { type: "text", text: "PDF read successfully" },
-          { type: "file", uri: `data:application/pdf;base64,${pdf}`, mime: "application/pdf", name: "document.pdf" },
-        ],
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call", id: "call-empty-pdf", name: "read", input: { path: "document.pdf" } },
       })
+      expect(result.status).toBe("error")
+      expect(result.error?.message).toContain("PDF has no extractable text layer: document.pdf")
+      expect(JSON.stringify(result)).not.toContain("JVBERi0xLjcK")
     }),
   )
 
