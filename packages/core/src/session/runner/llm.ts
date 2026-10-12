@@ -113,7 +113,7 @@ const layer = Layer.effect(
                 const compacted = yield* restore(
                   Effect.gen(function* () {
                     const selected = yield* context.select(sessionID)
-                    const model = yield* context.resolveModel(selected.session)
+                    const model = yield* context.resolveModel(selected.session, selected.agent.info.model)
                     // Preview updates without admitting them after the already-delivered compaction marker.
                     const history = yield* SessionHistory.preview(
                       db,

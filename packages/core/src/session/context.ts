@@ -55,6 +55,7 @@ export interface Interface {
   readonly load: (selection: Selection) => Effect.Effect<Loaded, SessionRunnerModel.Error>
   readonly resolveModel: (
     session: SessionSchema.Info,
+    preferred?: Model.Ref,
   ) => Effect.Effect<SessionRunnerModel.Resolved, SessionRunnerModel.Error>
   /** Selects auxiliary title capabilities without instruction or tool preflight. */
   readonly selectTitle: (session: SessionSchema.Info) => Effect.Effect<
@@ -90,7 +91,8 @@ const layer = Layer.effect(
     const store = yield* SessionStore.Service
     const registry = yield* Tool.Service
 
-    const resolveModel = (session: SessionSchema.Info) => models.resolve(session, model.available)
+    const resolveModel = (session: SessionSchema.Info, preferred?: Model.Ref) =>
+      models.resolve(session, model.available, preferred)
 
     const selectTitle = Effect.fn("SessionContext.selectTitle")(function* (session: SessionSchema.Info) {
       const agent = yield* agents.get(Agent.ID.make("title"))
@@ -161,7 +163,7 @@ const layer = Layer.effect(
     })
 
     const load = Effect.fn("SessionContext.load")(function* (selection: Selection) {
-      const model = yield* resolveModel(selection.session)
+      const model = yield* resolveModel(selection.session, selection.agent.info.model)
       const history = yield* SessionHistory.entriesForRunner(
         db,
         selection.session.id,
