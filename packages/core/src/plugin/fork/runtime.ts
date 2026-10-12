@@ -3,13 +3,18 @@ export * as ForkRuntimePlugin from "./runtime.js"
 import { ToolFailure } from "@opencode/ai"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect } from "effect"
+import { Config } from "../../config.js"
+import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
 import { ForkDoomLoop } from "../../session/fork/doom-loop.js"
+import { ForkPrune } from "../../session/fork/prune.js"
 import type { PluginInternal } from "../internal.js"
 
 /** Long-run hardening for unattended Sessions that V2 has no equivalent for. */
 export const Plugin = define({
   id: "opencode.fork.runtime",
   effect: Effect.fn("ForkRuntimePlugin")(function* (ctx) {
+    const config = yield* Config.Service
+    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, Effect.void)
     const streaks = ForkDoomLoop.make()
     // Sessions whose next model request must not happen. The stop waits for that request so the refusal that
     // earned it is already recorded as the last tool result when the run ends.
@@ -28,6 +33,18 @@ export const Plugin = define({
 
     yield* ctx.session.hook("context", (event) =>
       stopping.delete(event.sessionID) ? ctx.session.interrupt({ sessionID: event.sessionID }).pipe(Effect.ignore) : Effect.void,
+    )
+
+    // Old tool output leaves the model's view, never storage. Later config entries win; unset means on.
+    yield* ctx.session.hook("context", (event) =>
+      Effect.sync(() => {
+        const configured = loaded.entries
+          .flatMap((entry) =>
+            entry.type === "document" && entry.info.compaction?.prune !== undefined ? [entry.info.compaction.prune] : [],
+          )
+          .at(-1)
+        if (configured !== false) event.messages = ForkPrune.elide(event.messages)
+      }),
     )
 
     // A new user turn starts a new run of calls.

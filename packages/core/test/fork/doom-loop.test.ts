@@ -11,9 +11,11 @@ import { Session } from "@opencode/core/session"
 import { ForkDoomLoop } from "@opencode/core/session/fork/doom-loop"
 import { SessionMessage } from "@opencode/core/session/message"
 import { Effect } from "effect"
-import { it } from "../lib/effect"
+import { Config } from "@opencode/core/config"
+import { it, testEffect } from "../lib/effect"
 import { host } from "../plugin/host"
 
+const plugin = testEffect(Config.testLayer())
 const sessionID = Session.ID.make("ses_doom_loop")
 const other = Session.ID.make("ses_doom_loop_other")
 
@@ -70,9 +72,9 @@ const run = Effect.fnUntraced(function* () {
   const interrupted: string[] = []
   const hooks: {
     before?: Callback<ToolHooks["execute.before"], Tool.Error>
-    context?: Callback<SessionContext>
+    context: Array<Callback<SessionContext>>
     prompt?: Callback<SessionPrompt>
-  } = {}
+  } = { context: [] }
   yield* ForkRuntimePlugin.Plugin.effect(
     host({
       tool: {
@@ -89,7 +91,7 @@ const run = Effect.fnUntraced(function* () {
       session: {
         hook: (name, callback) => {
           // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
-          if (name === "context") hooks.context = callback as unknown as typeof hooks.context
+          if (name === "context") hooks.context.push(callback as unknown as Callback<SessionContext>)
           // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
           if (name === "prompt") hooks.prompt = callback as unknown as typeof hooks.prompt
           return Effect.succeed({ dispose: Effect.void })
@@ -102,7 +104,7 @@ const run = Effect.fnUntraced(function* () {
       },
     }),
   )
-  if (!hooks.before || !hooks.context || !hooks.prompt) return yield* Effect.die("runtime plugin hooks missing")
+  if (!hooks.before || hooks.context.length === 0 || !hooks.prompt) return yield* Effect.die("runtime plugin hooks missing")
   const { before, context, prompt } = hooks
   return {
     interrupted,
@@ -116,15 +118,17 @@ const run = Effect.fnUntraced(function* () {
         messageID: SessionMessage.ID.make("msg_doom_loop"),
       }).pipe(Effect.flip, Effect.option),
     request: (session = sessionID) =>
-      context({
-        sessionID: session,
-        agent: Agent.ID.make("auto"),
-        model: { id: Model.ID.make("test-model"), providerID: Provider.ID.make("test") },
-        system: [],
-        messages: [Message.user("continue")],
-        tools: {},
-        options: {},
-      }),
+      Effect.forEach(context, (hook) =>
+        hook({
+          sessionID: session,
+          agent: Agent.ID.make("auto"),
+          model: { id: Model.ID.make("test-model"), providerID: Provider.ID.make("test") },
+          system: [],
+          messages: [Message.user("continue")],
+          tools: {},
+          options: {},
+        }),
+      ),
     prompt: (session = sessionID) =>
       prompt({
         sessionID: session,
@@ -136,7 +140,7 @@ const run = Effect.fnUntraced(function* () {
 })
 
 describe("fork runtime plugin doom-loop guard", () => {
-  it.effect("lets two identical calls through and refuses every later one with the steering message", () =>
+  plugin.effect("lets two identical calls through and refuses every later one with the steering message", () =>
     Effect.gen(function* () {
       const { call } = yield* run()
       const results = []
@@ -154,7 +158,7 @@ describe("fork runtime plugin doom-loop guard", () => {
     }),
   )
 
-  it.effect("stops the run at the next model request after the sixth identical call, once", () =>
+  plugin.effect("stops the run at the next model request after the sixth identical call, once", () =>
     Effect.gen(function* () {
       const { call, request, interrupted } = yield* run()
       for (const index of [1, 2, 3, 4, 5]) yield* call("read", { path: "a.ts" }, `call_${index}`)
@@ -174,7 +178,7 @@ describe("fork runtime plugin doom-loop guard", () => {
     }),
   )
 
-  it.effect("starts counting again after a different call", () =>
+  plugin.effect("starts counting again after a different call", () =>
     Effect.gen(function* () {
       const { call } = yield* run()
       yield* call("read", { path: "a.ts" }, "call_1")
@@ -185,7 +189,7 @@ describe("fork runtime plugin doom-loop guard", () => {
     }),
   )
 
-  it.effect("starts a new run of calls with each user prompt and cancels a pending stop", () =>
+  plugin.effect("starts a new run of calls with each user prompt and cancels a pending stop", () =>
     Effect.gen(function* () {
       const { call, request, prompt, interrupted } = yield* run()
       for (const index of [1, 2, 3, 4, 5, 6]) yield* call("read", { path: "a.ts" }, `call_${index}`)
@@ -196,7 +200,7 @@ describe("fork runtime plugin doom-loop guard", () => {
     }),
   )
 
-  it.effect("counts sessions independently and only interrupts the looping one", () =>
+  plugin.effect("counts sessions independently and only interrupts the looping one", () =>
     Effect.gen(function* () {
       const { call, request, interrupted } = yield* run()
       for (const index of [1, 2, 3, 4, 5, 6]) yield* call("read", { path: "a.ts" }, `call_${index}`)
@@ -208,7 +212,7 @@ describe("fork runtime plugin doom-loop guard", () => {
     }),
   )
 
-  it.effect("does not count the calls inside a Code Mode script", () =>
+  plugin.effect("does not count the calls inside a Code Mode script", () =>
     Effect.gen(function* () {
       const { call } = yield* run()
       yield* call("execute", { code: "for (;;) await tools.read({ path: 'a.ts' })" }, "outer")
