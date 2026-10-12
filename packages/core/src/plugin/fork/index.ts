@@ -8,11 +8,4 @@ import { ForkPlanPlugin } from "./plan.js"
 export const plan = ForkPlanPlugin.Plugin
 
 /** Registered after the config plugins, so their transforms see the agents and instructions config defined. */
-export const post = [ForkInstructionsPlugin.Plugin] as const
-
-/**
- * Standing mode cards and goal seeding. Not registered yet: it persists its reminders through `ctx.session.synthetic`,
- * which makes subagent completion notices disappear from the parent context (test/config/command-subagent.test.ts).
- * Register it again once the cards are injected as system parts instead.
- */
-export const modes = ForkModesPlugin.Plugin
+export const post = [ForkInstructionsPlugin.Plugin, ForkModesPlugin.Plugin] as const
