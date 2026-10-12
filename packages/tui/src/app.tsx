@@ -61,6 +61,8 @@ import { DialogModel } from "./component/dialog-model"
 import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
 import { DialogStatus } from "./component/dialog-status"
+import { DialogUsage } from "./component/dialog-usage"
+import { DialogPurgeKeys } from "./component/dialog-purge-keys"
 import { DialogConfig } from "./component/dialog-config"
 import { DialogDebug } from "./component/dialog-debug"
 import { DialogPair } from "./component/dialog-pair"
@@ -974,6 +976,29 @@ function App() {
         slash: { name: "status" },
         run: () => {
           dialog.replace(() => <DialogStatus />)
+        },
+        category: "System",
+      },
+      {
+        name: "opencode.usage",
+        title: "View usage",
+        slash: { name: "usage", aliases: ["info"] },
+        run: () => {
+          const current = route.data
+          if (current.type !== "session") {
+            toast.show({ message: "Open a session to see its usage", variant: "info" })
+            return
+          }
+          dialog.replace(() => <DialogUsage sessionID={current.sessionID} />)
+        },
+        category: "System",
+      },
+      {
+        name: "opencode.purge-keys",
+        title: "Purge credentials",
+        slash: { name: "purge-keys" },
+        run: () => {
+          dialog.replace(() => <DialogPurgeKeys />)
         },
         category: "System",
       },
