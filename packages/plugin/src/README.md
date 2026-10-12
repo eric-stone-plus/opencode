@@ -140,6 +140,24 @@ await ctx.tool.transform((tools) => {
 })
 ```
 
+A tool that touches files or spawns processes asks through the same gate as the
+built-in tools. `ctx.permission.assert` blocks until the answer:
+
+```ts
+await ctx.permission.assert({
+  sessionID: tool.sessionID,
+  agent: tool.agent,
+  action: "edit",
+  resources: ["src/index.ts"],
+  save: ["*"],
+  source: { type: "tool", messageID: tool.messageID, id: tool.id },
+})
+```
+
+It resolves when a rule allows the action or the user approves. A deny rule or
+feedback rejection rejects with a message-carrying error; a bare rejection is a
+decline — let it propagate, or the user's "no" becomes a continuation.
+
 ## Reloading A Domain
 
 When data captured by a transform changes, reload the affected domain:

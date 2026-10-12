@@ -106,6 +106,7 @@ export function host(overrides: Overrides = {}): Plugin.Context {
     },
     permission: overrides.permission ?? {
       hook: () => Effect.die("unused permission.hook"),
+      assert: () => Effect.die("unused permission.assert"),
       list: () => Effect.die("unused permission.list"),
       get: () => Effect.die("unused permission.get"),
       reply: () => Effect.die("unused permission.reply"),
