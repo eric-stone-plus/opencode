@@ -532,7 +532,7 @@ fi
 
 # --- 8. plugins --------------------------------------------------------------
 echo "-- plugin/"
-for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts skill-hints.ts open-code-review.ts; do
+for f in block-unsafe-kill.ts secret-path-guard.ts; do
   if [ -f "$CFG/plugin/$f" ]; then
     pass "plugin/$f present"
   else

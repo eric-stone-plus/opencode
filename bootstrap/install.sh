@@ -32,8 +32,8 @@
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
 #      (4 hook configs IF they exist; the opencode plugin port via step 7)
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
-#   7  plugin/: block-unsafe-kill.ts + mpskills-update.ts + secret-path-guard.ts
-#      + skill-hints.ts + open-code-review.ts copies
+#   7  plugin/: block-unsafe-kill.ts + secret-path-guard.ts copies (the V1-API plugins in
+#      plugin-v1/ are not installed until they are ported to the V2 plugin API)
 #   8  command/ + agent/ goal files (only those shipped in the bundle),
 #      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
@@ -996,7 +996,7 @@ PL="$TARGET_HOME/.config/opencode/plugin"
 # background fiber; verify.sh's log sweep watches its failure mode), so no
 # npm step is needed here. It spawns `ocr` from PATH (npm i -g
 # @alibaba-group/open-code-review on the target seat).
-for f in block-unsafe-kill.ts mpskills-update.ts secret-path-guard.ts skill-hints.ts open-code-review.ts; do
+for f in block-unsafe-kill.ts secret-path-guard.ts; do
   STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
