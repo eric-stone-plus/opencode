@@ -109,6 +109,40 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
             ),
           },
         }),
+        Spec.make("lsp", {
+          description: "LSP debugging utilities",
+          commands: [
+            Spec.make("status", { description: "Show the language servers of this location" }),
+            Spec.make("diagnostics", {
+              description: "Get diagnostics for a file",
+              params: {
+                file: Argument.String("file").pipe(
+                  Argument.withDescription("File to collect diagnostics for, absolute or relative to the working directory"),
+                ),
+              },
+            }),
+            Spec.make("symbols", {
+              description: "Search workspace symbols",
+              params: {
+                query: Argument.String("query").pipe(
+                  Argument.withDescription("Search query for workspace symbols; an empty string requests all symbols"),
+                ),
+                file: Flag.String("file").pipe(
+                  Flag.withDescription("Start the language servers matching this file before searching"),
+                  Flag.optional,
+                ),
+              },
+            }),
+            Spec.make("document-symbols", {
+              description: "Get the symbols of a document",
+              params: {
+                file: Argument.String("file").pipe(
+                  Argument.withDescription("File to list symbols for, absolute or relative to the working directory"),
+                ),
+              },
+            }),
+          ],
+        }),
       ],
     }),
     Spec.make("auth", {
