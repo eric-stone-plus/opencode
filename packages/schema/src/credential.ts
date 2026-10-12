@@ -77,3 +77,78 @@ export const CreateInput = Schema.Struct({
   value: Value,
   activate: optional(Schema.Boolean),
 }).annotate({ identifier: "Credential.CreateInput" })
+
+/**
+ * Removes every stored credential of the listed integrations, or of all integrations, and optionally
+ * sweeps other copies of the removed secret values. Every flag is off when omitted.
+ */
+export interface PurgeInput extends Schema.Schema.Type<typeof PurgeInput> {}
+export const PurgeInput = Schema.Struct({
+  integrationIDs: optional(Schema.Array(IntegrationID)),
+  /** Purge every integration; exclusive with `integrationIDs`. */
+  all: optional(Schema.Boolean),
+  /** Sweep stale copies by value in the server host's credential files and environment. */
+  files: optional(Schema.Boolean),
+  /** Redact the values in session history, saved tool output, and logs. */
+  history: optional(Schema.Boolean),
+  /** Rewrite the database file when redaction left copies in its free pages. */
+  compact: optional(Schema.Boolean),
+  /** Report what would change without changing anything. */
+  dryRun: optional(Schema.Boolean),
+}).annotate({ identifier: "Credential.PurgeInput" })
+
+export interface PurgeCredential extends Schema.Schema.Type<typeof PurgeCredential> {}
+export const PurgeCredential = Schema.Struct({
+  id: ID,
+  integrationID: IntegrationID,
+  label: Schema.String,
+  /** False while previewing or when the removal failed. */
+  removed: Schema.Boolean,
+}).annotate({ identifier: "Credential.PurgeCredential" })
+
+/** One place a copy of a secret value was found. `location` names a path, table column, or variable, never a value. */
+export interface PurgeLocation extends Schema.Schema.Type<typeof PurgeLocation> {}
+export const PurgeLocation = Schema.Struct({
+  kind: Schema.Literals([
+    "credential",
+    "auth",
+    "env",
+    "environment.d",
+    "service",
+    "systemd",
+    "process",
+    "database",
+    "tool-output",
+    "log",
+  ]),
+  location: Schema.String,
+  /** Entries, lines, variables, rows, or files, depending on the kind. */
+  count: NonNegativeInt,
+  /** An error code when the location could not be processed. */
+  error: optional(Schema.String),
+}).annotate({ identifier: "Credential.PurgeLocation" })
+
+export interface PurgeCompact extends Schema.Schema.Type<typeof PurgeCompact> {}
+export const PurgeCompact = Schema.Struct({
+  status: Schema.Literals(["done", "skipped", "failed"]),
+  reason: optional(Schema.String),
+}).annotate({ identifier: "Credential.PurgeCompact" })
+
+/** What a purge removed or, for a dry run, would remove. It never contains a secret value. */
+export interface PurgeResult extends Schema.Schema.Type<typeof PurgeResult> {}
+export const PurgeResult = Schema.Struct({
+  dryRun: Schema.Boolean,
+  credentials: Schema.Array(PurgeCredential),
+  secrets: Schema.Struct({
+    /** Distinct secret values searched for. */
+    distinct: NonNegativeInt,
+    /** Values left alone because a credential outside the purge still holds them. */
+    shared: NonNegativeInt,
+    /** Values left alone because they are too short to search for safely. */
+    short: NonNegativeInt,
+  }),
+  swept: Schema.Array(PurgeLocation),
+  /** Copies still found by the verification pass that follows a sweep. */
+  remaining: Schema.Array(PurgeLocation),
+  compact: optional(PurgeCompact),
+}).annotate({ identifier: "Credential.PurgeResult" })

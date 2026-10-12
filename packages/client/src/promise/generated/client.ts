@@ -158,6 +158,8 @@ import type {
   CredentialActivateOutput,
   CredentialRemoveInput,
   CredentialRemoveOutput,
+  CredentialPurgeInput,
+  CredentialPurgeOutput,
   ProjectListInput,
   ProjectListOutput,
   ProjectUpdateInput,
@@ -1472,6 +1474,25 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ),
+      purge: (input?: CredentialPurgeInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: CredentialPurgeOutput }>(
+          {
+            method: "POST",
+            path: `/api/credential/purge`,
+            body: {
+              integrationIDs: input?.["integrationIDs"],
+              all: input?.["all"],
+              files: input?.["files"],
+              history: input?.["history"],
+              compact: input?.["compact"],
+              dryRun: input?.["dryRun"],
+            },
+            successStatus: 200,
+            declaredStatuses: [400, 401, 409],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
     },
     project: {
       list: (input?: ProjectListInput, requestOptions?: RequestOptions) =>

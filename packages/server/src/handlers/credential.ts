@@ -1,5 +1,7 @@
 import { Credential } from "@opencode/core/credential"
-import { ConflictError } from "@opencode/protocol/errors"
+import { CredentialPurge } from "@opencode/core/credential/purge"
+import { Session } from "@opencode/core/session"
+import { ConflictError, InvalidRequestError } from "@opencode/protocol/errors"
 import { Effect } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { Api } from "../api"
@@ -49,6 +51,28 @@ export const CredentialHandler = HttpApiBuilder.group(Api, "server.credential", 
         const credential = yield* Credential.Service
         yield* credential.remove(ctx.params.credentialID)
         return HttpApiSchema.NoContent.make()
+      }),
+    )
+    .handle(
+      "credential.purge",
+      Effect.fn(function* (ctx) {
+        const selected = (ctx.payload.integrationIDs?.length ?? 0) > 0
+        if (selected === (ctx.payload.all === true))
+          return yield* new InvalidRequestError({
+            message: "Pass integrationIDs or all, not both and not neither",
+            field: selected ? "all" : "integrationIDs",
+          })
+        const purge = yield* CredentialPurge.Service
+        // Rewriting the database file blocks this server's event loop, which would stall running sessions.
+        if (ctx.payload.compact === true && ctx.payload.dryRun !== true) {
+          const session = yield* Session.Service
+          const running = yield* session.active
+          if (running.size > 0)
+            return yield* new ConflictError({
+              message: `Cannot compact the database while ${running.size} session(s) are running. Interrupt them, or stop the service and run the purge with --standalone.`,
+            })
+        }
+        return { data: yield* purge.run(ctx.payload) }
       }),
     ),
 )
