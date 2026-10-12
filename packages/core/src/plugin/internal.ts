@@ -92,6 +92,7 @@ import { CommandPlugin } from "./command.js"
 import { DeclaredProvidersPlugin } from "./fork/declared-providers.js"
 import { IdentityPlugin } from "./identity.js"
 import { ForkPlugin } from "./fork/index.js"
+import { ForkPlanExitPlugin } from "./fork/plan-exit.js"
 import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
@@ -224,6 +225,7 @@ const pre = [
   VcsGitPlugin.Plugin,
   AgentPlugin.Plugin,
   ForkPlugin.plan,
+  ForkPlanExitPlugin.Plugin,
   CommandPlugin.Plugin,
   SkillPlugin.Plugin,
   VcsHgPlugin.Plugin,
