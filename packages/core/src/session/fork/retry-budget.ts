@@ -1,9 +1,10 @@
 export * as ForkRetryBudget from "./retry-budget.js"
 
 import type { AIError } from "@opencode/ai"
+import type { Agent } from "@opencode/schema/agent"
 import { Cause, Duration, Effect, Random, Schedule } from "effect"
 
-/** Wall-clock allowance for one Step's transient failures: a provider outage or a sleeping laptop outlasts 84s. */
+/** Wall-clock allowance per Step on the unattended profiles: a provider outage or a sleeping laptop outlasts 84s. */
 export const BUDGET = Duration.toMillis("30 minutes")
 /** Longest single wait, so a recovered provider is noticed within five minutes. */
 export const MAX_GAP = Duration.toMillis("5 minutes")
@@ -19,6 +20,12 @@ export const transient = (cause: AIError) =>
   cause.reason._tag === "ProviderInternal" ||
   cause.reason._tag === "Transport" ||
   (cause.reason._tag === "InvalidProviderOutput" && cause.reason.classification === "incomplete-stream")
+
+/** The fork's walk-away profiles: a provider outage must not end a run the user is not watching. */
+const UNATTENDED: ReadonlySet<string> = new Set(["auto", "goal"])
+
+/** Every other agent keeps the upstream allowance, so an attended request fails fast and bounded. */
+export const unattended = (agent: Agent.ID) => UNATTENDED.has(agent)
 
 const requested = (cause: AIError) =>
   cause.reason._tag === "RateLimit" || cause.reason._tag === "ProviderInternal" ? cause.reason.retryAfterMs : undefined

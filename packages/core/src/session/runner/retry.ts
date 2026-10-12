@@ -71,9 +71,9 @@ export const policy = (sessionID: SessionSchema.ID) =>
     return (input: Input) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
-        const next = yield* (ForkRetryBudget.transient(input.cause) ? budgeted : step)(now, input).pipe(
-          Pull.catchDone(() => Effect.succeed(undefined)),
-        )
+        // The budget is for sessions the user walks away from; an attended request must fail fast and bounded.
+        const useBudget = ForkRetryBudget.transient(input.cause) && ForkRetryBudget.unattended(input.agent)
+        const next = yield* (useBudget ? budgeted : step)(now, input).pipe(Pull.catchDone(() => Effect.succeed(undefined)))
         if (!next) return { retry: false as const }
         const [, duration] = next
         attempt++

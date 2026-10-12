@@ -35,22 +35,22 @@ const limited = (retryAfterMs: number) =>
 
 type RetryEvent = PluginHooks.Domains["session"]["retry"]
 
-const input = (cause: AIError, hook: (event: RetryEvent) => void = () => {}) => ({
+const input = (cause: AIError, hook: (event: RetryEvent) => void = () => {}, agent = Agent.ID.make("auto")) => ({
   cause,
   error: toSessionError(cause),
-  agent: Agent.ID.make("build"),
+  agent,
   model: Model.Ref.make({ id: Model.ID.make("model"), providerID: Provider.ID.make("provider") }),
   hook: (event: RetryEvent) => Effect.sync(() => hook(event)),
   retry: SessionRunnerRetry.isRetryable(cause),
 })
 
 // Fails the same way until the policy gives up, spending each granted delay on the test clock.
-const exhaust = (cause: AIError, limit = 100) =>
+const exhaust = (cause: AIError, limit = 100, agent = Agent.ID.make("auto")) =>
   Effect.gen(function* () {
     const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry_budget"))
     const delays: number[] = []
     for (let i = 0; i < limit; i++) {
-      const decision = yield* policy(input(cause))
+      const decision = yield* policy(input(cause, () => {}, agent))
       if (!decision.retry) return delays
       delays.push(decision.delay)
       yield* TestClock.adjust(decision.delay)
@@ -103,6 +103,14 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
+  it.effect("keeps the upstream allowance for interactive agents", () =>
+    Effect.gen(function* () {
+      const delays = yield* exhaust(internal, 100, Agent.ID.make("build"))
+      expect(delays).toHaveLength(10)
+      expect(Math.max(...delays)).toBeLessThanOrEqual(12_100)
+    }),
+  )
+
   it.effect("never retries a deterministic rejection", () =>
     Effect.gen(function* () {
       expect(yield* exhaust(rejected)).toEqual([])
@@ -145,6 +153,17 @@ describe("ForkRetryBudget.transient", () => {
       expect(ForkRetryBudget.transient(limited(1_000))).toBe(true)
       expect(ForkRetryBudget.transient(unknown)).toBe(false)
       expect(ForkRetryBudget.transient(rejected)).toBe(false)
+    }),
+  )
+})
+
+describe("ForkRetryBudget.unattended", () => {
+  it.effect("covers the walk-away profiles and nothing else", () =>
+    Effect.gen(function* () {
+      expect(ForkRetryBudget.unattended(Agent.ID.make("auto"))).toBe(true)
+      expect(ForkRetryBudget.unattended(Agent.ID.make("goal"))).toBe(true)
+      expect(ForkRetryBudget.unattended(Agent.ID.make("build"))).toBe(false)
+      expect(ForkRetryBudget.unattended(Agent.ID.make("plan"))).toBe(false)
     }),
   )
 })
