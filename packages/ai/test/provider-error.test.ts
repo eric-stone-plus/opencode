@@ -546,3 +546,48 @@ describe("provider error messages", () => {
     ).toEqual([undefined, undefined, undefined, undefined])
   })
 })
+
+describe("fork provider classification", () => {
+  test("classifies Zhipu 1261 as context overflow in numeric and string form", () => {
+    const failures = [
+      classifyProviderFailure({ message: "Prompt exceeds max length", rawBody: JSON.stringify({ error: { code: 1261 } }) }),
+      classifyProviderFailure({ message: '{"error":{"code":"1261"}}' }),
+      classifyProviderFailure({ message: "request rejected", data: { error: { code: 1261 } }, status: 400 }),
+      // The V1 fork's phrase coverage stays: same code, localized message.
+      classifyProviderFailure({ message: '{"error":{"code":1261,"message":"Prompt 超长"}}', status: 400 }),
+    ]
+    expect(failures.map((failure) => failure._tag)).toEqual([
+      "InvalidRequest",
+      "InvalidRequest",
+      "InvalidRequest",
+      "InvalidRequest",
+    ])
+    expect(failures.map((failure) => (failure as { classification?: string }).classification)).toEqual([
+      "context-overflow",
+      "context-overflow",
+      "context-overflow",
+      "context-overflow",
+    ])
+  })
+
+  test("does not let a Zhipu overflow-looking code on a server error override the status", () => {
+    // 5xx is not client-scoped: the same body on a retryable status stays retryable.
+    const failure = classifyProviderFailure({
+      message: "upstream error",
+      rawBody: JSON.stringify({ error: { code: 1261 } }),
+      status: 502,
+    })
+    expect(failure._tag).toBe("ProviderInternal")
+  })
+
+  test("classifies DashScope input moderation as a non-retryable content policy rejection", () => {
+    const failure = classifyProviderFailure({
+      message: "data_inspection_failed",
+      rawBody: JSON.stringify({
+        error: { code: "data_inspection_failed", message: "Input data may contain inappropriate content." },
+      }),
+      status: 400,
+    })
+    expect(failure._tag).toBe("ContentPolicy")
+  })
+})

@@ -139,7 +139,7 @@ a *function*).
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
-| 7 | `plugin/{block-unsafe-kill.ts,mpskills-update.ts,secret-path-guard.ts,open-code-review.ts}` | copies, as-is |
+| 7 | `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}` | copies, as-is |
 | 8 | `agent/` goal file, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent). There is no `command/goal.md`: the `/goal` command was removed |
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
@@ -288,7 +288,9 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * `opencode.jsonc` semantics (provider/model tracks, plan-agent edit allowlist —
   its plans path is rewritten from `--home` on install).
 * The kill-guard battery and its five wirings.
-* Plugin set: `block-unsafe-kill.ts`, `mpskills-update.ts`, `secret-path-guard.ts`.
+* Plugin set: `block-unsafe-kill.ts`, `secret-path-guard.ts`, `local-tools.ts`
+  (drawio/marker/planning tools), `skill-hints.ts`, `mpskills-update.ts`,
+  `open-code-review.ts` — all V2-API.
 * Orphan skill `longrun-stability-audit`.
 * Goal-mode files `agent/goal.md`, `autonomy.md`,
   `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
@@ -311,22 +313,25 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   semantics* still reproduce; only rendering differs.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
-* **`plugin/mpskills-update.ts`** — shipped as-is and self-contained: on the
+* **`plugin/mpskills-update.ts`** — V2 port (2026-10-12), self-contained: on the
   first `skill` call in a 24h window it fetches the vendored upstream checkout
   under `${HOME}/.cache/opencode/`, re-runs `vendor-skills`, reinstalls to
   `~/.config/opencode/skills`, and commits. It resolves the fork checkout from
   `OPENCODE_FORK_REPO` (default `${HOME}/Documents/Development/private/agent-design/projects/opencode`)
   and reuses that checkout's configured `http.proxy` for the fetch, so a
   censored network needs no extra setup beyond the proxy the fork already has.
-* **`plugin/open-code-review.ts`** — shipped as-is from alibaba/open-code-review
-  (single-file dual-form plugin; header carries the upstream SHA). Registers
+* **`plugin/open-code-review.ts`** — V2 port (2026-10-12) of alibaba/open-code-review
+  (header carries the upstream SHA and the local modification list). Registers
   `ocr_review`/`ocr_health` tools + `/ocr-review`/`/ocr-health` commands and
   spawns `ocr` from PATH, so a target seat must provision the `ocr` CLI
   (`npm install -g @alibaba-group/open-code-review`, its `~/.opencodereview/`
   provider block, and the api_key_cmd credential helper) separately — the
-  bundle deliberately ships no ocr config. Its `@opencode-ai/plugin` runtime
-  import is converged by the fork's own config loader (background npm install
-  into the config dir); upstream's README calls that dependency out explicitly.
+  bundle deliberately ships no ocr config. The port has no runtime package
+  imports (the V1 `@opencode-ai/plugin` dependency is gone), so the config
+  loader's background npm install is no longer needed for it.
+* **`plugin/skill-hints.ts`** — V2 port (2026-10-12) of the V1 skill-hints
+  plugin: compaction and PDF nudges ride on system parts instead of synthetic
+  parts; texts and scan bounds are byte-identical to V1.
 * **Egress conditions** — the wrapper assumes mainland-CN reachability
   quirks + a local causeway proxy chain (18880 → 17878). On a box without
   causeway it degrades to direct exec (`command opencode`) after failed probes.
@@ -368,8 +373,10 @@ bootstrap/
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
-│   └── local-tools.ts            drawio/marker/planning tools (V2 port, 2026-10-12)
-├── plugin-v1/                    V1-API plugins parked until ported (not installed)
+│   ├── local-tools.ts            drawio/marker/planning tools (V2 port, 2026-10-12)
+│   ├── skill-hints.ts            compaction/PDF nudges as system parts (V2 port, 2026-10-12)
+│   ├── mpskills-update.ts        vendored-skills refresh on skill calls (V2 port, 2026-10-12)
+│   └── open-code-review.ts       ocr tools + commands (V2 port, 2026-10-12)
 ├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
@@ -389,8 +396,8 @@ bootstrap/
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
   against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
   the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
-* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts}`, the parked
-  `plugin-v1/` sources, `skills-extra/`, and the local-tools support files
+* `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}`,
+  `skills-extra/`, and the local-tools support files
   (`dotfiles/opencode/lib/drawio.py` + three skill files, deployed by
   `script/install-local-tools.ts`) are the portable source of truth: install.sh copies them
   bundle → `~/.config/agent-hooks/`, `~/.config/opencode/plugin/` and

@@ -142,7 +142,8 @@ const INVALID_REQUEST_CODES = new Set([
 ])
 // Azure OpenAI reports `content_filter` with `innererror.code` ResponsibleAIPolicyViolation.
 // OpenRouter tags provider failures with a typed `error_type`; its Responses skin also
-// emits `image_content_policy_violation` as the native code.
+// emits `image_content_policy_violation` as the native code. DashScope (Bailian) input
+// moderation rejects with `data_inspection_failed`, which no retry can clear.
 const CONTENT_POLICY_CODES = new Set([
   "content_filter",
   "content_moderation",
@@ -150,6 +151,7 @@ const CONTENT_POLICY_CODES = new Set([
   "content_policy_violation",
   "image_content_policy_violation",
   "refusal",
+  "data_inspection_failed",
 ])
 // xAI reports an invalid API key as HTTP 400 with the generic `invalid-argument` code.
 const AUTH_TEXT = /incorrect api key provided/i
@@ -163,7 +165,7 @@ const QUOTA_TEXT =
 // Bedrock Mantle reuses it for schema validation; Anthropic reports blocked output
 // under `invalid_request_error`.
 const CONTENT_POLICY_TEXT =
-  /violating our usage policy|blocked by content filtering policy|content[-_\s]?policy|rejected as a result of our safety system|detected potentially unsafe or sensitive content/i
+  /violating our usage policy|blocked by content filtering policy|content[-_\s]?policy|rejected as a result of our safety system|detected potentially unsafe or sensitive content|data_inspection_failed/i
 const SERVER_ERROR_TEXT =
   /\b(?:try again|(?:please |you can )?retry (?:the |this |your )?request|try (?:the |this |your )?request again|(?:currently |temporarily )?at capacity|overloaded|temporarily unavailable|service[-_\s]?unavailable|(?:server|internal)[-_\s]?error|server (?:is )?busy|provider returned (?:an )?error|resource[-_\s]?exhausted|upstream (?:connect|connection|request)|request buffer limit while retrying upstream)\b/i
 
@@ -238,6 +240,9 @@ export function classifyProviderFailure(input: ProviderFailure): AIError["reason
     (codes.includes("context_length_exceeded") ||
       codes.includes("model_context_window_exceeded") ||
       codes.includes("request_too_large") ||
+      zhipuOverflowCode(input.data) ||
+      zhipuOverflowCode(input.rawBody) ||
+      zhipuOverflowCode(input.message) ||
       isContextOverflow(text))
   )
     return new InvalidRequestError({ ...details, classification: "context-overflow" })
@@ -323,4 +328,17 @@ function providerCodes(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+// Zhipu (GLM) rejects oversized prompts with business code 1261 ("Prompt exceeds max
+// length"). It arrives as a JSON number, so it never reaches the string code list; the
+// matching message text is covered by the overflow patterns, but the code must be
+// checked directly or a differently-worded body loses its classification.
+function zhipuOverflowCode(value: unknown): boolean {
+  let decoded: unknown = value
+  if (typeof value === "string") decoded = Option.getOrUndefined(decodeJson(value))
+  if (!isRecord(decoded)) return false
+  const error = isRecord(decoded.error) ? decoded.error : undefined
+  const code = error?.code ?? decoded.code
+  return code === 1261 || code === "1261"
 }
