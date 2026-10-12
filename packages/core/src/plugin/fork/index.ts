@@ -1,5 +1,6 @@
 export * as ForkPlugin from "./index.js"
 
+import { ForkInstructionsPlugin } from "./instructions.js"
 import { ForkModesPlugin } from "./modes.js"
 import { ForkPlanPlugin } from "./plan.js"
 
@@ -7,4 +8,4 @@ import { ForkPlanPlugin } from "./plan.js"
 export const plan = ForkPlanPlugin.Plugin
 
 /** Registered after the config plugins, so their transforms see the agents and instructions config defined. */
-export const post = [ForkModesPlugin.Plugin] as const
+export const post = [ForkInstructionsPlugin.Plugin, ForkModesPlugin.Plugin] as const
