@@ -97,6 +97,8 @@ import { COMMAND_PALETTE_COMMAND, Keymap, type KeymapCommand } from "./context/k
 
 import { DialogVariant } from "./component/dialog-variant"
 import { destroyRenderer } from "./util/renderer"
+import { applyRenderBudget, IDLE_FPS } from "./util/render-budget"
+import { animating } from "./ui/animation"
 import { cliErrorMessage, errorFormat } from "./util/error"
 import { AttentionProvider } from "./context/attention"
 import { StorageProvider, useStorage } from "./context/storage"
@@ -233,7 +235,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
     Effect.gen(function* () {
       const options = {
         externalOutputMode: "passthrough",
-        targetFps: 60,
+        targetFps: IDLE_FPS,
+        maxFps: IDLE_FPS,
         gatherStats: false,
         exitOnCtrlC: false,
         useKittyKeyboard: {},
@@ -288,7 +291,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       )
       renderer.once("destroy", () => shutdown.openUnsafe())
       yield* Effect.tryPromise(async () => {
-        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(1000)) ?? "dark"
+        // A terminal that never answers the theme query (Ptyxis, tmux) must not hold up first paint;
+        // the THEME_MODE event corrects the mode afterwards.
+        const mode = handoff?.mode ?? (await renderer.waitForThemeMode(100)) ?? "dark"
         if (renderer.isDestroyed) return
 
         await render(() => {
@@ -483,6 +488,10 @@ function App() {
     paletteTimer = setTimeout(afterPaint, 50)
   }
   onMount(() => renderer.once(CliRenderEvents.FRAME, afterFrame))
+  // Re-evaluated after every frame: a running session or an in-flight transition lifts the budget from the next frame on.
+  const budgetFrame = () => applyRenderBudget(renderer, data.session.active().length > 0 || animating())
+  onMount(() => renderer.on(CliRenderEvents.FRAME, budgetFrame))
+  onCleanup(() => renderer.off(CliRenderEvents.FRAME, budgetFrame))
   onCleanup(() => {
     renderer.off(CliRenderEvents.FRAME, afterFrame)
     if (paletteTimer) clearTimeout(paletteTimer)

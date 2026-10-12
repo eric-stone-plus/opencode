@@ -3,6 +3,9 @@ import { createMemo, createSignal, Match, Show, Switch } from "solid-js"
 import { contextUsage, formatContextUsage } from "../../util/session"
 import { useTerminalDimensions } from "@opentui/solid"
 import { stringWidth } from "../../util/string-width"
+import { useConfig } from "../../config"
+import { Locale } from "../../util/locale"
+import { formatTokenRate, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -16,6 +19,7 @@ export function PromptFooter(props: {
   showDetails: boolean
 }) {
   const dimensions = useTerminalDimensions()
+  const config = useConfig().data
   const [liveHovered, setLiveHovered] = createSignal(false)
   const subagents = createMemo(() => {
     if (!props.sessionID) return 0
@@ -35,15 +39,21 @@ export function PromptFooter(props: {
     if (!props.sessionID) return []
     const session = props.context.data.session.get(props.sessionID)
     if (!session) return []
+    const messages = props.context.data.session.message.list(props.sessionID)
     const usage = contextUsage(
-      props.context.data.session.message.list(props.sessionID),
+      messages,
       props.context.data.location.model.list(session.location),
       session.revert?.messageID,
     )
     const cost = props.context.data.session.cost(props.sessionID)
+    // Speed cells follow the TPS setting; both are omitted until a settled step has measured them.
+    const ttft = config.session.tps ? timeToFirstToken(messages) : undefined
+    const rate = config.session.tps ? tokensPerSecond(messages) : undefined
     return [
       usage ? formatContextUsage(usage.tokens, usage.percent) : undefined,
       cost > 0 ? money.format(cost) : undefined,
+      ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
+      rate === undefined ? undefined : formatTokenRate(rate),
     ].filter((item): item is string => Boolean(item))
   })
   const live = createMemo(() => Boolean(subagents() || shells()))

@@ -32,6 +32,9 @@ type AnimationTask = (now: number) => boolean
 const tasks = new Set<AnimationTask>()
 let timer: ReturnType<typeof setInterval> | undefined
 
+/** Whether any animation is in flight; the render budget polls it to keep transitions smooth. */
+export const animating = () => timer !== undefined
+
 const smoothstep = (progress: number) => progress * progress * (3 - 2 * progress)
 
 export function spring(options: { visualDuration: number; restDelta?: number; restSpeed?: number }): Transition {

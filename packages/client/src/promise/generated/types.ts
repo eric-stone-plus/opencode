@@ -861,7 +861,13 @@ export type ReferenceSource = ReferenceLocalSource | ReferenceGitSource
 
 export type WorktreeList = Array<WorktreeDirectory>
 
-export type SessionStatsModelUsage = { model: ModelRef; steps: number; tokens: TokenUsageInfo; cost: MoneyUSD }
+export type SessionStatsModelUsage = {
+  model: ModelRef
+  steps: number
+  compactions: number
+  tokens: TokenUsageInfo
+  cost: MoneyUSD
+}
 
 export type SessionMessageModelSelected = {
   id: SessionMessageID
@@ -1988,6 +1994,7 @@ export type SessionStatsInfo = {
   subagents: number
   prompts: number
   steps: number
+  compactions: number
   tokens: TokenUsageInfo
   cost: MoneyUSD
   tools: SessionStatsTools
@@ -3000,6 +3007,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["from"]
@@ -3007,6 +3015,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["to"]
@@ -3014,13 +3023,23 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["project"]
+  readonly session?: {
+    readonly from?: number | undefined
+    readonly to?: number | undefined
+    readonly project?: string | undefined
+    readonly session?: string | undefined
+    readonly timezone?: string | undefined
+    readonly tools?: "none" | "summary" | "detail" | undefined
+  }["session"]
   readonly timezone?: {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["timezone"]
@@ -3028,6 +3047,7 @@ export type SessionStatsInput = {
     readonly from?: number | undefined
     readonly to?: number | undefined
     readonly project?: string | undefined
+    readonly session?: string | undefined
     readonly timezone?: string | undefined
     readonly tools?: "none" | "summary" | "detail" | undefined
   }["tools"]
