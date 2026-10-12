@@ -10,6 +10,7 @@ import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { Model } from "./model.js"
 import { AISDKNative } from "./aisdk-native.js"
+import { ForkPricing } from "./fork/pricing.js"
 import { Provider } from "./provider.js"
 import { Variant } from "./variant.js"
 import { KV } from "./kv.js"
@@ -89,6 +90,7 @@ function nativePackage(provider: SourceProvider, model?: SourceModel) {
 
 function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
   const providers: Snapshot[] = []
+  const named = new Map<string, Model.Info["cost"][]>()
   // Every source (file, KV, bundled snapshot, fetch) funnels through here, so the vendor allowlist cannot be bypassed.
   for (const item of Object.values(ModelsDev.restrict(input))) {
     const providerID = Provider.ID.make(item.id)
@@ -102,11 +104,23 @@ function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
     } satisfies Provider.Info
     const models: Model.Info[] = []
     for (const model of Object.values(item.models)) {
-      const baseCost = cost(model.cost)
+      // Never invent prices (the V1 fork's cascade): a row that declares no rates falls back to its
+      // `canonical_model_id` chain and then to same-name votes across the catalog, so subscription
+      // plans show the price of the flagship model they alias instead of a silent zero.
+      const declared = cost(model.cost)
+      const baseCost =
+        (ForkPricing.hasPrice(model.cost) ? undefined : ForkPricing.estimate(input, item.id, model.id)) ?? declared
       const id = Model.ID.make(model.id)
       const base = modelInfo(item, id, model, { cost: baseCost })
       const variants = Variant.resolve({ ...base, package: nativePackage(item, model) }, supports(model))
       models.push({ ...base, variants })
+      // The name table answers later for config-declared providers whose models the catalog never carried.
+      if (ForkPricing.pricedModel(baseCost)) {
+        const key = model.id.toLowerCase()
+        const rows = named.get(key)
+        if (rows === undefined) named.set(key, [baseCost])
+        else rows.push(baseCost)
+      }
       for (const [mode, options] of Object.entries(model.experimental?.modes ?? {})) {
         const modeID = Model.ID.make(`${model.id}-${mode}`)
         models.push(
@@ -121,6 +135,7 @@ function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
     }
     providers.push({ info, models, environment: [...item.env] })
   }
+  ForkPricing.publishNamed(named)
   return providers
 }
 

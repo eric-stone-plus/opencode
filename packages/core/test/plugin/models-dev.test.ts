@@ -962,3 +962,24 @@ describe("ModelsDevPlugin", () => {
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "fixtures", "models-dev-reasoning.json")))),
   )
 })
+
+// The fork's price cascade (fork/pricing.ts): zero-priced subscription rows resolve to the
+// flagship they alias, so plan usage is priced instead of silently reading $0.
+describe("fork pricing in the live catalog", () => {
+  it.effect("estimates zero-priced subscription rows during normalize", () =>
+    Effect.gen(function* () {
+      const service = yield* ModelsDev.Service
+      const snapshot = yield* service.get()
+      const row = (providerID: string, modelID: string) =>
+        snapshot
+          .find((entry) => String(entry.info.id) === providerID)
+          ?.models.find((model) => String(model.id) === modelID)
+      // canonical chain: xiaomi-token-plan-cn/mimo-v2.6-pro -> xiaomi/mimo-v2.6-pro
+      expect(row("xiaomi-token-plan-cn", "mimo-v2.6-pro")?.cost[0]).toMatchObject({ input: 0.435, output: 0.87 })
+      // canonical chain: zhipuai-coding-plan/glm-5.3 -> zhipuai/glm-5.3
+      expect(row("zhipuai-coding-plan", "glm-5.3")?.cost[0]).toMatchObject({ input: 1.4, output: 4.4 })
+      // declared prices stay untouched
+      expect(row("deepseek", "deepseek-flash")?.cost[0]).toMatchObject({ input: 0.15, output: 0.6 })
+    }).pipe(Effect.provide(models(path.join(import.meta.dir, "../../src/models-dev/snapshot.txt")))),
+  )
+})
