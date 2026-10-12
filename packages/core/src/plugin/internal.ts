@@ -103,6 +103,7 @@ import { OptimizePlugin } from "./optimize.js"
 import { VcsGitPlugin } from "./vcs/git.js"
 import { VerbosityPlugin } from "./verbosity.js"
 import { WarmingPlugin } from "./warming.js"
+import { LSPPlugin } from "./fork/lsp.js"
 import { WellKnownPlugin } from "../wellknown/plugin.js"
 
 const services = [
@@ -246,6 +247,7 @@ const pre = [
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,
+  LSPPlugin.Plugin,
   WarmingPlugin.Plugin,
 ] as const satisfies readonly InternalPlugin[]
 
