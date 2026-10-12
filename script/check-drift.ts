@@ -35,15 +35,16 @@ type Mapping = {
 export const MANAGED_FILES: Mapping[] = [
   { source: "dotfiles/opencode/AGENTS.goal.md", destination: ".config/opencode/AGENTS.goal.md" },
   { source: "dotfiles/opencode/autonomy.md", destination: ".config/opencode/autonomy.md" },
-  { source: "tui.json", destination: ".config/opencode/tui.json" },
+  { source: "cli.json", destination: ".config/opencode/cli.json" },
   { source: "bootstrap/agent-hooks/block-unsafe-kill.sh", destination: ".config/agent-hooks/block-unsafe-kill.sh", home: true },
   { source: "bootstrap/agent-hooks/cases.json", destination: ".config/agent-hooks/cases.json", home: true },
   { source: "bootstrap/agent-hooks/run-cases.sh", destination: ".config/agent-hooks/run-cases.sh", home: true },
   { source: "bootstrap/agent-hooks/run-cases.ts", destination: ".config/agent-hooks/run-cases.ts", home: true },
   { source: "bootstrap/plugin/block-unsafe-kill.ts", destination: ".config/opencode/plugin/block-unsafe-kill.ts" },
-  { source: "bootstrap/plugin/mpskills-update.ts", destination: ".config/opencode/plugin/mpskills-update.ts" },
+  // The V1-API plugins (mpskills-update, skill-hints, open-code-review) live in
+  // bootstrap/plugin-v1/ and are deliberately not installed until they are ported
+  // to the V2 plugin API, so they are not managed files.
   { source: "bootstrap/plugin/secret-path-guard.ts", destination: ".config/opencode/plugin/secret-path-guard.ts" },
-  { source: "bootstrap/plugin/open-code-review.ts", destination: ".config/opencode/plugin/open-code-review.ts" },
   { source: "bootstrap/shell/bashrc-opencode-block.sh", destination: ".config/opencode/shell/bashrc-opencode-block.sh" },
   { source: "bootstrap/config/environment.d/10-opencode-db.conf", destination: ".config/environment.d/10-opencode-db.conf" },
   { source: "dotfiles/opencode/tools/planning.ts", destination: ".config/opencode/tools/planning.ts" },

@@ -6,9 +6,9 @@
 #     --home <path>   audit a scratch home instead of $HOME (testing).
 #
 # Prints PASS / WARN / FAIL per check; exits non-zero if anything FAILED.
-# Safety rule: `opencode db path` CREATES and MIGRATES the database as a side
-# effect (Database.Service init), so it is only ever executed when the DB file
-# already exists. This script must never be the thing that creates the DB.
+# Safety rule: the V1 `opencode db path` CREATES and MIGRATES the database as
+# a side effect (Database.Service init); V2's `debug paths db` only resolves the
+# path. The probe below stays guarded so a V1 binary can never create the DB.
 
 set -u
 
@@ -122,7 +122,9 @@ fi
 # --- 3. version / channel ----------------------------------------------------
 echo "-- version"
 if [ -n "$OC_BIN" ]; then
+  # V2 prints "opencode v0.0.0-main-<digits>"; V1 printed the bare "0.0.0-main-<digits>".
   ver=$(run_oc --version 2>/dev/null | head -n 1)
+  ver=${ver#opencode v}
   case "$ver" in
     0.0.0-main-[0-9]*) pass "version $ver (fork build, channel=main)" ;;
     "") warn "opencode --version produced no output" ;;
@@ -161,24 +163,24 @@ fi
 echo "-- canonical DB"
 if [ -f "$DB" ]; then
   pass "canonical DB exists: $DB"
-  # Guarded: opencode db path creates+migrates the DB — only run when it exists.
-  # Even then it runs migrations on open; expect an error on a non-opencode DB.
+  # V2 resolves the path without opening the DB (`debug paths db`); a V1 binary
+  # would need `db path`, which creates+migrates the DB, so it stays guarded.
   if [ -n "$OC_BIN" ]; then
     errf=$(mktemp "${TMPDIR:-/tmp}/verify-dbpath.XXXXXX")
     # Pin the DB name (the call must never pick a channel DB) and compare
     # canonicalized paths: $TARGET_HOME may contain symlinks and the binary
     # may print either form.
-    resolved=$(run_oc db path 2>"$errf" | head -n 1)
+    resolved=$(run_oc debug paths db 2>"$errf" | head -n 1)
     errtail=$(tr '\n' ' ' <"$errf" | cut -c1-160)
     rm -f "$errf"
     resolved_r=""
     [ -n "$resolved" ] && resolved_r=$(canon "$resolved")
     if [ -n "$resolved" ] && [ "$resolved_r" = "$(canon "$DB")" ]; then
-      pass "opencode db path resolves to the canonical DB ($resolved)"
+      pass "db path resolves to the canonical DB ($resolved)"
     elif [ -z "$resolved" ]; then
-      warn "opencode db path produced no path (inconclusive): $errtail"
+      warn "db path produced no path (inconclusive): $errtail"
     else
-      fail "opencode db path resolved to '$resolved' (expected $DB) $errtail"
+      fail "db path resolved to '$resolved' (expected $DB) $errtail"
     fi
   else
     warn "db path resolution skipped (no binary)"
@@ -201,7 +203,7 @@ PYEOF
     fi
   fi
 else
-  warn "canonical DB not present yet: $DB (fresh seat — skipped 'opencode db path' on purpose: it would CREATE and MIGRATE the DB)"
+  warn "canonical DB not present yet: $DB (fresh seat — the db path probe is skipped on purpose: a V1 binary would CREATE and MIGRATE the DB)"
 fi
 
 # --- 6. auth providers (names only, never values) ----------------------------

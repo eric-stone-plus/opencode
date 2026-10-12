@@ -57,6 +57,12 @@ export function run(
   argv: string[],
   options: { cwd: string; signal: AbortSignal; timeout: number; input?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
+  // Reject NaN/Infinity/negative timeouts at the door: setTimeout coerces NaN
+  // to 1 ms (instant SIGTERM of the child) and Bun prints TimeoutNaNWarning
+  // straight to fd 2, garbling the alt-screen TUI.
+  if (!Number.isFinite(options.timeout) || options.timeout <= 0) {
+    throw new Error(`run(): timeout must be a positive finite number of milliseconds, got ${options.timeout}`)
+  }
   options.signal.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {

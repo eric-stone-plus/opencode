@@ -322,7 +322,7 @@
     "auto": {
       "description": "Autonomous mode. Never asks, never blocks: adopts the recommended option and runs to completion.",
       "mode": "primary",
-      "color": "success",
+      "color": "#7fd88f",
       // Variant applies via the same-model gate (agent model must equal
       // the resolved model). deepseek-flash's effort set is
       // {low, high, max}; "max" is the top and is sent as
@@ -348,7 +348,7 @@
     "goal": {
       "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
       "mode": "primary",
-      "color": "error",
+      "color": "#e06c75",
       "model": "deepseek/deepseek-flash",
       "variant": "max",
       "permission": {
@@ -364,7 +364,7 @@
     // plan_exit: build is never in plan mode, and plan_exit prompts via
     // Question.Service directly, bypassing the question gate.
     "build": {
-      "color": "secondary",
+      "color": "#5c9cf5",
       "permission": {
         "*": "allow",
         "question": "allow",
@@ -380,7 +380,7 @@
     // ".local/..." and "*/.local/..." make the allowlist user-agnostic across
     // homes, for both absolute and slash-less matcher inputs.
     "plan": {
-      "color": "warning",
+      "color": "#f5a742",
       "permission": {
         "*": "allow",
         "question": "allow",

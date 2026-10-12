@@ -4,6 +4,14 @@ import { homedir } from "node:os"
 import path from "node:path"
 import { location, permit, run } from "../lib/local-tools"
 
+// Coerce the Zod default ourselves: the registry now parses args through Zod
+// before execute, but an older binary hands undefined straight through and
+// `undefined * 1000` poisons setTimeout with NaN (TimeoutNaNWarning on fd 2).
+function timeoutMs(seconds: number | undefined): number {
+  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : 300
+  return Math.floor(value) * 1000
+}
+
 export default tool({
   description:
     "Convert a local PDF to workspace Markdown, JSON, or HTML with the separately installed Marker CLI. Conversion has no network access or cloud LLM. Default CPU fast mode reads digital PDF text; local OCR is opt-in and needs cached OCR weights. engine=text explicitly uses pdftotext for a lightweight text-only Markdown fallback. Output directory must be new; cancellation/timeout removes partial output.",
@@ -44,7 +52,7 @@ export default tool({
       const artifact = path.join(temporary, "artifacts")
       await mkdir(artifact)
       if (args.engine === "text") {
-        const text = await run(command, { cwd: temporary, signal: context.abort, timeout: args.timeout_seconds * 1000 })
+        const text = await run(command, { cwd: temporary, signal: context.abort, timeout: timeoutMs(args.timeout_seconds) })
         await writeFile(path.join(artifact, `${path.basename(input, path.extname(input))}.md`), text, { mode: 0o600 })
       } else {
         const config = path.join(temporary, "marker.json")
@@ -62,7 +70,7 @@ export default tool({
         await run(argv, {
           cwd: temporary,
           signal: context.abort,
-          timeout: args.timeout_seconds * 1000,
+          timeout: timeoutMs(args.timeout_seconds),
           env: {
             HOME: home,
             PATH: process.env.PATH,
