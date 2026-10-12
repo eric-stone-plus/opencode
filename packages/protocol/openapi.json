@@ -1177,6 +1177,21 @@
             "required": false
           },
           {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Session.ID"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
+          },
+          {
             "name": "timezone",
             "in": "query",
             "schema": {
@@ -1248,7 +1263,7 @@
             }
           }
         },
-        "description": "Aggregate local session activity, usage, and tool reliability for a time range.",
+        "description": "Aggregate local session activity, usage, and tool reliability for a time range, optionally limited to one session and its subagents.",
         "summary": "Get session statistics"
       }
     },
@@ -19628,6 +19643,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "compactions": {
+            "type": "integer",
+            "minimum": 0
+          },
           "tokens": {
             "$ref": "#/components/schemas/TokenUsage.Info"
           },
@@ -19664,6 +19683,7 @@
           "subagents",
           "prompts",
           "steps",
+          "compactions",
           "tokens",
           "cost",
           "tools",
@@ -19684,6 +19704,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "compactions": {
+            "type": "integer",
+            "minimum": 0
+          },
           "tokens": {
             "$ref": "#/components/schemas/TokenUsage.Info"
           },
@@ -19691,7 +19715,7 @@
             "$ref": "#/components/schemas/Money.USD"
           }
         },
-        "required": ["model", "steps", "tokens", "cost"],
+        "required": ["model", "steps", "compactions", "tokens", "cost"],
         "additionalProperties": false
       },
       "SessionStats.ToolTotals": {

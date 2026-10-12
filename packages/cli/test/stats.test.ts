@@ -15,6 +15,7 @@ const stats: SessionStatsInfo = {
   subagents: 1,
   prompts: 4,
   steps: 6,
+  compactions: 0,
   tokens: { input: 10_000, output: 2_000, reasoning: 1_000, cache: { read: 5_000, write: 500 } },
   cost: 12.34,
   tools,
@@ -28,6 +29,7 @@ const stats: SessionStatsInfo = {
     {
       model: { providerID: "anthropic", id: "sonnet" },
       steps: 6,
+      compactions: 0,
       tokens: { input: 10_000, output: 2_000, reasoning: 1_000, cache: { read: 5_000, write: 500 } },
       cost: 12.34,
     },
@@ -83,6 +85,7 @@ describe("stats rendering", () => {
           {
             model: { providerID: "anthropic", id: "haiku" },
             steps: 2,
+            compactions: 0,
             tokens: { input: 2_000, output: 500, reasoning: 0, cache: { read: 1_000, write: 0 } },
             cost: 1.25,
           },

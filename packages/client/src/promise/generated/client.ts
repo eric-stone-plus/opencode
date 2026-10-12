@@ -566,6 +566,7 @@ export function make(options: ClientOptions) {
               from: input?.["from"],
               to: input?.["to"],
               project: input?.["project"],
+              session: input?.["session"],
               timezone: input?.["timezone"],
               tools: input?.["tools"],
             },

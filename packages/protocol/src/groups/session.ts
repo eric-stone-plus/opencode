@@ -204,6 +204,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           from: Schema.NumberFromString.pipe(Schema.optional),
           to: Schema.NumberFromString.pipe(Schema.optional),
           project: Project.ID.pipe(Schema.optional),
+          session: Session.ID.pipe(Schema.optional),
           timezone: Schema.String.pipe(Schema.optional),
           tools: SessionStats.ToolMode.pipe(Schema.optional),
         }),
@@ -213,7 +214,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         OpenApi.annotations({
           identifier: "experimental.session.stats",
           summary: "Get session statistics",
-          description: "Aggregate local session activity, usage, and tool reliability for a time range.",
+          description:
+            "Aggregate local session activity, usage, and tool reliability for a time range, optionally limited to one session and its subagents.",
         }),
       ),
     )

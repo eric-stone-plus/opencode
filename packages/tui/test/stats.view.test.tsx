@@ -24,6 +24,7 @@ test("stats shows only this year and returns after errors or success", async () 
         subagents: 0,
         prompts: 1,
         steps: 1,
+        compactions: 0,
         tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 20, write: 0 } },
         cost: 0,
         tools: { mode: "none" },

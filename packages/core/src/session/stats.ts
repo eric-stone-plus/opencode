@@ -6,6 +6,7 @@ import { Model } from "@opencode/schema/model"
 import { Money } from "@opencode/schema/money"
 import { Project } from "@opencode/schema/project"
 import { Provider } from "@opencode/schema/provider"
+import type { Session } from "@opencode/schema/session"
 import { Event } from "@opencode/schema/event"
 import { SessionEvent } from "@opencode/schema/session-event"
 import { ToolMode } from "@opencode/schema/session-stats"
@@ -18,6 +19,8 @@ type Input = {
   readonly from?: number
   readonly to?: number
   readonly projectID?: Project.ID
+  /** Limits the report to this session and its subagents. */
+  readonly sessionID?: Session.ID
   readonly timezone?: string
   readonly tools?: ToolMode
 }
@@ -32,7 +35,8 @@ type Tokens = {
 type MessageRow = {
   sessionID: string
   parentID: string | null
-  type: "user" | "assistant"
+  type: "user" | "assistant" | "compaction"
+  status: string | null
   timeCreated: number
   providerID: string | null
   modelID: string | null
@@ -61,6 +65,7 @@ type ToolSummaryRow = {
 type ModelAggregate = {
   model: Model.Ref
   steps: number
+  compactions: number
   tokens: Tokens
   cost: number
 }
@@ -87,6 +92,15 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
   const to = input.to ?? Date.now()
   if (input.from !== undefined && input.from >= to) return yield* new InvalidRangeError({ from: input.from, to })
   const project = input.projectID === undefined ? sql`` : sql`AND session.project_id = ${input.projectID}`
+  // Subagents can nest (`experimental.subagent_depth`), so a session's tree is every descendant, not its children.
+  const tree = sql`
+    WITH RECURSIVE tree(id) AS (
+      SELECT id FROM ${SessionTable} WHERE id = ${input.sessionID ?? ""}
+      UNION ALL
+      SELECT child.id FROM ${SessionTable} AS child JOIN tree ON child.parent_id = tree.id
+    )
+    SELECT id FROM tree`
+  const scope = input.sessionID === undefined ? sql`` : sql`AND session.id IN (${tree})`
   const from =
     input.from ??
     (yield* db
@@ -99,6 +113,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
           AND message.time_created < ${to}
           AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
           ${project}
+          ${scope}
       `,
       )
       .pipe(Effect.orDie))?.time ??
@@ -113,11 +128,28 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
   const totals = {
     prompts: 0,
     steps: 0,
+    compactions: 0,
     tokens: emptyTokens(),
     cost: 0,
   }
   const toolTotals = { calls: 0, succeeded: 0, failed: 0, unfinished: 0 }
   const dateKey = makeDateKey(input.timezone)
+  const modelOf = (row: MessageRow) => {
+    const key = `${row.providerID}/${row.modelID}#${row.variant ?? ""}`
+    const model = models.get(key) ?? {
+      model: {
+        providerID: Provider.ID.make(row.providerID!),
+        id: Model.ID.make(row.modelID!),
+        variant: row.variant ? Model.VariantID.make(row.variant) : undefined,
+      },
+      steps: 0,
+      compactions: 0,
+      tokens: emptyTokens(),
+      cost: 0,
+    }
+    models.set(key, model)
+    return model
+  }
 
   yield* Effect.forEach(
     ranges,
@@ -129,6 +161,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             message.session_id AS sessionID,
             session.parent_id AS parentID,
             message.type AS type,
+            json_extract(message.data, '$.status') AS status,
             message.time_created AS timeCreated,
             json_extract(message.data, '$.model.providerID') AS providerID,
             json_extract(message.data, '$.model.id') AS modelID,
@@ -141,11 +174,12 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             json_extract(message.data, '$.cost') AS cost
           FROM ${SessionMessageTable} AS message
           JOIN ${SessionTable} AS session ON session.id = message.session_id
-          WHERE message.type IN ('user', 'assistant')
+          WHERE message.type IN ('user', 'assistant', 'compaction')
             AND message.time_created >= ${range.from}
             AND message.time_created < ${range.to}
             AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
             ${project}
+            ${scope}
         `,
         )
         .pipe(
@@ -160,25 +194,28 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
                   return
                 }
 
-                totals.steps++
                 const tokens = rowTokens(row)
+                if (row.type === "compaction") {
+                  // A completed compaction carries the summed spend of its calls, which the usage events below
+                  // already put in the totals, so it only attributes that spend to the model that ran it. A failed
+                  // one has no model and stays in the totals alone.
+                  if (row.status !== "completed") return
+                  totals.compactions++
+                  if (!row.providerID || !row.modelID) return
+                  const model = modelOf(row)
+                  model.compactions++
+                  model.cost += row.cost ?? 0
+                  addTokens(model.tokens, tokens)
+                  return
+                }
+
+                totals.steps++
                 addTokens(totals.tokens, tokens)
                 totals.cost += row.cost ?? 0
                 const day = dateKey(row.timeCreated)
                 activity.set(day, (activity.get(day) ?? 0) + 1)
                 if (!row.providerID || !row.modelID) return
-                const key = `${row.providerID}/${row.modelID}#${row.variant ?? ""}`
-                const model = models.get(key) ?? {
-                  model: {
-                    providerID: Provider.ID.make(row.providerID),
-                    id: Model.ID.make(row.modelID),
-                    variant: row.variant ? Model.VariantID.make(row.variant) : undefined,
-                  },
-                  steps: 0,
-                  tokens: emptyTokens(),
-                  cost: 0,
-                }
-                models.set(key, model)
+                const model = modelOf(row)
                 model.steps++
                 model.cost += row.cost ?? 0
                 addTokens(model.tokens, tokens)
@@ -208,6 +245,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
                 AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
                 AND json_extract(content.value, '$.type') = 'tool'
                 ${project}
+                ${scope}
             )
             SELECT
               count(*) AS calls,
@@ -250,6 +288,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
             AND (session.fork_session_id IS NULL OR message.time_created >= session.time_created)
             AND json_extract(content.value, '$.type') = 'tool'
             ${project}
+            ${scope}
         `,
           )
           .pipe(
@@ -282,7 +321,12 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
   const ids = yield* db
     .select({ id: SessionTable.id })
     .from(SessionTable)
-    .where(input.projectID === undefined ? undefined : eq(SessionTable.project_id, input.projectID))
+    .where(
+      and(
+        input.projectID === undefined ? undefined : eq(SessionTable.project_id, input.projectID),
+        input.sessionID === undefined ? undefined : sql`${SessionTable.id} IN (${tree})`,
+      ),
+    )
     .all()
     .pipe(Effect.orDie)
   const events = (yield* Effect.forEach(
@@ -321,6 +365,7 @@ export const get = Effect.fn("SessionStats.get")(function* (input: Input = {}) {
     subagents: subagents.size,
     prompts: totals.prompts,
     steps: totals.steps,
+    compactions: totals.compactions,
     tokens: totals.tokens,
     cost: Money.USD.make(totals.cost),
     tools:
