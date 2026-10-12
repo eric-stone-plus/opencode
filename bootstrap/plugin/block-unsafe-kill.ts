@@ -1,4 +1,11 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
+
+// OpenCode V2 plugin: the only runtime-facing code is the default export at the bottom (one
+// `execute.before` hook on the `shell` tool, V1 name `bash`). Everything above is pure string
+// logic that must stay semantically identical to agent-hooks/block-unsafe-kill.sh; the
+// parity battery (agent-hooks/run-cases.ts) checks both against cases.json. The file has no
+// runtime imports on purpose: the battery imports it outside OpenCode, where the host's
+// `@opencode/plugin` module does not exist.
 
 const PRE = "(^|[\\s;|&()\"'`$/])"
 const KILL = new RegExp(PRE + "(kill|killall)([\\s;|-]|$)")
@@ -25,8 +32,6 @@ const CODE_SHELLS = new Set([
 const PYTHONS = new Set(["python", "python3", "python2", "pypy", "pypy3"])
 const CODE_E = new Set(["perl", "ruby", "node", "deno", "lua"])
 const PAYLOAD_CMDS = new Set(["eval", "ssh"])
-// Bare shell interpreters: anything that reads COMMANDS from a pipe/stdin.
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"])
 // Wrappers that only schedule the real command (sudo nice -n 5 pkill …): a
 // kill-family word after one of these is still an invocation. Prefix executors
 // (taskset/nsenter/setpriv/strace/…) exec their argv unchanged, so they are
@@ -994,14 +999,25 @@ function inspect(cmd: string): string | undefined {
   return undefined
 }
 
-export default (async () => {
-  return {
-    "tool.execute.before": async (input, output) => {
-      if (input.tool !== "bash") return
-      const cmd = String((output.args as { command?: unknown })?.command ?? "")
+// V1 denied by throwing from `tool.execute.before`; V2 `execute.before` keeps the same contract
+// (a failed hook fails the call before the tool runs), and the thrown message reaches the model
+// as the tool error. `bash` stays in the set so a plugin that aliases the shell tool to its V1
+// name cannot slip past the guard (aliases resolve after hooks, so the hook sees the alias).
+const SHELL_TOOLS = new Set(["shell", "bash"])
+
+export default {
+  id: "block-unsafe-kill",
+  async setup(ctx) {
+    await ctx.tool.hook("execute.before", (event) => {
+      if (!SHELL_TOOLS.has(event.tool)) return
+      const input = event.input
+      const cmd =
+        typeof input === "object" && input !== null && "command" in input && typeof input.command === "string"
+          ? input.command
+          : ""
       if (!cmd) return
       const reason = inspect(cmd)
       if (reason) throw new Error(`Blocked: ${reason} ${FIX}`)
-    },
-  }
-}) satisfies Plugin
+    })
+  },
+} satisfies Plugin.Plugin
