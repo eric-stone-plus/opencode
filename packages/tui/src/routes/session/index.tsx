@@ -322,7 +322,11 @@ export function Session(props: {
     on([descendantSessionIDs, () => client.connection.status()], ([sessionIDs, status]) => {
       if (status !== "connected") return
       void Promise.allSettled(
-        sessionIDs.flatMap((sessionID) => [data.session.permission.sync(sessionID), data.session.form.sync(sessionID)]),
+        sessionIDs.flatMap((sessionID) => [
+          data.session.permission.sync(sessionID),
+          data.session.form.sync(sessionID),
+          data.session.todo.sync(sessionID),
+        ]),
       )
     }),
   )
@@ -336,6 +340,7 @@ export function Session(props: {
         data.session.sync(sessionID, { children: true }),
         data.session.permission.sync(sessionID).catch(() => undefined),
         data.session.form.sync(sessionID).catch(() => undefined),
+        data.session.todo.sync(sessionID).catch(() => undefined),
       ])
       const info = data.session.get(sessionID)
       if (!info) {
