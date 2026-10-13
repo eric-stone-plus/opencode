@@ -2058,6 +2058,13 @@ async function renderDiffViewer(
     height: options.height ?? 20,
     kittyKeyboard: options.kittyKeyboard,
   })
+  // Native frames arrive slower on loaded CI runners than locally. Keep @opentui's default of 20
+  // passes for local runs by widening the budget only when the environment asks for it.
+  const widen = process.env.CI ? { maxPasses: 100 } : {}
+  const waitFor = app.waitFor.bind(app)
+  const waitForFrame = app.waitForFrame.bind(app)
+  app.waitFor = (predicate, options) => waitFor(predicate, { ...widen, ...options })
+  app.waitForFrame = (predicate, options) => waitForFrame(predicate, { ...widen, ...options })
   await app.waitFor(() => commands.has("diff.open"))
   if (options.open !== false && current().type !== "plugin") commands.get("diff.open")!.run()
   if (options.open !== false) await app.waitFor(() => commands.has("diff.close"))
