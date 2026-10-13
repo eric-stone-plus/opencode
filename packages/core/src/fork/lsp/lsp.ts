@@ -292,6 +292,8 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
     )
     if (existing || generation !== state.generation) {
       yield* Scope.close(clientScope, Exit.void)
+      // The caller is about to use it; stamp it like clientsFor does so a sweep cannot stop it first.
+      if (existing) existing.lastUsedAt = Date.now()
       return existing?.client
     }
     const running: Running = { client, scope: clientScope, lastUsedAt: Date.now(), inFlight: 0 }
@@ -335,7 +337,12 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
         const running = state.clients.find(
           (item) => item.client.root === root && item.client.serverID === server.id && item.client.alive(),
         )
-        if (running) return running.client
+        if (running) {
+          // The caller is about to use this client; stamp it now so a sweep landing between the handout and
+          // the request cannot stop it (use() then keeps it fresh for the duration).
+          running.lastUsedAt = Date.now()
+          return running.client
+        }
         const retryAt = state.cooldown.get(key)
         if (retryAt !== undefined && Date.now() < retryAt) return undefined
         const inflight = state.spawning.get(key)
@@ -414,7 +421,8 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
 
   // Servers idle past the TTL, and the least recently used ones above the cap, are stopped; a later use
   // starts them again. Stopping closes the client scope, the same path `reset` takes, so the exit observer
-  // stays quiet and nothing is marked broken.
+  // stays quiet and nothing is marked broken. A busy client is never stopped, so the cap is soft: it can be
+  // exceeded while more than `maxClients` clients are all in use.
   const reap = Effect.gen(function* () {
     const now = Date.now()
     const victims = state.clients.filter(

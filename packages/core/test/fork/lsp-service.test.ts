@@ -566,4 +566,42 @@ describe("LSP service reaping", () => {
         expect(yield* lsp.hover({ file, line: 0, character: 0 })).toEqual([{ contents: "hint" }])
       }),
   )
+
+  const starting = (id: string, extensions: string[]) => {
+    const spawns: string[] = []
+    const server: LSPServer.Info = {
+      id,
+      extensions,
+      root: (_file, ctx) => Effect.succeed(ctx.directory),
+      spawn: (root) => {
+        spawns.push(root)
+        return Effect.succeed(fakeHandle(root))
+      },
+    }
+    return { server, spawns }
+  }
+
+  const clock = starting("fake", [".repro"])
+  test(
+    "refreshes the idle clock on every use so repeated reads keep the server",
+    {
+      entries: [lspDocument(true)],
+      builtIns: [clock.server],
+      idleTimeToLive: "400 millis",
+      sweepInterval: "25 millis",
+    },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const file = path.join(h.directory, "sample.repro")
+        yield* write(file)
+        // Reads 100 ms apart across more than the 400 ms idle window: if activity did not refresh the clock
+        // the sweep would stop the client mid-loop and the next read would start a second one.
+        yield* lsp.touchFile(file)
+        for (let index = 0; index < 6; index++) {
+          yield* Effect.sleep("100 millis")
+          yield* lsp.touchFile(file)
+        }
+        expect(clock.spawns).toHaveLength(1)
+      }),
+  )
 })
