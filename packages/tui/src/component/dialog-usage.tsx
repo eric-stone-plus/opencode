@@ -1,87 +1,231 @@
-import { TextAttributes } from "@opentui/core"
-import { For, Show, createResource } from "solid-js"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { For, Show, createMemo, createResource, createSignal } from "solid-js"
 import { useClient } from "../context/client"
+import { useData } from "../context/data"
 import { useDialog } from "../ui/dialog"
 import { useTheme } from "../context/theme"
+import { useClipboard } from "../context/clipboard"
+import { useToast } from "../ui/toast"
+import { Keymap } from "../context/keymap"
+import { useConfig } from "../config"
+import { getScrollAcceleration } from "../util/scroll"
+import { errorMessage } from "../util/error"
+import { Locale } from "../util/locale"
+import { contextUsage } from "../util/session"
 import { Spinner } from "./spinner"
-import { usageModels, usageTotals, zeroCostModels } from "../util/usage"
+import {
+  USAGE_ESTIMATE_NOTE,
+  USAGE_SOURCE_NOTE,
+  usageActivity,
+  usageModels,
+  usageTotals,
+  zeroCostNote,
+  type UsageRow,
+} from "../util/usage"
+
+type Section = { readonly title?: string; readonly rows: UsageRow[]; readonly continuous?: boolean }
+
+function contextBar(percent: number) {
+  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)))
+  return `[${"█".repeat(filled)}${"░".repeat(10 - filled)}] ${percent}%`
+}
 
 /**
- * Session usage from `session.stats`, which reads the recorded step usage from the database
- * (not the loaded message window), scoped to this session and its subagents.
+ * Session usage report, laid out as labelled sections over `session.stats` — recorded step
+ * usage read from the database (lifetime, session + subagent tree), never the loaded message
+ * window. The body scrolls; the header and the copy row stay pinned.
  */
 export function DialogUsage(props: { sessionID: string }) {
   const client = useClient()
+  const data = useData()
   const dialog = useDialog()
   const theme = useTheme().surface("dialog")
+  const clipboard = useClipboard()
+  const toast = useToast()
+  const dimensions = useTerminalDimensions()
+  const config = useConfig().data
+  const [copied, setCopied] = createSignal(false)
+  let scroll: ScrollBoxRenderable | undefined
+
+  dialog.setSize("large")
+
   const [stats] = createResource(() => props.sessionID, (sessionID) =>
     client.api.session.stats({ session: sessionID, tools: "summary" }),
   )
+  const session = createMemo(() => data.session.get(props.sessionID))
+  const messages = createMemo(() => data.session.message.list(props.sessionID))
+  const context = createMemo(() => {
+    const info = session()
+    if (!info) return undefined
+    return contextUsage(messages(), data.location.model.list(info.location), info.revert?.messageID)
+  })
+
+  const sections = createMemo<Section[]>(() => {
+    const value = stats()
+    if (!value) return []
+    const info = session()
+    const meta: UsageRow[] = []
+    if (info) {
+      if (info.title) meta.push({ label: "Title", value: info.title })
+      meta.push({ label: "Session ID", value: info.id })
+      meta.push({ label: "Working directory", value: info.location.directory })
+      meta.push({ label: "Created", value: new Date(info.time.created).toISOString() })
+      if (info.agent) meta.push({ label: "Agent", value: info.agent })
+      if (info.model) meta.push({ label: "Model", value: `${info.model.providerID}/${info.model.id}` })
+      if (info.parentID) meta.push({ label: "Parent session", value: info.parentID })
+    }
+    const window: UsageRow[] = []
+    const usage = context()
+    if (usage) {
+      window.push({ label: "Context tokens", value: Locale.number(usage.tokens) })
+      window.push({
+        label: "Context window",
+        value: usage.limit ? Locale.number(usage.limit) : "window size unknown for this model",
+      })
+      if (usage.percent !== undefined) window.push({ label: "Context used", value: contextBar(usage.percent) })
+    }
+    return [
+      ...(meta.length ? [{ title: "Session", rows: meta }] : []),
+      { title: "Usage (this session)", rows: [...usageTotals(value), ...usageActivity(value)] },
+      ...(value.models.length > 1 ? [{ title: "By model", rows: usageModels(value), continuous: true }] : []),
+      ...(window.length ? [{ title: "Context window", rows: window }] : []),
+    ]
+  })
+
+  const notes = createMemo(() => {
+    const value = stats()
+    if (!value) return []
+    const zero = zeroCostNote(value)
+    return [USAGE_SOURCE_NOTE, ...(zero ? [zero] : []), USAGE_ESTIMATE_NOTE]
+  })
+
+  // One `label: value` line per row so the copied block stays greppable.
+  const reportText = createMemo(() =>
+    [
+      ...sections().flatMap((section) => [
+        ...(section.title ? [`${section.title}:`] : []),
+        ...section.rows.map((row) => `${row.label}: ${row.value}`),
+      ]),
+      ...notes(),
+    ].join("\n"),
+  )
+
+  const copySessionID = () => {
+    void clipboard
+      .write(props.sessionID)
+      .then(() => {
+        setCopied(true)
+        toast.show({ message: "Session ID copied to clipboard", variant: "info" })
+      })
+      .catch(toast.error)
+  }
+
+  const copyReport = () => {
+    void clipboard
+      .write(reportText())
+      .then(() => {
+        setCopied(true)
+        toast.show({ message: "Usage report copied to clipboard", variant: "info" })
+      })
+      .catch(toast.error)
+  }
+
+  Keymap.createLayer(() => ({
+    mode: "modal",
+    commands: [
+      { bind: "c", title: "Copy session ID", group: "Dialog", run: copySessionID },
+      { bind: "y", title: "Copy usage report", group: "Dialog", run: copyReport },
+    ],
+  }))
+
+  useKeyboard((event) => {
+    if (event.name === "up") return scroll?.scrollBy(-1)
+    if (event.name === "down") return scroll?.scrollBy(1)
+    if (event.name === "pageup") return scroll?.scrollBy(-20)
+    if (event.name === "pagedown") return scroll?.scrollBy(20)
+    if (event.name === "home") return scroll?.scrollTo(0)
+    if (event.name === "end" && scroll) return scroll.scrollTo(scroll.scrollHeight)
+  })
 
   return (
     <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
       <box flexDirection="row" justifyContent="space-between">
         <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
-          Usage
+          Session Usage
         </text>
         <text fg={theme.text.muted} onMouseUp={() => dialog.clear()}>
           esc
         </text>
       </box>
-      <Show
-        when={stats()}
-        fallback={
-          <Spinner color={theme.text.muted}>Loading usage…</Spinner>
-        }
-      >
-        {(data) => (
-          <box gap={1}>
-            <box>
-              <For each={usageTotals(data())}>
-                {(row) => (
-                  <box flexDirection="row" gap={1}>
-                    <text fg={theme.text.muted} flexShrink={0}>
-                      {row.label}
-                    </text>
-                    <text fg={theme.text.base} wrapMode="word">
-                      {row.value}
-                    </text>
+      <Show when={stats.error}>
+        {(error) => (
+          <text fg={theme.text.base} wrapMode="word">
+            Usage unavailable: {errorMessage(error())}
+          </text>
+        )}
+      </Show>
+      <Show when={!stats.error}>
+        <Show when={stats()} fallback={<Spinner color={theme.text.muted}>Loading usage…</Spinner>}>
+          <scrollbox
+            id="usage-scroll"
+            ref={(element: ScrollBoxRenderable) => (scroll = element)}
+            maxHeight={Math.max(6, Math.floor(dimensions().height * 0.7) - 6)}
+            contentOptions={{ minHeight: 0 }}
+            scrollbarOptions={{ visible: false }}
+            scrollAcceleration={getScrollAcceleration(config)}
+          >
+            <box gap={1}>
+              <For each={sections()}>
+                {(section) => (
+                  <box>
+                    <Show when={section.title}>
+                      <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+                        {section.title}
+                      </text>
+                    </Show>
+                    <For each={section.rows}>
+                      {(row) =>
+                        section.continuous ? (
+                          <text wrapMode="word">
+                            <span style={{ fg: theme.text.base }}>{row.label}</span>{" "}
+                            <span style={{ fg: theme.text.muted }}>{row.value}</span>
+                          </text>
+                        ) : (
+                          <box flexDirection="row" gap={1}>
+                            <text flexShrink={0} fg={theme.text.muted}>
+                              {row.label.padEnd(18)}
+                            </text>
+                            <text fg={theme.text.base} wrapMode="word">
+                              {row.value}
+                            </text>
+                          </box>
+                        )
+                      }
+                    </For>
                   </box>
                 )}
               </For>
+              <For each={notes()}>
+                {(note) => (
+                  <text fg={theme.text.muted} wrapMode="word">
+                    {note}
+                  </text>
+                )}
+              </For>
             </box>
-            <Show when={data().models.length > 0}>
-              <box gap={0}>
-                <text fg={theme.text.muted}>Models</text>
-                <For each={usageModels(data())}>
-                  {(row) => (
-                    <box flexDirection="row" gap={1}>
-                      <text fg={theme.text.base} wrapMode="none">
-                        {row.label}
-                      </text>
-                      <text fg={theme.text.muted} wrapMode="none">
-                        {row.detail}
-                      </text>
-                      <text fg={theme.text.base} wrapMode="none">
-                        {row.cost}
-                      </text>
-                    </box>
-                  )}
-                </For>
-              </box>
-            </Show>
-            <Show when={zeroCostModels(data()).length > 0}>
-              <text fg={theme.text.muted} wrapMode="word">
-                Subscription plans have no per-token prices, so{" "}
-                {zeroCostModels(data())
-                  .map((entry) => entry.model.id)
-                  .join(", ")}{" "}
-                record $0 — not a measurement of what was actually billed.
-              </text>
-            </Show>
-          </box>
-        )}
+          </scrollbox>
+        </Show>
       </Show>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text.muted}>c session id · y copy report · ↑/↓ scroll</text>
+        <text onMouseUp={copyReport}>
+          <span style={{ fg: copied() ? theme.text.feedback.success.base : theme.text.base }}>
+            <b>{copied() ? "✓ copied" : "copy"}</b>{" "}
+          </span>
+          <span style={{ fg: theme.text.muted }}>y</span>
+        </text>
+      </box>
     </box>
   )
 }

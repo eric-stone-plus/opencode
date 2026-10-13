@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionStatsInfo } from "@opencode/client"
-import { cost, modelLabel, usageModels, usageTotals, zeroCostModels } from "../src/util/usage"
+import {
+  cost,
+  modelLabel,
+  usageActivity,
+  usageModels,
+  usageTotals,
+  zeroCostModels,
+  zeroCostNote,
+} from "../src/util/usage"
 
 const stats = (input: Partial<SessionStatsInfo> = {}): SessionStatsInfo =>
   ({
@@ -28,41 +36,65 @@ describe("usage cost formatting", () => {
   })
 })
 
+describe("model labels", () => {
+  test("names provider, model and variant", () => {
+    expect(modelLabel({ providerID: "deepseek", id: "deepseek-flash", variant: "max" })).toBe(
+      "deepseek/deepseek-flash#max",
+    )
+    expect(modelLabel({ providerID: "deepseek", id: "deepseek-flash" })).toBe("deepseek/deepseek-flash")
+  })
+})
+
 describe("usage totals", () => {
-  test("names cost, tokens and activity", () => {
+  test("lists every token class and the cost", () => {
     const rows = usageTotals(stats())
-    expect(rows[0]).toEqual({ label: "Cost", value: "$0.42" })
-    expect(rows[1]?.value).toBe("12.0K in · 400 out")
-    expect(rows[2]?.value).toBe("3 prompts · 5 steps · 1 compaction")
-    expect(rows.find((row) => row.label === "Tools")?.value).toBe("7 calls · 1 failed")
+    expect(rows.map((row) => row.label)).toEqual([
+      "Input tokens",
+      "Output tokens",
+      "Reasoning tokens",
+      "Cache read tokens",
+      "Cache write tokens",
+      "Cost",
+    ])
+    expect(rows[0]?.value).toBe("12.0K")
+    expect(rows[5]?.value).toBe("$0.42")
   })
 
-  test("omits the scope row for a lone session and cache classes at zero", () => {
+  test("keeps zero classes visible so the shape does not shift", () => {
     const rows = usageTotals(stats())
-    expect(rows.some((row) => row.label === "Scope")).toBe(false)
-    expect(rows.some((row) => row.value.includes("cache"))).toBe(false)
+    expect(rows.find((row) => row.label === "Cache write tokens")?.value).toBe("0")
+    expect(rows.find((row) => row.label === "Reasoning tokens")?.value).toBe("0")
   })
+})
 
-  test("shows the scope row once subagents are counted", () => {
-    const rows = usageTotals(stats({ subagents: 2 }))
+describe("usage activity", () => {
+  test("counts prompts, steps, tools, compactions and scope", () => {
+    const rows = usageActivity(stats({ subagents: 2, sessions: 1 }))
+    expect(rows.find((row) => row.label === "Prompts")?.value).toBe("3")
+    expect(rows.find((row) => row.label === "Steps")?.value).toBe("5")
+    expect(rows.find((row) => row.label === "Tool calls")?.value).toBe("7 · 1 failed")
+    expect(rows.find((row) => row.label === "Compactions")?.value).toBe("1")
     expect(rows.find((row) => row.label === "Scope")?.value).toBe("1 session · 2 subagents")
   })
 
-  test("adds cache classes when present", () => {
-    const rows = usageTotals(
-      stats({ tokens: { input: 1_000, output: 10, reasoning: 5, cache: { read: 2_000, write: 300 } } }),
+  test("omits tools, compactions and scope when absent", () => {
+    const rows = usageActivity(
+      stats({
+        compactions: 0,
+        tools: { mode: "summary", totals: { calls: 0, succeeded: 0, failed: 0, unfinished: 0 } },
+      }),
     )
-    expect(rows[1]?.value).toBe("1.0K in · 10 out · 5 reasoning · 2.0K cache read · 300 cache write")
+    expect(rows.map((row) => row.label)).toEqual(["Prompts", "Steps"])
   })
 })
 
 describe("per-model usage", () => {
-  test("ranks by cost and labels provider and model", () => {
+  test("ranks by cost, labels variants, and keeps steps", () => {
     const rows = usageModels(
       stats({
         models: [
           {
-            model: { id: "deepseek-flash", providerID: "deepseek" },
+            model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn", variant: "high" },
             steps: 2,
             compactions: 0,
             tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -78,9 +110,12 @@ describe("per-model usage", () => {
         ],
       }),
     )
-    expect(rows.map((row) => row.label)).toEqual(["deepseek/deepseek-flash", "zhipuai-coding-plan/glm-5.3"])
-    expect(rows[0]?.detail).toBe("2 steps · 15 tokens")
-    expect(rows[1]?.detail).toBe("4 steps · 33 tokens · 1 compaction")
+    expect(rows.map((row) => row.label)).toEqual([
+      "xiaomi-token-plan-cn/mimo-v2.6-pro#high",
+      "zhipuai-coding-plan/glm-5.3",
+    ])
+    expect(rows[0]?.value).toBe("$0.10 · 2 steps · 15 tokens")
+    expect(rows[1]?.value).toBe("$0.00 · 4 steps · 33 tokens")
   })
 
   test("flags zero-cost models that consumed tokens", () => {
@@ -105,5 +140,23 @@ describe("per-model usage", () => {
       }),
     )
     expect(flagged.map((entry) => modelLabel(entry.model))).toEqual(["zhipuai-coding-plan/glm-5.3"])
+  })
+
+  test("explains zero-cost models, and stays silent when every model has a price", () => {
+    const value = stats({
+      models: [
+        {
+          model: { id: "glm-5.3", providerID: "zhipuai-coding-plan" },
+          steps: 4,
+          compactions: 0,
+          tokens: { input: 20, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+          cost: 0,
+        },
+      ],
+    })
+    expect(zeroCostNote(value)).toBe(
+      "Subscription plans have no per-token prices, so zhipuai-coding-plan/glm-5.3 record $0 — not a measurement of what was actually billed.",
+    )
+    expect(zeroCostNote(stats())).toBeUndefined()
   })
 })

@@ -69,6 +69,7 @@ export function contextUsage(
   return {
     tokens,
     percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : undefined,
+    limit: model?.limit.context,
   }
 }
 

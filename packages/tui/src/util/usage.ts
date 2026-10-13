@@ -10,64 +10,64 @@ export function cost(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value)
 }
 
-export function tokenSummary(tokens: SessionStatsInfo["tokens"]) {
-  const parts = [`${Locale.number(tokens.input)} in`, `${Locale.number(tokens.output)} out`]
-  if (tokens.reasoning) parts.push(`${Locale.number(tokens.reasoning)} reasoning`)
-  if (tokens.cache.read) parts.push(`${Locale.number(tokens.cache.read)} cache read`)
-  if (tokens.cache.write) parts.push(`${Locale.number(tokens.cache.write)} cache write`)
-  return parts.join(" · ")
+/** `provider/model`, with `#variant` when the session recorded one — variants price and count separately. */
+export function modelLabel(model: SessionStatsModelUsage["model"]) {
+  return `${model.providerID}/${model.id}${model.variant ? `#${model.variant}` : ""}`
 }
 
-/** The headline block: cost, tokens, and the activity counts of the session tree. */
+/**
+ * The Usage block: every token class the database recorded, then the recorded spend.
+ * All five classes are always listed, zero included, so the shape does not shift between sessions.
+ */
 export function usageTotals(stats: SessionStatsInfo): UsageRow[] {
-  const rows: UsageRow[] = [
+  return [
+    { label: "Input tokens", value: Locale.number(stats.tokens.input) },
+    { label: "Output tokens", value: Locale.number(stats.tokens.output) },
+    { label: "Reasoning tokens", value: Locale.number(stats.tokens.reasoning) },
+    { label: "Cache read tokens", value: Locale.number(stats.tokens.cache.read) },
+    { label: "Cache write tokens", value: Locale.number(stats.tokens.cache.write) },
     { label: "Cost", value: cost(stats.cost) },
-    { label: "Tokens", value: tokenSummary(stats.tokens) },
-    {
-      label: "Activity",
-      value: `${stats.prompts} prompt${stats.prompts === 1 ? "" : "s"} · ${stats.steps} step${
-        stats.steps === 1 ? "" : "s"
-      } · ${stats.compactions} compaction${stats.compactions === 1 ? "" : "s"}`,
-    },
   ]
+}
+
+/** Activity counts: what happened, not what it cost. */
+export function usageActivity(stats: SessionStatsInfo): UsageRow[] {
+  const rows: UsageRow[] = [
+    { label: "Prompts", value: Locale.number(stats.prompts) },
+    { label: "Steps", value: Locale.number(stats.steps) },
+  ]
+  const tools = stats.tools.mode === "none" ? undefined : stats.tools.totals
+  if (tools && tools.calls > 0) {
+    rows.push({
+      label: "Tool calls",
+      value: `${Locale.number(tools.calls)}${tools.failed > 0 ? ` · ${Locale.number(tools.failed)} failed` : ""}`,
+    })
+  }
+  if (stats.compactions > 0) rows.push({ label: "Compactions", value: Locale.number(stats.compactions) })
   if (stats.sessions > 1 || stats.subagents > 0) {
     rows.push({
       label: "Scope",
-      value: `${stats.sessions} session${stats.sessions === 1 ? "" : "s"}${
-        stats.subagents > 0 ? ` · ${stats.subagents} subagent${stats.subagents === 1 ? "" : "s"}` : ""
-      }`,
-    })
-  }
-  if (stats.tools.mode !== "none" && stats.tools.totals.calls > 0) {
-    const failed = stats.tools.totals.failed
-    rows.push({
-      label: "Tools",
-      value: `${stats.tools.totals.calls} call${stats.tools.totals.calls === 1 ? "" : "s"}${
-        failed > 0 ? ` · ${failed} failed` : ""
+      value: `${stats.sessions} session${stats.sessions === 1 ? "" : "s"} · ${stats.subagents} subagent${
+        stats.subagents === 1 ? "" : "s"
       }`,
     })
   }
   return rows
 }
 
-export function modelLabel(model: SessionStatsModelUsage["model"]) {
-  return `${model.providerID}/${model.id}`
-}
-
 /** Per-model rows; the sort puts the biggest spender first so the list reads as a ranking. */
-export function usageModels(stats: SessionStatsInfo): Array<{ label: string; detail: string; cost: string }> {
+export function usageModels(stats: SessionStatsInfo): UsageRow[] {
   return stats.models
     .toSorted((a, b) => b.cost - a.cost || b.steps - a.steps || modelLabel(a.model).localeCompare(modelLabel(b.model)))
-    .map((entry) => ({
-      label: modelLabel(entry.model),
-      detail:
-        `${count(entry.steps, "step")} · ${Locale.number(entry.tokens.input + entry.tokens.output + entry.tokens.reasoning)} tokens` +
-        (entry.compactions > 0 ? ` · ${count(entry.compactions, "compaction")}` : ""),
-      cost: cost(entry.cost),
-    }))
+    .map((entry) => {
+      const tokens =
+        entry.tokens.input + entry.tokens.output + entry.tokens.reasoning + entry.tokens.cache.read + entry.tokens.cache.write
+      return {
+        label: modelLabel(entry.model),
+        value: `${cost(entry.cost)} · ${entry.steps} step${entry.steps === 1 ? "" : "s"} · ${Locale.number(tokens)} tokens`,
+      }
+    })
 }
-
-const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`
 
 /**
  * Models that consumed tokens but recorded no cost. Subscription plans carry no per-token
@@ -79,3 +79,20 @@ export function zeroCostModels(stats: SessionStatsInfo) {
     (entry) => entry.cost === 0 && entry.tokens.input + entry.tokens.output + entry.tokens.reasoning > 0,
   )
 }
+
+/** The zero-cost sentence, or undefined when every model recorded a price. */
+export function zeroCostNote(stats: SessionStatsInfo) {
+  const models = zeroCostModels(stats)
+  if (models.length === 0) return undefined
+  return `Subscription plans have no per-token prices, so ${models
+    .map((entry) => modelLabel(entry.model))
+    .join(", ")} record $0 — not a measurement of what was actually billed.`
+}
+
+/** Where the figures come from: recorded step usage, not the loaded message window. */
+export const USAGE_SOURCE_NOTE =
+  "Source: recorded step usage from the database — lifetime totals for this session and its subagent tree, not the loaded message window."
+
+/** What a cost number is: registry list prices, not an invoice. */
+export const USAGE_ESTIMATE_NOTE =
+  "Note: flat-rate and subscription plans carry no per-token prices; their spend is estimated at canonical registry list prices, not billed amounts."
