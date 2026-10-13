@@ -49,6 +49,9 @@ export function DialogUsage(props: { sessionID: string }) {
   let scroll: ScrollBoxRenderable | undefined
 
   dialog.setSize("large")
+  // V2's Dialog defaults to a fixed height/4 offset; a report reads centred, and the
+  // scrollbox below keeps the body reachable when the viewport is short (landscape).
+  dialog.setCentered(true)
 
   const [stats] = createResource(() => props.sessionID, (sessionID) =>
     client.api.session.stats({ session: sessionID, tools: "summary" }),

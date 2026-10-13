@@ -128,6 +128,16 @@ test("usage dialog reports sections, notes, and copies the report", async () => 
     expect(frame).toContain("Prompts")
     expect(frame).toContain("c session id · y copy report")
 
+    // V2's Dialog defaults to a top-quarter offset; /usage opts into both-axes centring so
+    // the margins above and below stay balanced on any viewport (a short landscape was the
+    // reported case, where the old offset pushed the body off the bottom).
+    const lines = frame.replace(/\n$/, "").split("\n")
+    const heading = lines.findIndex((line) => line.includes("Session Usage"))
+    const footer = lines.findIndex((line) => line.includes("c session id"))
+    expect(heading).toBeGreaterThanOrEqual(2)
+    expect(footer).toBeGreaterThan(heading)
+    expect(Math.abs(heading - (lines.length - 1 - footer))).toBeLessThanOrEqual(3)
+
     // The tail of the report (By model, notes) lives below the fold.
     const scroll = app.renderer.root.findDescendantById("usage-scroll")
     if (!(scroll instanceof ScrollBoxRenderable)) throw new Error("usage scrollbox missing")
