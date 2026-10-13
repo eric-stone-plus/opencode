@@ -21,7 +21,10 @@
   color: var(--v2-text-text-base);
   font-variant-numeric: tabular-nums;
   user-select: none;
-  pointer-events: none;
+  /* The hover card writes an inline pointer-events style that would otherwise win over this rule.
+     The preview is non-interactive, so claiming it here keeps a click that lands on the preview
+     (the pointer can still rest on the tab) reaching the control underneath. */
+  pointer-events: none !important;
 
   transform-origin: var(--kb-hovercard-content-transform-origin);
   /* Entrance: instant (trying no animation — may revert to 120ms ease-out). */
