@@ -57,6 +57,7 @@ test("prompt footer separates simultaneous subagent, shell, and usage status", a
     await app.renderOnce()
     expect(app.captureCharFrame()).toContain("ctrl+j 1 subagent · 1 shell · $1.00")
     expect(app.captureCharFrame()).toContain("ctrl+p commands")
+    expect(app.captureCharFrame()).not.toContain("↓")
 
     await app.mockMouse.moveTo(2, 0)
     const live = app.renderer.root.getChildren()[0]?.getChildren()[0]?.getChildren()[0]
@@ -99,6 +100,7 @@ test("prompt footer can hide details", async () => {
               id: "message",
               type: "assistant",
               model: { providerID: "provider", id: "model" },
+              content: [],
               time: { created: 0 },
               tokens: { input: 1_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
             },
@@ -152,7 +154,10 @@ test("prompt footer can hide details", async () => {
   }
 })
 
-function speedContext(messages: unknown[]) {
+function speedContext(
+  messages: unknown[],
+  session: Record<string, unknown> = { id: "session", location: { directory: "/workspace" } },
+) {
   const color = RGBA.fromInts(200, 200, 200)
   return {
     location: { directory: "/workspace" },
@@ -162,7 +167,7 @@ function speedContext(messages: unknown[]) {
       session: {
         family: () => ["session"],
         status: () => "idle",
-        get: () => ({ id: "session", location: { directory: "/workspace" } }),
+        get: () => session,
         cost: () => 1,
         message: { list: () => messages },
       },
@@ -199,6 +204,53 @@ test("prompt footer shows the measured speed cells after context and cost", asyn
     expect(app.captureCharFrame()).toContain("1.0K (10%) · $1.00 · TTFT avg 900ms · 40 tok/s")
   } finally {
     app.renderer.destroy()
+  }
+})
+
+test("prompt footer ticks a generated-output count that estimates the streaming step", async () => {
+  const render = (reasoningChars: number) => {
+    const streaming = {
+      id: "streaming",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "provider", id: "model" },
+      content: [{ type: "reasoning", text: "x".repeat(reasoningChars) }],
+      time: { created: 10_000 },
+    }
+    const session = {
+      id: "session",
+      location: { directory: "/workspace" },
+      tokens: { input: 0, output: 2_000, reasoning: 400, cache: { read: 0, write: 0 } },
+    }
+    return testRender(
+      () => (
+        <ConfigProvider config={createTuiResolvedConfig()}>
+          <PromptFooter
+            context={speedContext([streaming], session)}
+            sessionID="session"
+            mode="normal"
+            showDetails={true}
+          />
+        </ConfigProvider>
+      ),
+      { width: 100, height: 1 },
+    )
+  }
+  const early = await render(400)
+  try {
+    await early.renderOnce()
+    // 2400 settled + ceil(400 / 4) streaming = 2500
+    expect(early.captureCharFrame()).toContain("↓ 2.5K")
+  } finally {
+    early.renderer.destroy()
+  }
+  const later = await render(1_200)
+  try {
+    await later.renderOnce()
+    // the same settled receipts, more streamed content: the count moved
+    expect(later.captureCharFrame()).toContain("↓ 2.7K")
+  } finally {
+    later.renderer.destroy()
   }
 })
 

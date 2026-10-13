@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { stringWidth } from "../../util/string-width"
 import { useConfig } from "../../config"
 import { Locale } from "../../util/locale"
-import { formatTokenRate, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
+import { formatTokenRate, streamingOutputEstimate, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -46,6 +46,18 @@ export function PromptFooter(props: {
       session.revert?.messageID,
     )
     const cost = props.context.data.session.cost(props.sessionID)
+    // Generated output (visible + reasoning) over the family the cost cell covers: settled
+    // receipts plus a chars/4 estimate of the in-flight step, so the count ticks while the
+    // model streams and settles to the receipt. Same estimate as codewhale's strip.
+    const own = (id: string) => {
+      const info = props.context.data.session.get(id)
+      return (info?.tokens?.output ?? 0) + (info?.tokens?.reasoning ?? 0)
+    }
+    const family = props.context.data.session.family(props.sessionID)
+    const settled = session.parentID
+      ? own(props.sessionID)
+      : (family.length > 0 ? family : [props.sessionID]).reduce((total, id) => total + own(id), 0)
+    const generated = settled + streamingOutputEstimate(messages)
     // Speed cells follow the TPS setting; both are omitted until a settled step has measured them.
     const ttft = config.session.tps ? timeToFirstToken(messages) : undefined
     const rate = config.session.tps ? tokensPerSecond(messages) : undefined
@@ -54,6 +66,7 @@ export function PromptFooter(props: {
       cost > 0 ? money.format(cost) : undefined,
       ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
       rate === undefined ? undefined : formatTokenRate(rate),
+      generated > 0 ? `↓ ${Locale.number(generated)}` : undefined,
     ].filter((item): item is string => Boolean(item))
   })
   const live = createMemo(() => Boolean(subagents() || shells()))

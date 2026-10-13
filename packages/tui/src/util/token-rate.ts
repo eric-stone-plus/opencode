@@ -50,6 +50,26 @@ export function timeToFirstToken(messages: readonly SessionMessageInfo[]) {
 }
 
 /**
+ * Rough count of the tokens the in-flight assistant step has produced so far: one token per
+ * four characters (ceil) of every text and reasoning part received — the same estimate
+ * codewhale's strip uses for its output count while a completion streams. Reasoning counts
+ * because it occupies most of the wall time on a reasoning model. Settled steps contribute
+ * nothing (their receipts are the session totals) and no step streaming means zero.
+ */
+export function streamingOutputEstimate(messages: readonly SessionMessageInfo[]) {
+  const active = messages.findLast(
+    (message): message is Step => message.type === "assistant" && message.time.completed === undefined,
+  )
+  if (!active) return 0
+  let chars = 0
+  for (const part of active.content) {
+    if (part.type === "text" || part.type === "reasoning") chars += part.text.length
+  }
+  if (chars === 0) return 0
+  return Math.floor((chars + 3) / 4)
+}
+
+/**
  * Format an output rate: one decimal below 10 tok/s, integer otherwise. Rounds exact binary ties half-to-even like
  * Rust's `{rate:.N}` (7.55 gives "7.5", 0.25 gives "0.2", 10.5 gives "10"), which `toFixed` does not: it rounds ties
  * away from zero. A tie is exactly a value whose `rate * 2^(digits+1)` is an odd integer.

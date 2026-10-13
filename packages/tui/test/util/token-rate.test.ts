@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageAssistant, SessionMessageInfo } from "@opencode/client"
-import { formatRate, formatTokenRate, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
+import { formatRate, formatTokenRate, streamingOutputEstimate, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
 
 function step(input: {
   created: number
@@ -50,6 +50,10 @@ const user = (created: number): SessionMessageInfo => ({
   id: `user_${created}`,
   text: "",
   time: { created },
+})
+const chunk = (type: "text" | "reasoning", text: string): SessionMessageAssistant["content"][number] => ({
+  type,
+  text,
 })
 
 describe("util.token-rate", () => {
@@ -164,6 +168,48 @@ describe("util.token-rate", () => {
     test("is undefined without any step", () => {
       expect(timeToFirstToken([])).toBeUndefined()
       expect(timeToFirstToken([user(0)])).toBeUndefined()
+    })
+  })
+
+  describe("streamingOutputEstimate", () => {
+    test("estimates the in-flight step at one token per four characters, rounding up", () => {
+      expect(streamingOutputEstimate([step({ created: 0, content: [chunk("text", "abcd")] })])).toBe(1)
+      expect(streamingOutputEstimate([step({ created: 0, content: [chunk("text", "abcde")] })])).toBe(2)
+    })
+
+    test("counts reasoning characters, which stream for most of a thinking phase", () => {
+      expect(streamingOutputEstimate([step({ created: 0, content: [chunk("reasoning", "abcdefgh")] })])).toBe(2)
+    })
+
+    test("adds every delivered text and reasoning part and ignores tool parts", () => {
+      const messages = [
+        step({ created: 0, content: [chunk("text", "abcd"), chunk("reasoning", "abcdefgh"), tool(100)] }),
+      ]
+      expect(streamingOutputEstimate(messages)).toBe(3)
+    })
+
+    test("settled steps contribute nothing — their receipts are the session totals", () => {
+      const filled = step({
+        created: 0,
+        streamed: 1_000,
+        completed: 1_200,
+        content: [chunk("text", "a".repeat(400))],
+      })
+      expect(streamingOutputEstimate([filled])).toBe(0)
+    })
+
+    test("only the streaming step counts, even beside settled content", () => {
+      const messages = [
+        step({ created: 0, streamed: 1_000, completed: 1_200, content: [chunk("text", "a".repeat(400))] }),
+        step({ created: 2_000, content: [chunk("text", "abcd")] }),
+      ]
+      expect(streamingOutputEstimate(messages)).toBe(1)
+    })
+
+    test("is zero with nothing streaming", () => {
+      expect(streamingOutputEstimate([])).toBe(0)
+      expect(streamingOutputEstimate([user(0)])).toBe(0)
+      expect(streamingOutputEstimate([step({ created: 0, content: [] })])).toBe(0)
     })
   })
 
