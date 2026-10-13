@@ -124,7 +124,7 @@ it.live("purges credentials and their stale copies through the HttpApi without r
     expect(result.credentials.map((item) => `${item.integrationID}:${item.removed}`)).toEqual([
       "bailian-token-plan-personal:true",
     ])
-    expect(result.swept).toEqual([{ kind: "auth", location: "~/data/auth.json", count: 1 }])
+    expect(result.swept).toEqual([{ kind: "auth", location: path.join("~", "data", "auth.json"), count: 1 }])
     expect(result.remaining).toEqual([])
     expect(yield* listed(handler)).toEqual(["deepseek"])
     expect(JSON.parse(yield* Effect.promise(() => fs.readFile(authFile, "utf8")))).toEqual({

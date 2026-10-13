@@ -782,29 +782,34 @@ describe("ShellTool ordinary shell syntax", () => {
       "Write-Output `\n  hello",
       "Write-Output @'\nhello\n'@",
     ]) {
-      test(`PowerShell ${portable ? "native" : "legacy"}: ordinary syntax reuses approvals: ${command}`, () =>
-        withScanner(
-          portable,
-          (registry, directory) =>
-            Effect.gen(function* () {
-              const saved = yield* PermissionSaved.Service
-              const location = yield* Location.Service
-              yield* saved.add({
-                projectID: location.project.id,
-                action: "shell",
-                resources: ["Write-Output *", "Show-Value *"],
-              })
-              const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [])
-              expect(result.requests).toEqual([])
-              expect(result.exit).toMatchObject({
-                _tag: "Success",
-                value: { status: "completed", metadata: { exit: 0 } },
-              })
-              if (Exit.isSuccess(result.exit))
-                expect(result.exit.value.content?.[0]).toEqual(Expected.text(isWindows ? "hello\r\n" : "hello\n"))
-            }),
-          pwsh ?? "pwsh",
-        ))
+      test(
+        `PowerShell ${portable ? "native" : "legacy"}: ordinary syntax reuses approvals: ${command}`,
+        () =>
+          withScanner(
+            portable,
+            (registry, directory) =>
+              Effect.gen(function* () {
+                const saved = yield* PermissionSaved.Service
+                const location = yield* Location.Service
+                yield* saved.add({
+                  projectID: location.project.id,
+                  action: "shell",
+                  resources: ["Write-Output *", "Show-Value *"],
+                })
+                const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [])
+                expect(result.requests).toEqual([])
+                expect(result.exit).toMatchObject({
+                  _tag: "Success",
+                  value: { status: "completed", metadata: { exit: 0 } },
+                })
+                if (Exit.isSuccess(result.exit))
+                  expect(result.exit.value.content?.[0]).toEqual(Expected.text(isWindows ? "hello\r\n" : "hello\n"))
+              }),
+            pwsh ?? "pwsh",
+          ),
+        // Spawning a cold pwsh exceeds the default 5s test timeout on CI runners.
+        { timeout: 30_000 },
+      )
     }
   }
 
@@ -813,36 +818,41 @@ describe("ShellTool ordinary shell syntax", () => {
     ["& 'Write-Output' hello", "& 'Write-Output' *"],
     ["Write-Output `\n  hello", "Write-Output *"],
   ]) {
-    test(`PowerShell native: always allow covers repeat execution and preserves exact deny: ${command}`, () =>
-      withScanner(
-        true,
-        (registry, directory) =>
-          Effect.gen(function* () {
-            const marker = path.join(directory.active, "marker")
-            const first = yield* runPermissionCommand(registry, command, marker, ["always"])
-            expect(first.requests).toMatchObject([{ action: "shell", resources: [command], save: [pattern] }])
-            expect(first.exit).toMatchObject({ _tag: "Success", value: { status: "completed", metadata: { exit: 0 } } })
-            const repeat = yield* runPermissionCommand(registry, command, marker, [])
-            expect(repeat.requests).toEqual([])
-            expect(repeat.exit).toMatchObject({
-              _tag: "Success",
-              value: { status: "completed", metadata: { exit: 0 } },
-            })
+    test(
+      `PowerShell native: always allow covers repeat execution and preserves exact deny: ${command}`,
+      () =>
+        withScanner(
+          true,
+          (registry, directory) =>
+            Effect.gen(function* () {
+              const marker = path.join(directory.active, "marker")
+              const first = yield* runPermissionCommand(registry, command, marker, ["always"])
+              expect(first.requests).toMatchObject([{ action: "shell", resources: [command], save: [pattern] }])
+              expect(first.exit).toMatchObject({ _tag: "Success", value: { status: "completed", metadata: { exit: 0 } } })
+              const repeat = yield* runPermissionCommand(registry, command, marker, [])
+              expect(repeat.requests).toEqual([])
+              expect(repeat.exit).toMatchObject({
+                _tag: "Success",
+                value: { status: "completed", metadata: { exit: 0 } },
+              })
 
-            const agents = yield* Agent.Service
-            yield* agents.transform((editor) =>
-              editor.update(toolIdentity.agent, (agent) => {
-                agent.permissions = [{ action: "shell", resource: command, effect: "deny" }]
-              }),
-            )
-            const denied = yield* runPermissionCommand(registry, command, marker, [])
-            expect(denied.exit).toMatchObject({
-              _tag: "Success",
-              value: { status: "error", error: { message: expect.stringContaining("Permission denied: shell") } },
-            })
-          }),
-        pwsh ?? "pwsh",
-      ))
+              const agents = yield* Agent.Service
+              yield* agents.transform((editor) =>
+                editor.update(toolIdentity.agent, (agent) => {
+                  agent.permissions = [{ action: "shell", resource: command, effect: "deny" }]
+                }),
+              )
+              const denied = yield* runPermissionCommand(registry, command, marker, [])
+              expect(denied.exit).toMatchObject({
+                _tag: "Success",
+                value: { status: "error", error: { message: expect.stringContaining("Permission denied: shell") } },
+              })
+            }),
+          pwsh ?? "pwsh",
+        ),
+      // Spawning a cold pwsh exceeds the default 5s test timeout on CI runners.
+      { timeout: 30_000 },
+    )
   }
 })
 
