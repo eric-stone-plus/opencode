@@ -129,7 +129,7 @@ test("prompt footer can hide details", async () => {
       </ConfigProvider>
     ),
     {
-      width: 80,
+      width: 100,
       height: 1,
     },
   )
@@ -256,7 +256,7 @@ test("prompt footer ticks a generated-output count that estimates the streaming 
   }
 })
 
-test("prompt footer reports the session's cache hit rate", async () => {
+test("prompt footer reports the cache hit rate of the current model's receipts", async () => {
   const withCache = {
     ...settled,
     tokens: { input: 1_000, output: 20, reasoning: 20, cache: { read: 9_000, write: 0 } },
@@ -264,12 +264,7 @@ test("prompt footer reports the session's cache hit rate", async () => {
   const app = await testRender(
     () => (
       <ConfigProvider config={createTuiResolvedConfig()}>
-        <PromptFooter
-          context={speedContext([settled], withCache)}
-          sessionID="session"
-          mode="normal"
-          showDetails={true}
-        />
+        <PromptFooter context={speedContext([withCache])} sessionID="session" mode="normal" showDetails={true} />
       </ConfigProvider>
     ),
     { width: 140, height: 1 },
@@ -278,6 +273,44 @@ test("prompt footer reports the session's cache hit rate", async () => {
     await app.renderOnce()
     // 9,000 cache reads against 1,000 uncached input and no writes, ordered after tok/s
     expect(app.captureCharFrame()).toContain("40 tok/s · CACHE 90%")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("prompt footer reports the current model's cells after a model switch", async () => {
+  // A long MiMo run before the switch must not leak into any cell: the row describes DeepSeek,
+  // the model in use, as soon as one of its calls has settled.
+  const mimo = {
+    ...settled,
+    id: "mimo",
+    model: { providerID: "mimo", id: "mimo" },
+    content: [{ type: "reasoning", text: "", time: { created: 5_500 } }],
+    time: { created: 0, streamed: 60_000, completed: 61_000 },
+    tokens: { input: 0, output: 10_000, reasoning: 0, cache: { read: 9_000, write: 0 } },
+  }
+  const deepseek = {
+    ...settled,
+    id: "deepseek",
+    content: [{ type: "reasoning", text: "", time: { created: 70_700 } }],
+    time: { created: 70_000, streamed: 71_000, completed: 72_000 },
+    tokens: { input: 500, output: 500, reasoning: 0, cache: { read: 500, write: 0 } },
+  }
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={speedContext([mimo, deepseek])} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
+    { width: 140, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    // Context 1.5K of 10K, 700 ms to the first reasoning of the DeepSeek call, 500 tokens in 1 s,
+    // and 500 read / (500 read + 500 uncached) cached — MiMo's 10K tokens and 60 s excluded.
+    expect(app.captureCharFrame()).toContain(
+      "1.5K (15%) · $1.00 · TTFT avg 700ms · TPOT avg 2ms/tok · 500 tok/s · CACHE 50%",
+    )
   } finally {
     app.renderer.destroy()
   }

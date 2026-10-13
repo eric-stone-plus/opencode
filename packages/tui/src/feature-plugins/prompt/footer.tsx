@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { stringWidth } from "../../util/string-width"
 import { useConfig } from "../../config"
 import { Locale } from "../../util/locale"
-import { formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
+import { cacheHitRate, formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -58,17 +58,14 @@ export function PromptFooter(props: {
       ? own(props.sessionID)
       : (family.length > 0 ? family : [props.sessionID]).reduce((total, id) => total + own(id), 0)
     const generated = settled + streamingOutputEstimate(messages)
-    // Speed cells follow the TPS setting; both are omitted until a settled step has measured them.
+    // Speed cells follow the TPS setting and the current model window; each is omitted until a
+    // settled step of that model has measured it.
     const ttft = config.session.tps ? timeToFirstToken(messages) : undefined
     const tpot = config.session.tps ? timePerOutputToken(messages) : undefined
     const rate = config.session.tps ? tokensPerSecond(messages) : undefined
-    // Cache hit rate over this conversation's own requests (the same scope as the speed
-    // cells): reads / (reads + uncached input + writes), omitted until tokens arrive.
-    const cacheHit = session.tokens?.cache?.read ?? 0
-    const cacheMiss = session.tokens?.input ?? 0
-    const cacheWrite = session.tokens?.cache?.write ?? 0
-    const cacheTotal = cacheHit + cacheMiss + cacheWrite
-    const cache = cacheTotal > 0 ? Math.round((cacheHit * 100) / cacheTotal) : undefined
+    // Cache hit rate over the current model window (the same scope as the speed cells), omitted
+    // until receipts arrive: a switch must not blend the previous provider's cache behavior in.
+    const cache = cacheHitRate(messages)
     return [
       usage ? formatContextUsage(usage.tokens, usage.percent) : undefined,
       cost > 0 ? money.format(cost) : undefined,

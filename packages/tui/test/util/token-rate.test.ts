@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageAssistant, SessionMessageInfo } from "@opencode/client"
-import { formatRate, formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
+import { cacheHitRate, formatRate, formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
 
 function step(input: {
   created: number
@@ -8,24 +8,27 @@ function step(input: {
   completed?: number
   output?: number
   reasoning?: number
+  input?: number
+  cache?: { read: number; write: number }
   content?: SessionMessageAssistant["content"]
   error?: SessionMessageAssistant["error"]
+  model?: SessionMessageAssistant["model"]
 }): SessionMessageAssistant {
   return {
     type: "assistant",
     id: `msg_${input.created}`,
     agent: "build",
-    model: { id: "model", providerID: "provider" },
+    model: input.model ?? { id: "model", providerID: "provider" },
     content: input.content ?? [],
     time: { created: input.created, streamed: input.streamed, completed: input.completed },
     ...(input.output === undefined
       ? {}
       : {
           tokens: {
-            input: 0,
+            input: input.input ?? 0,
             output: input.output,
             reasoning: input.reasoning ?? 0,
-            cache: { read: 0, write: 0 },
+            cache: input.cache ?? { read: 0, write: 0 },
           },
         }),
     ...(input.error === undefined ? {} : { error: input.error }),
@@ -297,6 +300,66 @@ describe("util.token-rate", () => {
     test("the label carries tok/s", () => {
       expect(formatTokenRate(42.3)).toBe("42 tok/s")
       expect(formatTokenRate(7.55)).toBe("7.5 tok/s")
+    })
+  })
+
+  describe("model switch window", () => {
+    // A long MiMo run followed by a switch to DeepSeek: the cells must describe the model in
+    // use, not blend the previous model's saturated history into the average.
+    const mimo = { providerID: "mimo", id: "mimo" }
+    const deepseek = { providerID: "deepseek", id: "flash" }
+    const previous = step({ created: 0, streamed: 60_000, output: 10_000, model: mimo })
+    const current = step({ created: 70_000, streamed: 71_000, output: 400, model: deepseek })
+
+    test("tokensPerSecond and timePerOutputToken ignore the previous model's settled steps", () => {
+      expect(tokensPerSecond([user(0), previous, current])).toBe(400)
+      expect(timePerOutputToken([user(0), previous, current])).toBe(2.5)
+    })
+
+    test("timeToFirstToken samples only the current model's calls", () => {
+      const messages = [
+        step({ created: 0, completed: 60_000, content: [reasoning(5_500)], model: mimo }),
+        step({ created: 70_000, completed: 72_000, content: [reasoning(70_700)], model: deepseek }),
+      ]
+      expect(timeToFirstToken(messages)).toBe(700)
+    })
+
+    test("a switch blanks the cells until the new model settles a call", () => {
+      const streaming = step({ created: 70_000, output: 999_999, model: deepseek })
+      expect(tokensPerSecond([previous, streaming])).toBeUndefined()
+      expect(timePerOutputToken([previous, streaming])).toBeUndefined()
+      expect(timeToFirstToken([previous, streaming])).toBeUndefined()
+    })
+
+    test("the same model before an intermediate switch is not carried over", () => {
+      const backToMimo = step({ created: 80_000, streamed: 81_000, output: 100, model: mimo })
+      expect(tokensPerSecond([previous, current, backToMimo])).toBe(100)
+    })
+  })
+
+  describe("cacheHitRate", () => {
+    test("is reads over reads plus uncached input plus writes", () => {
+      const messages = [step({ created: 0, output: 0, input: 1_000, cache: { read: 9_000, write: 0 } })]
+      expect(cacheHitRate(messages)).toBe(90)
+    })
+
+    test("counts writes against the rate", () => {
+      const messages = [step({ created: 0, output: 0, input: 0, cache: { read: 1_000, write: 1_000 } })]
+      expect(cacheHitRate(messages)).toBe(50)
+    })
+
+    test("is scoped to the current model window like the speed cells", () => {
+      const mimo = step({ created: 0, output: 0, input: 1_000, cache: { read: 9_000, write: 0 }, model: { providerID: "mimo", id: "mimo" } })
+      const deepseek = step({ created: 70_000, output: 0, input: 5_000, cache: { read: 5_000, write: 0 }, model: { providerID: "deepseek", id: "flash" } })
+      expect(cacheHitRate([mimo, deepseek])).toBe(50)
+      expect(cacheHitRate([mimo])).toBe(90)
+    })
+
+    test("is undefined until receipts arrive", () => {
+      expect(cacheHitRate([])).toBeUndefined()
+      expect(cacheHitRate([user(0)])).toBeUndefined()
+      expect(cacheHitRate([step({ created: 0, streamed: 1_000 })])).toBeUndefined()
+      expect(cacheHitRate([step({ created: 0, output: 0 })])).toBeUndefined()
     })
   })
 })
