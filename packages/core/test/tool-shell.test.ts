@@ -262,6 +262,9 @@ const runPermissionCommand = (
   command: string,
   marker: string,
   replies: ReadonlyArray<Permission.Reply>,
+  // The hang guard around the command. PowerShell cases pass a wider one: a cold pwsh start on a CI
+  // runner outlasts the default while every other case answers in well under a second.
+  budget = 5,
 ) =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
@@ -287,7 +290,7 @@ const runPermissionCommand = (
     expect(yield* permission.list()).toEqual([])
     expect(yield* Queue.size(queue)).toBe(0)
     return { exit, requests }
-  }).pipe(Effect.scoped, Effect.timeout(Duration.seconds(5)))
+  }).pipe(Effect.scoped, Effect.timeout(Duration.seconds(budget)))
 
 // Directory cases still document inherited limitations; fixed scanner cases require matching behavior.
 describe("ShellTool scanner permissions", () => {
@@ -796,7 +799,7 @@ describe("ShellTool ordinary shell syntax", () => {
                   action: "shell",
                   resources: ["Write-Output *", "Show-Value *"],
                 })
-                const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [])
+                const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [], 20)
                 expect(result.requests).toEqual([])
                 expect(result.exit).toMatchObject({
                   _tag: "Success",
@@ -807,7 +810,7 @@ describe("ShellTool ordinary shell syntax", () => {
               }),
             pwsh ?? "pwsh",
           ),
-        // Spawning a cold pwsh exceeds the default 5s test timeout on CI runners.
+        // A cold pwsh start outlasts the helper's default 5s guard; 20s stays inside this test's budget.
         { timeout: 30_000 },
       )
     }
@@ -826,10 +829,10 @@ describe("ShellTool ordinary shell syntax", () => {
           (registry, directory) =>
             Effect.gen(function* () {
               const marker = path.join(directory.active, "marker")
-              const first = yield* runPermissionCommand(registry, command, marker, ["always"])
+              const first = yield* runPermissionCommand(registry, command, marker, ["always"], 20)
               expect(first.requests).toMatchObject([{ action: "shell", resources: [command], save: [pattern] }])
               expect(first.exit).toMatchObject({ _tag: "Success", value: { status: "completed", metadata: { exit: 0 } } })
-              const repeat = yield* runPermissionCommand(registry, command, marker, [])
+              const repeat = yield* runPermissionCommand(registry, command, marker, [], 20)
               expect(repeat.requests).toEqual([])
               expect(repeat.exit).toMatchObject({
                 _tag: "Success",
@@ -842,7 +845,7 @@ describe("ShellTool ordinary shell syntax", () => {
                   agent.permissions = [{ action: "shell", resource: command, effect: "deny" }]
                 }),
               )
-              const denied = yield* runPermissionCommand(registry, command, marker, [])
+              const denied = yield* runPermissionCommand(registry, command, marker, [], 20)
               expect(denied.exit).toMatchObject({
                 _tag: "Success",
                 value: { status: "error", error: { message: expect.stringContaining("Permission denied: shell") } },
@@ -850,7 +853,7 @@ describe("ShellTool ordinary shell syntax", () => {
             }),
           pwsh ?? "pwsh",
         ),
-      // Spawning a cold pwsh exceeds the default 5s test timeout on CI runners.
+      // A cold pwsh start outlasts the helper's default 5s guard; 20s stays inside this test's budget.
       { timeout: 30_000 },
     )
   }
