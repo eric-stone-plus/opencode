@@ -293,6 +293,25 @@ export function createTimelineVirtualizer(input: Input) {
     },
   })
 
+  // The core captures its prepend anchor and derives every size compensation from the offset its
+  // observer last delivered, and a scroll can land in the same frame as either event: the browser
+  // applies the step before it dispatches the scroll event. Publishing the live offset first keeps a
+  // landing page from writing the pre-step position back and undoing the step.
+  function publishLiveOffset() {
+    const root = listRoot()
+
+    if (!root || !root.isConnected || coldPending) return
+    const live = root.scrollTop + rendering.scrollAdjustment
+
+    if (virtualizer.scrollOffset !== live) virtualizer.scrollOffset = live
+  }
+
+  const setVirtualizerOptions = virtualizer.setOptions.bind(virtualizer)
+  virtualizer.setOptions = (options) => {
+    publishLiveOffset()
+    setVirtualizerOptions(options)
+  }
+
   const resizeItem = virtualizer.resizeItem
   const pendingSizes = new Map<number, { key: string; size: number }>()
   let resizeScheduled = false
@@ -326,6 +345,9 @@ export function createTimelineVirtualizer(input: Input) {
       // The hidden pinned mount needs one bottom write after the whole batch,
       // not a layout-forcing scroll adjustment for every measured row.
       batchingColdSizes = coldPending && input.pinned()
+      // Each row's compensation is computed from the cached offset. A measurement can land in the same
+      // frame as the user's scroll, before its event is delivered, so publish the live offset first.
+      publishLiveOffset()
       batch(() => {
         sizes.forEach(([index, value]) => {
           const row = rows()[index]
