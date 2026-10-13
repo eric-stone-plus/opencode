@@ -87,6 +87,33 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "@opencode/gui-extensions#test": {
+      "outputs": []
+    },
+    "@opencode/http-recorder#test": {
+      "outputs": []
+    },
+    "@opencode/plugin#test": {
+      "outputs": []
+    },
+    "@opencode/plugin-browser#test": {
+      "outputs": []
+    },
+    "@opencode/protocol#test": {
+      "outputs": []
+    },
+    "@opencode/schema#test": {
+      "outputs": []
+    },
+    "@opencode/simulation#test": {
+      "outputs": []
+    },
+    "@opencode/theme#test": {
+      "outputs": []
+    },
+    "@opencode/util#test": {
+      "outputs": []
+    },
     "@opencode/sdk#verify:package": {
       "outputs": []
     }
