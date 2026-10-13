@@ -129,24 +129,20 @@ describe("WebSocket", () => {
       ),
     )
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const constructor = yield* Socket.WebSocketConstructor
-        const options = { headers: { authorization: "Bearer fixture" } }
-        const socket = constructor("wss://echo.example.test/options", options)
-        yield* Effect.callback<void>((resume) => {
-          const finish = () => {
-            socket.close()
-            resume(Effect.void)
-          }
-
-          // The stand-in dispatches "open" on a microtask, which can run before this callback registers on a
-          // loaded runner; the handshake is not replayed, so settle from the socket's state instead.
-          if (socket.readyState === 1) return finish()
-
-          socket.addEventListener("open", finish)
-        })
-      }).pipe(Effect.scoped, Effect.provide(recorder)),
+    await withEnvironment("CI", undefined, () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const constructor = yield* Socket.WebSocketConstructor
+          const options = { headers: { authorization: "Bearer fixture" } }
+          const socket = constructor("wss://echo.example.test/options", options)
+          yield* Effect.callback<void>((resume) => {
+            socket.addEventListener("open", () => {
+              socket.close()
+              resume(Effect.void)
+            })
+          })
+        }).pipe(Effect.scoped, Effect.provide(recorder)),
+      ),
     )
 
     expect(received).toEqual({ headers: { authorization: "Bearer fixture" } })
