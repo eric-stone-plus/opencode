@@ -160,6 +160,8 @@ export type FormExternalField = { key: string; type: "external"; url: string; ti
 
 export type FormValue = string | number | "Infinity" | "-Infinity" | "NaN" | boolean | Array<string>
 
+export type SessionTodoInfo = { content: string; status: string; priority: string }
+
 export type ModelReasoningField = "reasoning" | "reasoning_content" | "reasoning_text" | (string & {})
 
 export type ModelMaxTokensField = "max_completion_tokens" | "max_tokens"
@@ -1739,6 +1741,15 @@ export type FormCancelled = {
   data: { id: FormID; sessionID: string }
 }
 
+export type TodoUpdated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "todo.updated"
+  location?: LocationRef
+  data: { sessionID: SessionID; todos: Array<SessionTodoInfo> }
+}
+
 export type WebsearchUpdated = {
   id: EventID
   created: number
@@ -2649,6 +2660,7 @@ export type V2Event =
   | FormCreated
   | FormReplied
   | FormCancelled
+  | TodoUpdated
   | WebsearchUpdated
   | SessionStatusUpdated
   | SessionIdle
@@ -5695,6 +5707,10 @@ export type SessionFormCancelInput = {
 }
 
 export type SessionFormCancelOutput = void
+
+export type SessionTodoListInput = { readonly sessionID: { readonly sessionID: string }["sessionID"] }
+
+export type SessionTodoListOutput = { data: Array<SessionTodoInfo> }["data"]
 
 export type SessionEnvironmentInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]

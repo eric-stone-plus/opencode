@@ -97,6 +97,8 @@ import type {
   SessionFormReplyOutput,
   SessionFormCancelInput,
   SessionFormCancelOutput,
+  SessionTodoListInput,
+  SessionTodoListOutput,
   SessionEnvironmentInput,
   SessionEnvironmentOutput,
   SessionViewInput,
@@ -1074,6 +1076,19 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ),
+      },
+      todo: {
+        list: (input: SessionTodoListInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: SessionTodoListOutput }>(
+            {
+              method: "GET",
+              path: `/api/session/${encodeURIComponent(input.sessionID)}/todo`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
       },
       environment: (input: SessionEnvironmentInput, requestOptions?: RequestOptions) =>
         request<SessionEnvironmentOutput>(

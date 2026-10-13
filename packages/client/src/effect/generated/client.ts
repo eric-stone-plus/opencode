@@ -103,6 +103,8 @@ import type {
   SessionFormReplyOutput,
   SessionFormCancelInput,
   SessionFormCancelOutput,
+  SessionTodoListInput,
+  SessionTodoListOutput,
   SessionEnvironmentInput,
   SessionEnvironmentOutput,
   SessionViewInput,
@@ -760,6 +762,14 @@ const EndpointSessionFormCancel = (raw: RawClient["server.session"]) => (input: 
     }).pipe(Effect.mapError(mapClientError)),
   )
 
+const EndpointSessionTodoList = (raw: RawClient["server.session"]) => (input: SessionTodoListInput) =>
+  preserveEffect<SessionTodoListOutput>()(
+    raw["session.todo.list"]({ params: { sessionID: input["sessionID"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const EndpointSessionEnvironment = (raw: RawClient["server.session"]) => (input: SessionEnvironmentInput) =>
   preserveEffect<SessionEnvironmentOutput>()(
     raw["session.environment"]({
@@ -827,6 +837,7 @@ const adaptGroupSession = (raw: RawClient["server.session"]) => ({
     reply: EndpointSessionFormReply(raw),
     cancel: EndpointSessionFormCancel(raw),
   },
+  todo: { list: EndpointSessionTodoList(raw) },
   environment: EndpointSessionEnvironment(raw),
   view: EndpointSessionView(raw),
 })

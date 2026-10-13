@@ -28,6 +28,7 @@ import type { Snapshot } from "@opencode/schema/snapshot"
 import type { Shell } from "@opencode/schema/shell"
 import type { Provider } from "@opencode/schema/provider"
 import type { Form } from "@opencode/schema/form"
+import type { SessionTodo } from "@opencode/schema/session-todo"
 import type { Integration } from "@opencode/schema/integration"
 import type { Mcp } from "@opencode/schema/mcp"
 import type { Credential } from "@opencode/schema/credential"
@@ -1287,6 +1288,12 @@ export type SessionFormCancelOperation<E = never> = (
   input: SessionFormCancelInput,
 ) => Effect.Effect<SessionFormCancelOutput, E>
 
+export type SessionTodoListInput = { readonly sessionID: Session.ID }
+export type SessionTodoListOutput = ReadonlyArray<SessionTodo.Info>
+export type SessionTodoListOperation<E = never> = (
+  input: SessionTodoListInput,
+) => Effect.Effect<SessionTodoListOutput, E>
+
 export type SessionEnvironmentInput = {
   readonly sessionID: Session.ID
   readonly variables: { readonly [x: string]: string }
@@ -1352,6 +1359,7 @@ export interface SessionApi<E = never> {
     readonly reply: SessionFormReplyOperation<E>
     readonly cancel: SessionFormCancelOperation<E>
   }
+  readonly todo: { readonly list: SessionTodoListOperation<E> }
   readonly environment: SessionEnvironmentOperation<E>
   readonly view: SessionViewOperation<E>
 }

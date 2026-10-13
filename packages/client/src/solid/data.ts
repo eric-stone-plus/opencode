@@ -40,6 +40,7 @@ import type {
 } from "../promise"
 import { Worktree } from "@opencode/schema/worktree"
 import { SessionID } from "@opencode/schema/session-id"
+import type { SessionTodo } from "@opencode/schema/session-todo"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { ForkLsp } from "@opencode/schema/fork-lsp"
 import {
@@ -126,6 +127,8 @@ type Store = {
     permission: Record<string, PermissionRequest[]>
     // Pending forms keyed by owner: a session ID or the temporary "global" elicitation sentinel.
     form: Record<string, FormWithLocation[]>
+    // The session's todo list, mirrored from todo.updated; missing means not loaded yet.
+    todo: Record<string, SessionTodo.Info[]>
   }
   project: {
     info: Record<string, Project>
@@ -245,6 +248,7 @@ export function createData(config: CreateDataInput) {
       pending: {},
       permission: {},
       form: {},
+      todo: {},
     },
     project: {
       info: {},
@@ -578,6 +582,7 @@ export function createData(config: CreateDataInput) {
     sync.invalidate(`session.message:${sessionID}`)
     sync.invalidate(`session.permission:${sessionID}`)
     sync.invalidate(`session.form:${sessionID}:`)
+    sync.invalidate(`session.todo:${sessionID}`)
     setStore(
       "session",
       produce((draft) => {
@@ -589,6 +594,7 @@ export function createData(config: CreateDataInput) {
         delete draft.pending[sessionID]
         delete draft.permission[sessionID]
         delete draft.form[sessionID]
+        delete draft.todo[sessionID]
         for (const [rootID, family] of Object.entries(draft.family)) {
           const next = family.filter((id) => id !== sessionID)
           if (next.length === 0) delete draft.family[rootID]
@@ -1252,6 +1258,9 @@ export function createData(config: CreateDataInput) {
           event.data.form.sessionID === "global" ? { ...event.data.form, location } : event.data.form,
         ])
         break
+      case "todo.updated":
+        setStore("session", "todo", event.data.sessionID, event.data.todos)
+        break
       case "shell.created":
         setStore("location", locationKey(location), (data) => ({
           shell: {
@@ -1831,6 +1840,19 @@ export function createData(config: CreateDataInput) {
         },
         cancel(input: SessionFormCancelInput, ref?: LocationRef) {
           return settleForm(input, ref, api().session.form.cancel(input, formRequestOptions(input.sessionID, ref)))
+        },
+      },
+      todo: {
+        list(sessionID: string) {
+          return store.session.todo[sessionID]
+        },
+        sync(sessionID: string) {
+          return sync.run(`session.todo:${sessionID}`, async () => {
+            setStore("session", "todo", sessionID, await api().session.todo.list({ sessionID }))
+          })
+        },
+        invalidate(sessionID: string) {
+          sync.invalidate(`session.todo:${sessionID}`)
         },
       },
     },

@@ -4,6 +4,7 @@ import { SessionTitle } from "@opencode/core/session/title"
 import { SessionTransfer } from "@opencode/core/session/transfer"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
 import { Form } from "@opencode/core/form"
+import { SessionTodo } from "@opencode/core/session/todo"
 import { DateTime, Effect, Stream } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { Api } from "../api"
@@ -710,6 +711,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
             }),
           )
           return HttpApiSchema.NoContent.make()
+        }),
+      )
+      .handle(
+        "session.todo.list",
+        Effect.fn(function* (ctx) {
+          const todo = yield* SessionTodo.Service
+          return { data: yield* todo.get(ctx.params.sessionID) }
         }),
       )
   }),

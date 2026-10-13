@@ -43,6 +43,7 @@ import { SessionEvent } from "@opencode/schema/session-event"
 import { EventLog } from "@opencode/schema/event-log"
 import { FileDiff } from "@opencode/schema/file-diff"
 import { Form } from "@opencode/schema/form"
+import { SessionTodo } from "@opencode/schema/session-todo"
 import { PublicSessionMessage } from "./message.js"
 
 const ParentIDFilter = Schema.Union([
@@ -869,6 +870,21 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
             identifier: "session.form.cancel",
             summary: "Cancel form",
             description: "Cancel a pending form, optionally telling the asker why it was not answered.",
+          }),
+        ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.todo.list", "/api/session/:sessionID/todo", {
+        params: { sessionID: Session.ID },
+        success: Schema.Struct({ data: Schema.Array(SessionTodo.Info) }),
+        error: SessionNotFoundError,
+      })
+        .middleware(formLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.todo.list",
+            summary: "List session todos",
+            description: "Retrieve the todo list for a session.",
           }),
         ),
     )

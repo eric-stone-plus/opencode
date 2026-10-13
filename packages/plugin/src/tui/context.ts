@@ -19,6 +19,7 @@ import type {
   SessionInfo,
   SessionMessageInfo,
   SessionInboxInfo,
+  SessionTodoInfo,
   ShellInfo,
   SkillInfo,
   VcsInfo,
@@ -98,6 +99,11 @@ export interface Data {
       invalidate(sessionID: string, location?: LocationRef): void
       reply(input: SessionFormReplyInput, location?: LocationRef): Promise<void>
       cancel(input: SessionFormCancelInput, location?: LocationRef): Promise<void>
+    }
+    readonly todo: {
+      list(sessionID: string): SessionTodoInfo[] | undefined
+      sync(sessionID: string): Promise<void>
+      invalidate(sessionID: string): void
     }
   }
   readonly project: {
