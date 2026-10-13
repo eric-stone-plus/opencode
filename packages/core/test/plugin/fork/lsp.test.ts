@@ -302,4 +302,26 @@ describe("fork lsp: the edit/write/patch diagnostics hook", () => {
       expect(received).toContain("textDocument/didOpen")
     }),
   )
+
+  it.live("does not warm a server for a read inside node_modules", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const log = path.join(tmp.path, "fake-lsp.log")
+      const { directory, fire } = yield* prepare({ lsp: { fake: fakeEntry([".ts"], { FAKE_LSP_LOG: log }) } })
+      yield* write(directory, "node_modules/pkg/index.ts")
+      yield* fire(completed({ tool: "read", input: { path: "node_modules/pkg/index.ts" }, result: { content: "content" } }))
+      // A project read right after warms the server, so the assertions below cannot pass because the hook
+      // never ran: the missing dependency path is the guard doing its job.
+      yield* write(directory, "src/warm.ts")
+      yield* fire(completed({ tool: "read", input: { path: "src/warm.ts" }, result: { content: "content" } }))
+      let received = ""
+      for (let index = 0; index < 200; index++) {
+        received = yield* Effect.promise(() => fs.readFile(log, "utf8").catch(() => ""))
+        if (received.includes("src/warm.ts")) break
+        yield* Effect.sleep("25 millis")
+      }
+      expect(received).toContain("src/warm.ts")
+      expect(received).not.toContain("node_modules")
+    }),
+  )
 })

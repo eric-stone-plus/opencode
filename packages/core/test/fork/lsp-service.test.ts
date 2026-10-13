@@ -4,8 +4,10 @@ import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { LSP } from "@opencode/core/fork/lsp/lsp"
 import { LSPServer } from "@opencode/core/fork/lsp/server"
+import { Oxlint } from "@opencode/core/fork/lsp/servers/web"
 import { Config } from "@opencode/core/config"
-import { fakeEntry, finding } from "../fixture/lsp/lsp"
+import { FSUtil } from "@opencode/util/fs-util"
+import { fakeEntry, fakeHandle, finding } from "../fixture/lsp/lsp"
 import { lspDocument, lspLayer, type Harness } from "../fixture/lsp/service"
 import { testEffect } from "../lib/effect"
 
@@ -435,5 +437,133 @@ describe("LSP server context", () => {
       expect(LSPServer.flagsFromEnv({}).disableDownload).toBe(false)
       expect(LSPServer.flagsFromEnv({ OPENCODE_EXPERIMENTAL_LSP_TY: "1" }).experimentalTy).toBe(true)
     }),
+  )
+})
+
+describe("LSP service roots", () => {
+  const alias = (target: string, link: string) =>
+    Effect.promise(() => fs.symlink(target, link, process.platform === "win32" ? "junction" : "dir"))
+
+  /** A built-in that really starts the fake server, so the service records a running client for it. */
+  const running = (id: string, extensions: string[], root: LSPServer.Info["root"]): LSPServer.Info => ({
+    id,
+    extensions,
+    root,
+    spawn: (root) => Effect.succeed(fakeHandle(root)),
+  })
+
+  test(
+    "starts one server when a symlinked alias of a package and the package itself are both read",
+    {
+      entries: [lspDocument(true)],
+      builtIns: [running("typescript", [".repro"], LSPServer.nearestRoot(["package.json"]))],
+    },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const project = path.join(h.directory, "pkg")
+        yield* write(path.join(project, "package.json"), "{}\n")
+        yield* write(path.join(project, "a.repro"))
+        yield* alias(project, path.join(h.directory, "alias"))
+        yield* lsp.touchFile(path.join(project, "a.repro"))
+        yield* lsp.touchFile(path.join(h.directory, "alias", "a.repro"))
+        expect(yield* lsp.status()).toHaveLength(1)
+        expect((yield* lsp.status())[0]?.root).toBe("pkg")
+      }),
+  )
+
+  const nested = spy("oxlint", [".ts"], Oxlint.root)
+  test(
+    "roots oxlint at the nearest lockfile instead of each nested package.json",
+    { entries: [lspDocument(true)], builtIns: [nested.server] },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        yield* write(path.join(h.directory, "bun.lock"), "")
+        yield* write(path.join(h.directory, "node_modules", "pkg", "package.json"), "{}\n")
+        yield* write(path.join(h.directory, "node_modules", "pkg", "src", "a.ts"))
+        yield* lsp.touchFile(path.join(h.directory, "node_modules", "pkg", "src", "a.ts"))
+        expect(nested.calls).toHaveLength(1)
+        expect(nested.calls[0]?.root).toBe(FSUtil.resolve(h.directory))
+      }),
+  )
+})
+
+describe("LSP service reaping", () => {
+  const count = (lsp: LSP.Interface) => lsp.status().pipe(Effect.map((items) => items.length))
+  const eventually = (check: () => Effect.Effect<boolean>) =>
+    Effect.gen(function* () {
+      for (let index = 0; index < 200; index++) {
+        if (yield* check()) return true
+        yield* Effect.sleep("25 millis")
+      }
+      return false
+    })
+
+  test(
+    "stops an idle server and starts it again on the next use",
+    { entries: [lspDocument({ fake: fakeEntry([".repro"]) })], idleTimeToLive: "200 millis", sweepInterval: "25 millis" },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const file = path.join(h.directory, "sample.repro")
+        yield* write(file)
+        yield* lsp.touchFile(file)
+        expect(yield* count(lsp)).toBe(1)
+        expect(yield* eventually(() => count(lsp).pipe(Effect.map((value) => value === 0)))).toBe(true)
+        yield* lsp.touchFile(file)
+        expect(yield* count(lsp)).toBe(1)
+      }),
+  )
+
+  test(
+    "keeps the configured number of servers, stopping the least recently used idle one",
+    {
+      entries: [lspDocument({ first: fakeEntry([".one"]), second: fakeEntry([".two"]), third: fakeEntry([".three"]) })],
+      maxClients: 2,
+      idleTimeToLive: "1 hour",
+      sweepInterval: "25 millis",
+    },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const touch = (name: string) =>
+          Effect.gen(function* () {
+            const file = path.join(h.directory, name)
+            yield* write(file)
+            yield* lsp.touchFile(file)
+            // Space the uses out so the least recently used one is unambiguous.
+            yield* Effect.sleep("30 millis")
+          })
+        yield* touch("a.one")
+        yield* touch("b.two")
+        yield* touch("c.three")
+        expect(yield* eventually(() => count(lsp).pipe(Effect.map((value) => value === 2)))).toBe(true)
+        expect((yield* lsp.status()).map((item) => item.id).toSorted()).toEqual(["second", "third"])
+        yield* touch("d.one")
+        expect(yield* eventually(() => count(lsp).pipe(Effect.map((value) => value === 2)))).toBe(true)
+        expect((yield* lsp.status()).map((item) => item.id).toSorted()).toEqual(["first", "third"])
+      }),
+  )
+
+  test(
+    "does not stop a server that has a request in flight",
+    {
+      entries: [
+        lspDocument({
+          fake: fakeEntry([".repro"], {
+            FAKE_LSP_CANNED_DELAY_MS: "400",
+            FAKE_LSP_RESULTS: JSON.stringify({ "textDocument/hover": { contents: "hint" } }),
+          }),
+        }),
+      ],
+      idleTimeToLive: "50 millis",
+      sweepInterval: "20 millis",
+    },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const file = path.join(h.directory, "sample.repro")
+        yield* write(file)
+        yield* lsp.touchFile(file)
+        // The 400 ms answer spans many sweeps of a 50 ms idle window; receiving it proves the sweep left the
+        // client alone while the request was in flight (a reaped client answers with nothing instead).
+        expect(yield* lsp.hover({ file, line: 0, character: 0 })).toEqual([{ contents: "hint" }])
+      }),
   )
 })

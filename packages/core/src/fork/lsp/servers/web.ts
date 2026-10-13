@@ -90,7 +90,10 @@ export const ESLint: LSPServer.Info = {
 export const Oxlint: LSPServer.Info = {
   id: "oxlint",
   extensions: [...JS_EXTENSIONS, ".vue", ".astro", ".svelte"],
-  root: LSPServer.nearestRoot([".oxlintrc.json", ...LSPServer.JAVASCRIPT_LOCKFILES, "package.json"]),
+  // No `package.json` marker: every installed package has one, so a monorepo would root one server per
+  // package, and a symlinked alias of the same package would root a second one. Every other JS server here
+  // roots at a project lockfile or its own config file.
+  root: LSPServer.nearestRoot([".oxlintrc.json", ...LSPServer.JAVASCRIPT_LOCKFILES]),
   spawn: (root, ctx) =>
     Effect.gen(function* () {
       const suffix = process.platform === "win32" ? ".cmd" : ""

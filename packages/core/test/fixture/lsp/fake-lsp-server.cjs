@@ -6,6 +6,7 @@
 //   FAKE_LSP_PUBLISH=<json>    publish this fixed diagnostic list for a document on open and on every change
 //   FAKE_LSP_SOURCE=<name>     `source` stamped on every published diagnostic
 //   FAKE_LSP_DELAY_MS=<n>      wait this long before publishing
+//   FAKE_LSP_CANNED_DELAY_MS=<n> wait this long before answering a canned request
 //   FAKE_LSP_RESULTS=<json>    method -> canned result for any request this server does not otherwise handle
 //   FAKE_LSP_HANG_INITIALIZE=1 never answer `initialize`
 //   FAKE_LSP_LOG=<file>        append every received request and notification to this file as one JSON line
@@ -320,7 +321,10 @@ function handle(raw) {
   }
 
   if (typeof data.id !== "undefined") {
-    sendResponse(data.id, data.method in canned ? canned[data.method] : null)
+    const result = data.method in canned ? canned[data.method] : null
+    const delay = Number(process.env.FAKE_LSP_CANNED_DELAY_MS ?? 0)
+    if (delay > 0) setTimeout(() => sendResponse(data.id, result), delay)
+    else sendResponse(data.id, result)
   }
 }
 

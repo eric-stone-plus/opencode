@@ -11,6 +11,7 @@ import { Global } from "@opencode/util/global"
 import { Npm } from "@opencode/util/npm"
 import { AppProcess } from "@opencode/util/process"
 import { Effect, Layer, Schema } from "effect"
+import type { Duration } from "effect"
 import { HttpClient } from "effect/http"
 import path from "path"
 import { hostEnvironmentLayer } from "../environment"
@@ -43,6 +44,10 @@ export interface Options {
   readonly builtIns?: readonly LSPServer.Info[]
   /** Where the project's worktree is; defaults to the project directory. */
   readonly worktree?: (directory: string) => string
+  /** LSP instance reaping knobs, for the tests that exercise them. */
+  readonly idleTimeToLive?: Duration.Input
+  readonly sweepInterval?: Duration.Input
+  readonly maxClients?: number
 }
 
 /**
@@ -114,9 +119,14 @@ export const lspLayer = (options: Options = {}) => {
         ).pipe(Layer.provide(LayerNode.compile(AppProcess.node))),
         hostEnvironmentLayer,
       )
-      return LSP.layer({ flags: { disableDownload: false, experimentalTy: false, ...options.flags }, env, builtIns: options.builtIns }).pipe(
-        Layer.provideMerge(base),
-      )
+      return LSP.layer({
+        flags: { disableDownload: false, experimentalTy: false, ...options.flags },
+        env,
+        builtIns: options.builtIns,
+        idleTimeToLive: options.idleTimeToLive,
+        sweepInterval: options.sweepInterval,
+        maxClients: options.maxClients,
+      }).pipe(Layer.provideMerge(base))
     }),
   )
   return { layer, harness: harness as Harness }

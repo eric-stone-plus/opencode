@@ -1,6 +1,6 @@
 export * as LSP from "./lsp.js"
 
-import { Cause, Context, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect"
+import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Predicate, Scope } from "effect"
 import { HttpClient } from "effect/http"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -67,6 +67,12 @@ const RESTART_HEALTHY_UPTIME_MS = 10 * 60_000
 const WORKSPACE_SYMBOLS_PER_SERVER = 10
 // The symbol kinds `workspaceSymbol` reports; the rest (fields, parameters, keys, ...) are noise at project scale.
 const WORKSPACE_SYMBOL_KINDS = [5, 12, 6, 11, 13, 14, 23, 10]
+// A location with any session activity is never evicted, so a server started once would live as long as the
+// process does. Left idle this long, a server is stopped and the next use starts it again. The cap bounds a
+// burst of distinct roots (one per language in a polyglot tree) that all stay warm.
+const IDLE_TIME_TO_LIVE = "15 minutes"
+const REAP_SWEEP_INTERVAL = "1 minute"
+const MAX_CLIENTS = 8
 
 /** The first failure restarts on next use; later ones wait 2s, 4s, ... up to 5 minutes. */
 export function restartDelay(failures: number) {
@@ -141,9 +147,21 @@ export interface Options {
   readonly env?: NodeJS.ProcessEnv
   /** Replaces the built-in server list, for tests that need servers whose resolution they control. */
   readonly builtIns?: readonly LSPServer.Info[]
+  /** How long a server may stay idle before it is stopped; the next use starts it again. */
+  readonly idleTimeToLive?: Duration.Input
+  /** How often the idle check runs. */
+  readonly sweepInterval?: Duration.Input
+  /** Most servers kept per location; above it the least recently used idle server is stopped. */
+  readonly maxClients?: number
 }
 
-type Running = { readonly client: LSPClient.Info; readonly scope: Scope.Closeable }
+type Running = {
+  readonly client: LSPClient.Info
+  readonly scope: Scope.Closeable
+  /** When `use` last touched the client and how many of its effects are in flight, for the idle sweep. */
+  lastUsedAt: number
+  inFlight: number
+}
 
 export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
   const location = yield* Location.Service
@@ -186,6 +204,12 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
     failures: new Map<string, number>(),
     spawning: new Map<string, Deferred.Deferred<LSPClient.Info | undefined>>(),
   }
+
+  const idleTimeToLive = Duration.toMillis(options.idleTimeToLive ?? IDLE_TIME_TO_LIVE)
+  const sweepInterval = options.sweepInterval ?? REAP_SWEEP_INTERVAL
+  const maxClients = options.maxClients ?? MAX_CLIENTS
+  // Roots are canonicalized, so a displayed root is relative to the canonical location as well.
+  const displayBase = FSUtil.resolve(location.directory)
 
   const inProject = (file: string) =>
     FSUtil.contains(location.directory, file) ||
@@ -270,7 +294,7 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
       yield* Scope.close(clientScope, Exit.void)
       return existing?.client
     }
-    const running = { client, scope: clientScope }
+    const running: Running = { client, scope: clientScope, lastUsedAt: Date.now(), inFlight: 0 }
     state.clients.push(running)
     state.cooldown.delete(key)
     // A client whose process dies is dropped, so the next use respawns it.
@@ -301,8 +325,11 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
     const resolved = yield* Effect.forEach(
       matching,
       Effect.fnUntraced(function* (server) {
-        const root = yield* server.root(file, context)
-        if (!root) return undefined
+        const found = yield* server.root(file, context)
+        if (!found) return undefined
+        // A symlinked alias and the directory it points at are one root: canonicalize before keying, or the
+        // same server starts once per spelling of the same path.
+        const root = FSUtil.resolve(found)
         const key = root + server.id
         if (state.broken.has(key)) return undefined
         const running = state.clients.find(
@@ -332,14 +359,28 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
     return resolved.filter((client): client is LSPClient.Info => client !== undefined)
   })
 
+  /** Bumps a running client's idle clock; while the effect is in flight the sweep leaves it alone. */
+  const use = <A>(client: LSPClient.Info, effect: Effect.Effect<A>) =>
+    Effect.suspend(() => {
+      const running = state.clients.find((item) => item.client === client)
+      if (!running) return effect
+      running.lastUsedAt = Date.now()
+      running.inFlight++
+      return effect.pipe(Effect.ensuring(Effect.sync(() => running.inFlight--)))
+    })
+
   const each = <A>(file: string, f: (client: LSPClient.Info) => Effect.Effect<A>) =>
-    clientsFor(file).pipe(Effect.flatMap((clients) => Effect.forEach(clients, f, { concurrency: "unbounded" })))
+    clientsFor(file).pipe(
+      Effect.flatMap((clients) =>
+        Effect.forEach(clients, (client) => use(client, f(client)), { concurrency: "unbounded" }),
+      ),
+    )
 
   const everyRunning = <A>(f: (client: LSPClient.Info) => Effect.Effect<A>) =>
     Effect.suspend(() =>
       Effect.forEach(
         state.clients.filter((running) => running.client.alive()),
-        (running) => f(running.client),
+        (running) => use(running.client, f(running.client)),
         { concurrency: "unbounded" },
       ),
     )
@@ -371,13 +412,43 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
   const implementation = query("textDocument/implementation")
   const prepare = query("textDocument/prepareCallHierarchy")
 
+  // Servers idle past the TTL, and the least recently used ones above the cap, are stopped; a later use
+  // starts them again. Stopping closes the client scope, the same path `reset` takes, so the exit observer
+  // stays quiet and nothing is marked broken.
+  const reap = Effect.gen(function* () {
+    const now = Date.now()
+    const victims = state.clients.filter(
+      (running) => running.client.alive() && running.inFlight === 0 && now - running.lastUsedAt >= idleTimeToLive,
+    )
+    const over = state.clients.filter((running) => running.client.alive()).length - maxClients
+    if (over > 0)
+      victims.push(
+        ...state.clients
+          .filter((running) => running.client.alive() && running.inFlight === 0 && !victims.includes(running))
+          .toSorted((a, b) => a.lastUsedAt - b.lastUsedAt)
+          .slice(0, over),
+      )
+    if (victims.length === 0) return
+    const reaped = new Set(victims)
+    state.clients = state.clients.filter((running) => !reaped.has(running))
+    yield* Effect.forEach(victims, (running) => Scope.close(running.scope, Exit.void), {
+      discard: true,
+      concurrency: "unbounded",
+    })
+    yield* Effect.logInfo("LSP servers reaped", {
+      servers: victims.map((running) => `${running.client.serverID}@${running.client.root}`).join(", "),
+    })
+    yield* bus.publish(LspEvent.Updated, {}, { location: ref })
+  })
+  yield* Effect.forever(Effect.sleep(sweepInterval).pipe(Effect.andThen(reap))).pipe(Effect.forkIn(scope))
+
   return Service.of({
     status: () =>
       Effect.sync(() =>
         state.clients.map(({ client }) => ({
           id: client.serverID,
           name: client.serverID,
-          root: path.relative(location.directory, client.root),
+          root: path.relative(displayBase, client.root),
           status: "connected" as const,
         })),
       ),
@@ -386,8 +457,9 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
       const extension = path.parse(file).ext || file
       for (const server of (yield* servers).values()) {
         if (server.extensions.length && !server.extensions.includes(extension)) continue
-        const root = yield* server.root(file, context)
-        if (!root || state.broken.has(root + server.id)) continue
+        const found = yield* server.root(file, context)
+        if (!found) continue
+        if (state.broken.has(FSUtil.resolve(found) + server.id)) continue
         return true
       }
       return false

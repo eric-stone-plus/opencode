@@ -250,8 +250,12 @@ export const make = (options: Options = {}) =>
       // Reading a file warms the matching server so the first diagnostics wait is short. Best effort and unawaited.
       const read = Option.getOrUndefined(decodeInputPath(event.input))
       if (!read) return Effect.void
+      const file = FileAccess.resolvePath(location.directory, read.path)
+      // A dependency read is not project work: warming a server for one would start - and keep - a server
+      // rooted in an installed package for every `node_modules` tree the session happens to read.
+      if (file.split(path.sep).includes("node_modules")) return Effect.void
       return lsp
-        .touchFile(FileAccess.resolvePath(location.directory, read.path))
+        .touchFile(file)
         .pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterrupts(cause),
