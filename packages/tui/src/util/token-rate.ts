@@ -6,18 +6,15 @@ const steps = (messages: readonly SessionMessageInfo[]) =>
   messages.filter((message): message is Step => message.type === "assistant")
 
 /**
- * Session token throughput for the prompt status strip: the output and reasoning tokens of every settled model call
- * in the loaded history, divided by the time those calls spent talking to the provider.
+ * Settled provider throughput samples: the output and reasoning tokens of every finished model call in the loaded
+ * history together with the time those calls spent talking to the provider.
  *
  * Reasoning counts because providers that report it apart from the visible output (DeepSeek) spend most of the wall
  * time on it. The clock is `time.created` (request dispatch) to `time.streamed` (provider response body ended), so
  * tool execution never enters the denominator, and a step still streaming has no `streamed` yet and contributes
- * nothing: the average holds its last value while a request is in flight.
- *
- * This is effective throughput, including time to first token and pauses inside a response, not decoder speed. It is
- * undefined until a step has both usage and a positive duration, and nothing is estimated.
+ * nothing: the averages hold their last value while a request is in flight.
  */
-export function tokensPerSecond(messages: readonly SessionMessageInfo[]) {
+function throughput(messages: readonly SessionMessageInfo[]) {
   const settled = steps(messages).flatMap((step) => {
     if (step.time.streamed === undefined || step.tokens === undefined) return []
     const millis = step.time.streamed - step.time.created
@@ -27,7 +24,31 @@ export function tokensPerSecond(messages: readonly SessionMessageInfo[]) {
   const tokens = settled.reduce((total, step) => total + step.tokens, 0)
   const millis = settled.reduce((total, step) => total + step.millis, 0)
   if (tokens <= 0 || millis <= 0) return undefined
-  return tokens / (millis / 1000)
+  return { tokens, millis }
+}
+
+/**
+ * Session token throughput for the prompt status strip: the tokens of every settled model call in the loaded history
+ * divided by the time those calls spent talking to the provider.
+ *
+ * This is effective throughput, including time to first token and pauses inside a response, not decoder speed. It is
+ * undefined until a step has both usage and a positive duration, and nothing is estimated.
+ */
+export function tokensPerSecond(messages: readonly SessionMessageInfo[]) {
+  const settled = throughput(messages)
+  if (!settled) return undefined
+  return settled.tokens / (settled.millis / 1000)
+}
+
+/**
+ * Mean wall time per generated token over the same settled calls the throughput cell measures: total provider
+ * milliseconds over total output and reasoning tokens. This is the reciprocal view of `tokensPerSecond`, so the two
+ * cells always agree, and it is undefined under the same conditions.
+ */
+export function timePerOutputToken(messages: readonly SessionMessageInfo[]) {
+  const settled = throughput(messages)
+  if (!settled) return undefined
+  return settled.millis / settled.tokens
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageAssistant, SessionMessageInfo } from "@opencode/client"
-import { formatRate, formatTokenRate, streamingOutputEstimate, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
+import { formatRate, formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../src/util/token-rate"
 
 function step(input: {
   created: number
@@ -109,6 +109,68 @@ describe("util.token-rate", () => {
         step({ created: 0, streamed: 1_000, output: 100 }),
       ]
       expect(tokensPerSecond(messages)).toBe(100)
+    })
+  })
+
+  describe("timePerOutputToken", () => {
+    test("is summed provider milliseconds over summed output tokens across settled steps", () => {
+      const messages = [
+        user(0),
+        step({ created: 0, streamed: 2_000, completed: 2_500, output: 1_000 }),
+        step({ created: 3_000, streamed: 5_000, completed: 5_500, output: 1_000 }),
+      ]
+      expect(timePerOutputToken(messages)).toBe(2)
+    })
+
+    test("counts reasoning tokens, which take as long to generate as the visible output", () => {
+      expect(timePerOutputToken([step({ created: 0, streamed: 4_000, output: 100, reasoning: 300 })])).toBe(10)
+    })
+
+    test("leaves tool execution out of the clock because it stops at the end of the response body", () => {
+      // 1 s of provider time, then a 9 s tool before the step completes
+      expect(timePerOutputToken([step({ created: 0, streamed: 1_000, completed: 10_000, output: 200 })])).toBe(5)
+    })
+
+    test("an in-flight step contributes nothing and the average holds its last value", () => {
+      const settled = step({ created: 0, streamed: 2_000, completed: 2_000, output: 1_000 })
+      const streaming = step({ created: 3_000, output: 999_999 })
+      expect(timePerOutputToken([settled, streaming])).toBe(2)
+      expect(timePerOutputToken([settled])).toBe(2)
+    })
+
+    test("is undefined until a step has both usage and a positive duration", () => {
+      expect(timePerOutputToken([])).toBeUndefined()
+      expect(timePerOutputToken([user(0)])).toBeUndefined()
+      expect(timePerOutputToken([step({ created: 0, streamed: 2_000 })])).toBeUndefined()
+      expect(timePerOutputToken([step({ created: 0, output: 100 })])).toBeUndefined()
+      expect(timePerOutputToken([step({ created: 5_000, streamed: 5_000, output: 100 })])).toBeUndefined()
+      expect(timePerOutputToken([step({ created: 5_000, streamed: 4_000, output: 100 })])).toBeUndefined()
+      expect(timePerOutputToken([step({ created: 0, streamed: 2_000, output: 0 })])).toBeUndefined()
+    })
+
+    test("a step without usage never dilutes the average", () => {
+      const messages = [
+        step({ created: 0, streamed: 2_000, output: 1_000 }),
+        step({ created: 3_000, streamed: 30_000 }),
+      ]
+      expect(timePerOutputToken(messages)).toBe(2)
+    })
+
+    test("is the reciprocal of the tokens-per-second cell", () => {
+      const messages = [
+        step({ created: 0, streamed: 2_000, completed: 2_500, output: 1_000 }),
+        step({ created: 3_000, streamed: 5_000, completed: 5_500, output: 1_000 }),
+      ]
+      expect(timePerOutputToken(messages)).toBeCloseTo(1000 / (tokensPerSecond(messages) ?? 0))
+    })
+
+    test("ignores messages that are not model calls", () => {
+      const messages: SessionMessageInfo[] = [
+        user(0),
+        { type: "idle", id: "idle_1", outcome: "succeeded", time: { created: 1 } },
+        step({ created: 0, streamed: 1_000, output: 100 }),
+      ]
+      expect(timePerOutputToken(messages)).toBe(10)
     })
   })
 

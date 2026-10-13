@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { stringWidth } from "../../util/string-width"
 import { useConfig } from "../../config"
 import { Locale } from "../../util/locale"
-import { formatTokenRate, streamingOutputEstimate, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
+import { formatTokenRate, streamingOutputEstimate, timePerOutputToken, timeToFirstToken, tokensPerSecond } from "../../util/token-rate"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -60,6 +60,7 @@ export function PromptFooter(props: {
     const generated = settled + streamingOutputEstimate(messages)
     // Speed cells follow the TPS setting; both are omitted until a settled step has measured them.
     const ttft = config.session.tps ? timeToFirstToken(messages) : undefined
+    const tpot = config.session.tps ? timePerOutputToken(messages) : undefined
     const rate = config.session.tps ? tokensPerSecond(messages) : undefined
     // Cache hit rate over this conversation's own requests (the same scope as the speed
     // cells): reads / (reads + uncached input + writes), omitted until tokens arrive.
@@ -72,6 +73,7 @@ export function PromptFooter(props: {
       usage ? formatContextUsage(usage.tokens, usage.percent) : undefined,
       cost > 0 ? money.format(cost) : undefined,
       ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
+      tpot === undefined ? undefined : `TPOT avg ${Locale.duration(Math.round(tpot))}/tok`,
       rate === undefined ? undefined : formatTokenRate(rate),
       cache === undefined ? undefined : `CACHE ${cache}%`,
       generated > 0 ? `↓ ${Locale.number(generated)}` : undefined,

@@ -196,12 +196,14 @@ test("prompt footer shows the measured speed cells after context and cost", asyn
         <PromptFooter context={speedContext([settled])} sessionID="session" mode="normal" showDetails={true} />
       </ConfigProvider>
     ),
-    { width: 100, height: 1 },
+    { width: 120, height: 1 },
   )
   try {
     await app.renderOnce()
-    // 1.0K + 40 generated tokens against 10K context, 900 ms to the first reasoning, 40 tokens in 1 s
-    expect(app.captureCharFrame()).toContain("1.0K (10%) · $1.00 · TTFT avg 900ms · 40 tok/s")
+    // 1.0K + 40 generated tokens against 10K context, 900 ms to the first reasoning, 40 tokens in 1 s (25 ms each)
+    expect(app.captureCharFrame()).toContain(
+      "1.0K (10%) · $1.00 · TTFT avg 900ms · TPOT avg 25ms/tok · 40 tok/s",
+    )
   } finally {
     app.renderer.destroy()
   }
