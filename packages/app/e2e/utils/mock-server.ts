@@ -933,6 +933,7 @@ function mockHandlers(
         configShells: () => Effect.succeed(config.shells ?? []),
         configUpdate: () => noContent,
         websearchProviders: () => Effect.succeed({ location: location(config), data: [] }),
+        forkLspStatus: () => Effect.succeed({ output: [] }),
         worktreeList: () =>
           Effect.sync(() => {
             if (config.worktrees) return resolve(config.worktrees)

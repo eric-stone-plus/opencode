@@ -166,6 +166,13 @@ const Group = HttpApiGroup.make("mock")
     }),
   )
   .add(HttpApiEndpoint.get("websearchProviders", "/api/websearch/provider", { success: Json }))
+  // The fork's LSP status RPC: the client's data layer reads it as the app loads.
+  .add(
+    HttpApiEndpoint.post("forkLspStatus", "/api/rpc/fork.lsp/status", {
+      payload: JsonPayload,
+      success: Json,
+    }),
+  )
   .add(
     HttpApiEndpoint.get("worktreeList", "/api/worktree", {
       query: Schema.Struct({ projectID: Schema.String }),
