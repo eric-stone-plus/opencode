@@ -135,10 +135,16 @@ describe("WebSocket", () => {
         const options = { headers: { authorization: "Bearer fixture" } }
         const socket = constructor("wss://echo.example.test/options", options)
         yield* Effect.callback<void>((resume) => {
-          socket.addEventListener("open", () => {
+          const finish = () => {
             socket.close()
             resume(Effect.void)
-          })
+          }
+
+          // The stand-in dispatches "open" on a microtask, which can run before this callback registers on a
+          // loaded runner; the handshake is not replayed, so settle from the socket's state instead.
+          if (socket.readyState === 1) return finish()
+
+          socket.addEventListener("open", finish)
         })
       }).pipe(Effect.scoped, Effect.provide(recorder)),
     )
