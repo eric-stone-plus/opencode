@@ -120,8 +120,8 @@ test.describe("timeline history", () => {
 
       // Scroll instantly and only as far as rows the virtualizer has measured, so neither a smooth wheel
       // animation nor estimated row heights can carry a step past an unmounted row. The step is also
-      // clamped to the viewport: a prepend adjustment landing between the measurement above and this call
-      // can report the first mounted row far above the viewport, and stepping that far skips rows.
+      // clamped to the viewport: the mounted set keeps the active and anchored rows mounted, so the first
+      // mounted row can sit far above the viewport and sweeping that distance would overshoot.
       await timelineScroller(page).evaluate((element, delta) => {
         const step = Math.min(delta, element.clientHeight)
         element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -step }))
@@ -134,10 +134,10 @@ test.describe("timeline history", () => {
           return held.length > 0 || (next.signature !== state.signature && next.covered)
         })
         .toBe(true)
-      // A prepend can land while the step is in flight, and the timeline then anchors the rows it just
-      // inserted instead of the ones that were visible. Wait for the layout to settle before measuring
-      // again: a measurement taken in between records the newly inserted rows as the current position,
-      // and the walk then skips everything between them and the previous position.
+      // A prepend can land while the step is in flight: the insertion, the row measurement and the scroll
+      // compensation are separate phases, so a measurement taken in between can record the newly inserted
+      // rows as the current position, and the walk then skips everything between them and the rows that
+      // were visible. Wait for the layout to settle before measuring again.
       let previous = ""
       await expect
         .poll(async () => {
