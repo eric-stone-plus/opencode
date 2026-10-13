@@ -275,7 +275,7 @@ test("prompt footer reports the session's cache hit rate", async () => {
   try {
     await app.renderOnce()
     // 9,000 cache reads against 1,000 uncached input and no writes, ordered after tok/s
-    expect(app.captureCharFrame()).toContain("40 tok/s · cache 90%")
+    expect(app.captureCharFrame()).toContain("40 tok/s · CACHE 90%")
   } finally {
     app.renderer.destroy()
   }

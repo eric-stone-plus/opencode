@@ -73,7 +73,7 @@ export function PromptFooter(props: {
       cost > 0 ? money.format(cost) : undefined,
       ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
       rate === undefined ? undefined : formatTokenRate(rate),
-      cache === undefined ? undefined : `cache ${cache}%`,
+      cache === undefined ? undefined : `CACHE ${cache}%`,
       generated > 0 ? `↓ ${Locale.number(generated)}` : undefined,
     ].filter((item): item is string => Boolean(item))
   })
