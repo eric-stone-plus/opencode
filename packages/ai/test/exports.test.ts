@@ -26,8 +26,6 @@ import {
   AnthropicCompatible,
   DeepSeek,
   OpenAICompatible,
-  ZAI,
-  ZAICodingPlan,
 } from "@opencode/ai/providers"
 import { AnthropicMessages, OpenAIChat, OpenAICompatibleChat } from "@opencode/ai/protocols"
 import { TestLLM } from "@opencode/ai/testing"
@@ -98,14 +96,11 @@ describe("public exports", () => {
   })
 
   test("provider barrels expose user-facing facades", () => {
-    for (const provider of [Alibaba, Anthropic, AnthropicCompatible, DeepSeek, OpenAICompatible, ZAI, ZAICodingPlan]) {
+    for (const provider of [Alibaba, Anthropic, AnthropicCompatible, DeepSeek, OpenAICompatible]) {
       expect(provider.configure).toBeFunction()
       expect(provider.model).toBeFunction()
     }
     expect(Alibaba.configure({ region: "ap-southeast-1", apiKey: "fixture" }).messages).toBeFunction()
-    expect(ZAI.provider.model).toBe(ZAI.provider.chat)
-    expect(ZAICodingPlan.provider.messages).toBe(ZAICodingPlan.messages)
-    expect(ZAICodingPlan.configure({ apiKey: "fixture" }).chat("glm-5.3").route.id).toBe("zai-coding-chat")
     expect(DeepSeek.configure({ apiKey: "fixture" }).model("deepseek-chat").route.id).toBe("deepseek-chat")
     expect(OpenAICompatible.configure({ baseURL: "https://compatible.test/v1" }).model("fixture").route.id).toBe(
       "openai-compatible-chat",
@@ -119,8 +114,6 @@ describe("public exports", () => {
       "AnthropicCompatible",
       "DeepSeek",
       "OpenAICompatible",
-      "ZAI",
-      "ZAICodingPlan",
     ])
   })
 

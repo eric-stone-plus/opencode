@@ -8,10 +8,10 @@ const Refreshed = ephemeral({
 })
 export const Event = { Refreshed, Definitions: inventory(Refreshed) }
 
-// This fork supports four vendors only (Alibaba, DeepSeek, Zhipu incl. Z.ai, Xiaomi MiMo; ADR 0005).
-// Every other registry provider is dropped wherever the registry is loaded, cached or embedded.
+// This fork supports Alibaba and DeepSeek plus the one Xiaomi token plan in use
+// (ADR 0006; the vendor list supersedes ADR 0005). Every other registry provider is
+// dropped wherever the registry is loaded, cached or embedded.
+const SUPPORTED = /^(alibaba|deepseek)(-|$)|^xiaomi-token-plan-cn$/
 export function restrict<T>(registry: Record<string, T>): Record<string, T> {
-  return Object.fromEntries(
-    Object.entries(registry).filter(([providerID]) => /^(alibaba|deepseek|zhipuai|zai|xiaomi)(-|$)/.test(providerID)),
-  )
+  return Object.fromEntries(Object.entries(registry).filter(([providerID]) => SUPPORTED.test(providerID)))
 }

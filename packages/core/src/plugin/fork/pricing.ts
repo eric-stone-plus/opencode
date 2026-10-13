@@ -8,7 +8,7 @@ import { ForkPricing } from "../../fork/pricing.js"
  * Prices models that exist only because a config provider declared them. The
  * catalog rows themselves are estimated in models.dev's normalize() (canonical
  * chain and cross-provider votes); a token-plan block that names `qwen3.8-max`
- * or `glm-5.3` creates a model no catalog row backs, so it arrives here with a
+ * or `mimo-v2.6-pro` creates a model no catalog row backs, so it arrives here with a
  * zero cost and picks up the prevailing catalog price for its name. Runs in the
  * post group, after the config provider transform created those models.
  */

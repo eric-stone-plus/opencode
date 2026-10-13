@@ -32,31 +32,6 @@ describe("provider package entrypoints", () => {
     })
   })
 
-  test("maps ZAI and Coding Plan entrypoints onto distinct provider-owned routes", async () => {
-    const modules = await Promise.all([
-      import("@opencode/ai/providers/zai"),
-      import("@opencode/ai/providers/zai/chat"),
-      import("@opencode/ai/providers/zai-coding-plan"),
-      import("@opencode/ai/providers/zai-coding-plan/chat"),
-      import("@opencode/ai/providers/zai-coding-plan/messages"),
-    ])
-    const routes = ["zai-chat", "zai-chat", "zai-coding-chat", "zai-coding-chat", "zai-coding-messages"]
-    const settings = {
-      apiKey: "fixture",
-      baseURL: "https://gateway.example/custom",
-      headers: { "x-test": "fixture" },
-      body: { extension: true },
-    }
-    modules.forEach((module, index) => {
-      const selected = module.model("glm-5.3", settings)
-      expect(selected.provider).toBe(index < 2 ? "zai" : "zai-coding-plan")
-      expect(selected.route.id).toBe(routes[index])
-      expect(selected.route.endpoint.baseURL).toBe(settings.baseURL)
-      expect(selected.route.defaults.headers).toEqual(settings.headers)
-      expect(selected.route.defaults.http?.body).toEqual(settings.body)
-    })
-  })
-
   test("maps package settings onto the executable model", async () => {
     const OpenAICompatible = await import("@opencode/ai/providers/openai-compatible")
     const selected = OpenAICompatible.model("deepseek-chat", {

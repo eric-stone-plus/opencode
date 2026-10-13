@@ -72,10 +72,6 @@ const HOSTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "alibaba-token-plan": protocols("alibaba"),
   "alibaba-token-plan-cn": protocols("alibaba"),
   deepseek: { "@ai-sdk/openai-compatible": "@opencode/ai/providers/deepseek" },
-  zai: { "@ai-sdk/openai-compatible": "@opencode/ai/providers/zai/chat" },
-  "zai-coding-plan": protocols("zai-coding-plan"),
-  zhipuai: { "@ai-sdk/openai-compatible": "@opencode/ai/providers/zai/chat" },
-  "zhipuai-coding-plan": protocols("zai-coding-plan"),
 }
 
 const NATIVE = new Set([...Object.values(PACKAGES), ...Object.values(HOSTS).flatMap((host) => Object.values(host))])

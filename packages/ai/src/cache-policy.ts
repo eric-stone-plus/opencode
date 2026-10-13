@@ -49,7 +49,6 @@ const RESPECTS_INLINE_HINTS = new Set([
   "minimax-messages",
   "moonshot-messages",
   "vercel-ai-gateway-messages",
-  "zai-coding-messages",
   "bedrock-converse",
   "openrouter",
   "digitalocean",

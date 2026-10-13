@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { ModelsDev } from "../src/models-dev.js"
 
 describe("ModelsDev.restrict", () => {
-  test("keeps the supported vendors with their regional and plan variants", () => {
+  test("keeps Alibaba and DeepSeek with their regional and plan variants, plus the one Xiaomi token plan", () => {
     const registry = Object.fromEntries(
       [
         "alibaba",
@@ -10,18 +10,13 @@ describe("ModelsDev.restrict", () => {
         "alibaba-coding-plan-cn",
         "alibaba-token-plan",
         "deepseek",
-        "zhipuai",
-        "zhipuai-coding-plan",
-        "zai",
-        "zai-coding-plan",
-        "xiaomi",
         "xiaomi-token-plan-cn",
       ].map((id) => [id, { id }]),
     )
     expect(Object.keys(ModelsDev.restrict(registry))).toEqual(Object.keys(registry))
   })
 
-  test("drops every other provider, including lookalike prefixes and the Zen providers", () => {
+  test("drops every other provider, including the other Xiaomi plans and lookalike prefixes", () => {
     const registry = Object.fromEntries(
       [
         "anthropic",
@@ -33,8 +28,15 @@ describe("ModelsDev.restrict", () => {
         "moonshotai",
         "deepseekish",
         "alibabacloud",
-        "zaiextra",
+        "xiaomi",
+        "xiaomi-token-plan-ams",
+        "xiaomi-token-plan-sgp",
         "xiaomi2",
+        "zai",
+        "zai-coding-plan",
+        "zhipuai",
+        "zhipuai-coding-plan",
+        "zaiextra",
       ].map((id) => [id, { id }]),
     )
     expect(ModelsDev.restrict(registry)).toEqual({})

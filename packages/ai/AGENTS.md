@@ -134,7 +134,7 @@ Keep provider facades small and explicit:
 - Export lower-level `routes` arrays separately only when advanced internal wiring needs them.
 - Prefer `apiKey` as provider-specific sugar and `auth` as the explicit override; keep them mutually exclusive in provider option types with `ProviderAuthOption`.
 - Resolve `apiKey` → `Auth` with `AuthOptions.bearer(options, "<PROVIDER>_API_KEY")` (it honors an explicit `auth` override and falls back to `Auth.config(envVar)` so missing keys surface a typed `Authentication` error rather than a runtime crash).
-- Use separate top-level facades for products with different required setup, such as `ZAI` and `ZAICodingPlan`.
+- Use separate top-level facades for products with different required setup instead of merging two products into one facade.
 - Give every named provider its own file and top-level export. Keep its endpoint, auth defaults, and route setup in that file. Compose shared protocols directly; do not nest named provider presets under generic compatible facades or keep their endpoints in a shared provider profile registry.
 
 `Provider.make(...)` remains available for simple static provider definitions, but new built-in providers should prefer plain configured facades unless a helper removes real duplication without adding runtime behavior.
@@ -144,9 +144,9 @@ Keep provider facades small and explicit:
 Catalog-selected native providers use package-like export paths from `@opencode/ai`. They are internal entrypoints in one npm package, not separately published provider packages. Every entrypoint implements `ProviderPackage.Definition` and exposes `model(modelID, settings)`, where settings are one flat serializable object: the connection keys the entrypoint declares (`apiKey`, `baseURL`, `region`, …), the common `headers` and `body` overlays, and the protocol's request options (`reasoningEffort`, `thinking`, …) side by side. Each entrypoint destructures its own connection keys and passes the rest to the route as `providerOptions`; there is no nested `providerOptions` at the entrypoint.
 
 ```ts
-import { model } from "@opencode/ai/providers/zai-coding-plan/messages"
+import { model } from "@opencode/ai/providers/alibaba/messages"
 
-const selected = model("glm-5.3", {
+const selected = model("qwen3.8-max", {
   apiKey,
   effort: "high",
 })
@@ -156,7 +156,7 @@ Keep semantic APIs as separate entrypoints, such as Alibaba `chat` and `messages
 
 Do not expose `Route` in provider package settings. Route composition stays an implementation detail behind `model(...)`.
 
-The dependency arrow points down: `providers/*.ts` files import protocol routes and auth-option utilities; protocol modules import `endpoint`, `auth`, `framing`, and transport pieces. Protocols do not import provider facades. Lower-level modules know nothing about provider catalog metadata. Protocol variants such as `AlibabaChat` and `ZAIChat` compose the base `OpenAIChat` protocol; the baseline never imports its extensions.
+The dependency arrow points down: `providers/*.ts` files import protocol routes and auth-option utilities; protocol modules import `endpoint`, `auth`, `framing`, and transport pieces. Protocols do not import provider facades. Lower-level modules know nothing about provider catalog metadata. Protocol variants such as `AlibabaChat` compose the base `OpenAIChat` protocol; the baseline never imports its extensions.
 
 ### Shared protocol helpers
 

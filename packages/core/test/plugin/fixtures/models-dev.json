@@ -1,14 +1,8 @@
 {
-  "xiaomi": {
-    "id": "xiaomi",
-    "name": "Xiaomi",
-    "env": ["XIAOMI_API_KEY"],
-    "models": {}
-  },
   "xiaomi-token-plan-cn": {
     "id": "xiaomi-token-plan-cn",
-    "name": "Xiaomi Token Plan CN",
-    "env": [],
+    "name": "Xiaomi Token Plan (China)",
+    "env": ["XIAOMI_API_KEY"],
     "models": {}
   }
 }

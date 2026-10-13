@@ -29,7 +29,7 @@ const seed = Effect.fn(function* () {
     for (const [providerID, models] of [
       ["alibaba", ["qwen-plus"]],
       ["deepseek", ["deepseek-flash", "deepseek-pro"]],
-      ["zhipuai-coding-plan", ["glm-5.3", "glm-4.7"]],
+      ["alibaba-coding-plan", ["qwen3.8-max", "qwen3.7-plus"]],
       ["xiaomi-token-plan-cn", ["mimo-v2.6-pro", "mimo-v2-flash"]],
     ] as const) {
       editor.update(Provider.ID.make(providerID), () => {})
@@ -51,11 +51,11 @@ describe("DeclaredProvidersPlugin", () => {
     Effect.gen(function* () {
       const providers = yield* seed()
       yield* addPlugins([
-        document({ "zhipuai-coding-plan": { models: { "glm-5.3": {} } }, "xiaomi-token-plan-cn": {} }),
+        document({ "alibaba-coding-plan": { models: { "qwen3.8-max": {} } }, "xiaomi-token-plan-cn": {} }),
       ])
       expect((yield* providers.all()).map((item) => String(item.id)).toSorted()).toEqual([
+        "alibaba-coding-plan",
         "xiaomi-token-plan-cn",
-        "zhipuai-coding-plan",
       ])
     }),
   )
@@ -64,12 +64,12 @@ describe("DeclaredProvidersPlugin", () => {
     Effect.gen(function* () {
       const providers = yield* seed()
       yield* addPlugins([
-        document({ "zhipuai-coding-plan": { models: { "glm-5.3": {} } }, "xiaomi-token-plan-cn": {} }),
+        document({ "alibaba-coding-plan": { models: { "qwen3.8-max": {} } }, "xiaomi-token-plan-cn": {} }),
       ])
       expect(yield* catalog(providers)).toEqual([
+        "alibaba-coding-plan/qwen3.8-max",
         "xiaomi-token-plan-cn/mimo-v2-flash",
         "xiaomi-token-plan-cn/mimo-v2.6-pro",
-        "zhipuai-coding-plan/glm-5.3",
       ])
     }),
   )

@@ -117,7 +117,7 @@ const alibabaChat: Protocol = (model, support) => {
   switch (support.type) {
     case "effort": {
       if (fixed && support.values === undefined) return []
-      const hosted = id.includes("glm") || id.includes("deepseek")
+      const hosted = id.includes("deepseek")
       const values = support.values ?? (hosted ? ["high", "max"] : ["low", "medium", "xhigh"])
       return efforts(values, (effort) => {
         if (effort === "none") return { settings: { enableThinking: false } }
@@ -134,30 +134,6 @@ const alibabaChat: Protocol = (model, support) => {
         ALIBABA_THINKING_BUDGET_MAX,
       )
   }
-}
-
-const zaiChat: Protocol = (model, support) => {
-  const id = modelID(model).toLowerCase()
-  const version = /glm-?(\d+)(?:(?:[.-]|p)(\d+))?/.exec(id)
-  const major = Number(version?.[1])
-  const minor = Number(version?.[2] ?? 0)
-  const coding = model.package?.includes("zai-coding-plan") ?? false
-  const latest = coding || !Number.isFinite(major) || major > 5 || (major === 5 && minor >= 3)
-  const effort = major === 5 && minor === 2
-  if (support.type === "toggle" || (!latest && !effort && support.type === "effort" && support.values === undefined)) {
-    if (latest) return []
-    return toggle(
-      { settings: { thinking: { type: "disabled" } } },
-      { settings: { thinking: { type: "enabled", clear_thinking: false } } },
-    )
-  }
-  if (support.type !== "effort") return []
-  return efforts(support.values ?? (latest ? ["low", "high", "max"] : ["high", "max"]), (value) => {
-    if (value === "none" || value === "minimal") return { settings: { thinking: { type: "disabled" } } }
-    return {
-      settings: { thinking: { type: "enabled", clear_thinking: false }, reasoningEffort: value },
-    }
-  })
 }
 
 const anthropicMessages: Protocol = (model, support) => {
@@ -196,7 +172,7 @@ const alibabaMessages: Protocol = (model, support) => {
   const id = modelID(model).toLowerCase()
   switch (support.type) {
     case "effort": {
-      const hosted = id.includes("glm") || id.includes("deepseek")
+      const hosted = id.includes("deepseek")
       const values = support.values ?? (hosted ? ["high", "max"] : ["low", "medium", "xhigh"])
       return efforts(values, (effort) => {
         if (effort === "none") return { settings: { thinking: { type: "disabled" } } }
@@ -215,34 +191,10 @@ const alibabaMessages: Protocol = (model, support) => {
   }
 }
 
-const zaiMessages: Protocol = (model, support) => {
-  const id = modelID(model).toLowerCase()
-  const forced = id.includes("glm-5.3") || id.includes("glm-5-3") || id.includes("glm-5p3")
-  switch (support.type) {
-    case "effort":
-      return efforts(support.values ?? (forced ? ["low", "high", "max"] : ["high", "max"]), (effort) => ({
-        settings: {
-          thinking: { type: effort === "none" || effort === "minimal" ? "disabled" : "enabled" },
-          effort,
-        },
-      }))
-    case "toggle":
-      return forced
-        ? []
-        : toggle({ settings: { thinking: { type: "disabled" } } }, { settings: { thinking: { type: "enabled" } } })
-    case "budget_tokens":
-      return []
-  }
-}
-
 const PROTOCOLS: Readonly<Record<string, Protocol>> = {
   "@opencode/ai/providers/openai-compatible": openaiChat,
   "@opencode/ai/providers/alibaba/chat": alibabaChat,
   "@opencode/ai/providers/deepseek": deepseekChat,
-  "@opencode/ai/providers/zai/chat": zaiChat,
-  "@opencode/ai/providers/zai-coding-plan/chat": zaiChat,
-
   "@opencode/ai/providers/anthropic": anthropicMessages,
   "@opencode/ai/providers/alibaba/messages": alibabaMessages,
-  "@opencode/ai/providers/zai-coding-plan/messages": zaiMessages,
 }

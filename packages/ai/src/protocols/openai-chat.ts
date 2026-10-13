@@ -676,9 +676,8 @@ const hasToolHistory = (messages: ReadonlyArray<LLMRequest["messages"][number]>)
 
 // Derive `max_tokens` vs `max_completion_tokens` from provider/baseURL when
 // explicit `compatibility.maxTokensField` is not set. Aligned with
-// models.dev provider naming: DeepSeek, Moonshot AI, Together AI, ZAI
-// (Zhipu + Coding Plan variants), Nvidia, Cerebras, Chutes, etc. still
-// require `max_tokens`.
+// models.dev provider naming: DeepSeek, Moonshot AI, Together AI, Nvidia,
+// Cerebras, Chutes, etc. still require `max_tokens`.
 const detectMaxTokensField = (
   provider: string,
   baseURL: string | undefined,
@@ -692,12 +691,6 @@ const detectMaxTokensField = (
     url.includes("api.moonshot.ai") ||
     p === "togetherai" ||
     url.includes("api.together.") ||
-    p === "zai" ||
-    p === "zai-coding-plan" ||
-    p === "zhipuai" ||
-    p === "zhipuai-coding-plan" ||
-    url.includes("api.z.ai") ||
-    url.includes("open.bigmodel.cn") ||
     p === "nvidia" ||
     url.includes("integrate.api.nvidia.com") ||
     p === "cerebras" ||
@@ -719,13 +712,6 @@ const detectSupportsStore = (provider: string, baseURL: string | undefined): boo
   const isNvidia = p === "nvidia" || url.includes("integrate.api.nvidia.com")
   const isMoonshot = p === "moonshotai" || p === "moonshotai-cn" || url.includes("api.moonshot.")
   const isTogether = p === "togetherai" || p === "together" || url.includes("api.together.")
-  const isZai =
-    p === "zai" ||
-    p === "zai-coding-plan" ||
-    p === "zhipuai" ||
-    p === "zhipuai-coding-plan" ||
-    url.includes("api.z.ai") ||
-    url.includes("open.bigmodel.cn")
   const isDeepSeek = p === "deepseek" || url.includes("deepseek.com")
   const isCerebras = p === "cerebras" || url.includes("cerebras.ai")
   const isXai = p === "xai" || url.includes("api.x.ai")
@@ -745,7 +731,6 @@ const detectSupportsStore = (provider: string, baseURL: string | undefined): boo
     isTogether ||
     isChutes ||
     isDeepSeek ||
-    isZai ||
     isMoonshot ||
     isOpencode ||
     isCloudflareWorkersAI ||
@@ -765,22 +750,6 @@ const detectSupportsStrictMode = (provider: string, baseURL: string | undefined)
   const isCloudflareAiGateway = p === "cloudflare-ai-gateway" || url.includes("gateway.ai.cloudflare.com")
   const isNvidia = p === "nvidia" || url.includes("integrate.api.nvidia.com")
   return !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
-}
-
-const detectZaiToolStream = (provider: string, baseURL: string | undefined, modelID: string): boolean => {
-  const p = provider.toLowerCase()
-  const url = (baseURL ?? "").toLowerCase()
-  const isZai =
-    p === "zai" ||
-    p === "zai-coding-plan" ||
-    p === "zhipuai" ||
-    p === "zhipuai-coding-plan" ||
-    url.includes("api.z.ai") ||
-    url.includes("open.bigmodel.cn")
-  if (!isZai) return false
-  const id = modelID.toLowerCase()
-  if (id === "glm-4.5" || id === "glm-4.5-air" || id === "glm-4.5-flash" || id === "glm-4.5v") return false
-  return true
 }
 
 const lowerOptions = (request: LLMRequest, supportsStore: boolean) => {
@@ -823,8 +792,6 @@ export const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (
     request.model.compatibility?.supportsUsageInStreaming ?? detectSupportsUsageInStreaming()
   const supportsStrictMode =
     request.model.compatibility?.supportsStrictMode ?? detectSupportsStrictMode(provider, baseURL)
-  const zaiToolStream =
-    request.model.compatibility?.zaiToolStream ?? detectZaiToolStream(provider, baseURL, request.model.id)
   const hasHistory = hasToolHistory(request.messages)
   const hasActiveTools = flattened.tools.length > 0
   return {
@@ -839,7 +806,6 @@ export const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (
     tool_choice: hasActiveTools && request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
     stream: true as const,
     ...(supportsUsageInStreaming ? { stream_options: { include_usage: true } } : {}),
-    ...(zaiToolStream && hasActiveTools ? { tool_stream: true } : {}),
     ...(maxTokensField === "max_completion_tokens"
       ? { max_completion_tokens: generation?.maxTokens }
       : { max_tokens: generation?.maxTokens }),

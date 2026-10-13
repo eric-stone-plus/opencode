@@ -1,7 +1,7 @@
 # @opencode/ai
 
-Schema-first APIs for text, built with Effect. This fork bundles providers for Alibaba, DeepSeek, Z.AI and Zhipu
-(through the Alibaba, DeepSeek, `ZAI`, `ZAICodingPlan`, `Anthropic*` and `OpenAICompatible` facades) and nothing else.
+Schema-first APIs for text, built with Effect. This fork bundles providers for Alibaba, DeepSeek and the Xiaomi
+token plan (through the Alibaba, DeepSeek, `Anthropic*` and `OpenAICompatible` facades) and nothing else.
 
 ```ts
 import { Effect } from "effect"
@@ -118,72 +118,6 @@ strings. Qwen 3.8 Chat rejects requests combining a thinking budget with effort.
 
 Package entrypoints are `@opencode/ai/providers/alibaba`, `alibaba/chat`, and `alibaba/messages`. Live
 recordings cover both APIs in Singapore; regional URL construction is unit-tested for all six regions.
-
-## Z.AI
-
-`ZAI` uses the standard API with Chat Completions. `ZAICodingPlan` adds the subscription endpoints for Chat
-Completions and Anthropic-compatible Messages.
-
-```ts
-import { LLM } from "@opencode/ai"
-import { ZAI, ZAICodingPlan } from "@opencode/ai/providers"
-
-const zai = ZAI.configure({ apiKey: process.env.ZAI_API_KEY })
-const request = LLM.request({
-  model: zai.model("glm-5.3"), // also zai.chat("glm-5.3")
-  prompt: "Explain this design.",
-  providerOptions: {
-    reasoningEffort: "high",
-    thinking: { type: "enabled", clear_thinking: false },
-  },
-})
-
-const coding = ZAICodingPlan.configure({ apiKey: process.env.ZAI_API_KEY })
-const messages = LLM.request({
-  model: coding.messages("glm-5.3"),
-  prompt: "Explain this design.",
-  providerOptions: { effort: "high" },
-})
-```
-
-The products have distinct provider identities and endpoints:
-
-| Provider                            | Selector          | Default base URL                      |
-| ----------------------------------- | ----------------- | ------------------------------------- |
-| `ZAI` (`zai`)                       | `.model`, `.chat` | `https://api.z.ai/api/paas/v4`        |
-| `ZAICodingPlan` (`zai-coding-plan`) | `.model`, `.chat` | `https://api.z.ai/api/coding/paas/v4` |
-| `ZAICodingPlan`                     | `.messages`       | `https://api.z.ai/api/anthropic/v1`   |
-
-Both read `ZAI_API_KEY` when `apiKey` is omitted and support an explicit `auth` override.
-Coding Plan requires an active subscription. `baseURL` overrides the selected API's
-complete base, including its version prefix. Language-model routes use HTTP/SSE.
-
-Options retain the selected API's native semantics:
-
-- Chat `reasoningEffort` lowers to `reasoning_effort`. Messages `effort` lowers to `output_config.effort`.
-  Omission preserves provider defaults.
-- Chat `thinking` passes `type` and `clear_thinking` through unchanged. Set
-  `clear_thinking: false` and replay complete `response.message` values to preserve reasoning
-  across user messages and tool loops. The standard API defaults to clearing historical thinking;
-  Coding Plan documents preservation by default.
-- Messages accepts `thinking: { type: "enabled" | "adaptive" | "disabled" }` without requiring
-  an Anthropic token budget. Coding Plan documents a disabled toggle as low-effort thinking
-  for GLM-5.3, with explicit effort taking precedence.
-- Chat also offers `toolStream`, `doSample`, `responseFormat`, `requestID`, and `userID`.
-  Tool-argument streaming is enabled when tools are present on GLM-4.6/4.7/5.x;
-  `toolStream: false` explicitly disables it. Older model families omit the opt-in.
-- Effort and thinking values remain forward-compatible strings. Their meaning is model-specific:
-  GLM-5.3 accepts `low`, `high`, and `max` effort and rejects disabled thinking with HTTP 400;
-  the direct GLM-5.2 recordings returned reasoning even with `none` and `minimal` effort,
-  whereas explicit `thinking.type: "disabled"` disabled it on GLM-5.2 and GLM-4.7.
-
-Standard API recordings cover GLM-5.3 efforts and a full preserved-reasoning tool loop with
-a subsequent user follow-up, GLM-5.2 efforts, older-model thinking toggles, GLM-4.5 tool calls,
-GLM-5.3-Flash image input, and JSON output. Coding Plan has unit coverage for routing,
-request options, and reasoning replay; successful live recordings are pending.
-
-Package entrypoints are `@opencode/ai/providers/zai`, `zai/chat`, `zai-coding-plan`,
-`zai-coding-plan/chat`, and `zai-coding-plan/messages`.
 
 ## DeepSeek
 
@@ -390,7 +324,7 @@ LLM.request({
 
 | Protocol                                  | `cache: "auto"`                                                   |
 | ----------------------------------------- | ----------------------------------------------------------------- |
-| Anthropic Messages (and Alibaba / Z.AI)   | emits up to 4 `cache_control` markers (4-breakpoint cap enforced) |
+| Anthropic Messages (and Alibaba)          | emits up to 4 `cache_control` markers (4-breakpoint cap enforced) |
 | Alibaba Chat                              | emits `cache_control` markers on Qwen models                      |
 | OpenAI Chat (DeepSeek, OpenAI-compatible) | no-op (implicit server-side caching)                              |
 
@@ -400,7 +334,7 @@ Normalized cache usage is read back into `response.usage.cacheReadInputTokens` a
 
 Provider facades configure endpoint/auth/deployment details first, then expose model selectors that take only a model or deployment id. The selected model carries the executable route value used at runtime.
 
-This fork ships the following providers and nothing else: `Alibaba`, `Anthropic`, `AnthropicCompatible`, `DeepSeek`, `OpenAICompatible`, `ZAI`, and `ZAICodingPlan`. Each owns its module, endpoint, authentication, and route setup, and providers with the same wire format compose the shared protocol directly. Two protocols carry all of them: OpenAI-style Chat Completions (`OpenAIChat`, `OpenAICompatibleChat`, plus the Alibaba and Z.AI variants) and Anthropic Messages.
+This fork ships the following providers and nothing else: `Alibaba`, `Anthropic`, `AnthropicCompatible`, `DeepSeek`, and `OpenAICompatible` (the Xiaomi token plan composes `OpenAICompatible`). Each owns its module, endpoint, authentication, and route setup, and providers with the same wire format compose the shared protocol directly. Two protocols carry all of them: OpenAI-style Chat Completions (`OpenAIChat`, `OpenAICompatibleChat`, plus the Alibaba variant) and Anthropic Messages.
 
 ### Provider entrypoints
 
@@ -423,8 +357,6 @@ APIs have separate entrypoints:
 - `@opencode/ai/providers/anthropic-compatible`
 - `@opencode/ai/providers/deepseek`
 - `@opencode/ai/providers/openai-compatible`
-- `@opencode/ai/providers/zai` (also `zai/chat`)
-- `@opencode/ai/providers/zai-coding-plan` (also `zai-coding-plan/chat` and `zai-coding-plan/messages`)
 
 ## Provider options & HTTP overlays
 

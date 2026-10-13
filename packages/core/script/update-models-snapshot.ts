@@ -3,7 +3,7 @@
  * Refreshes the bundled models.dev catalog snapshot at src/models-dev/snapshot.txt.
  * The snapshot is the boot-time floor for the catalog when no cache entry exists
  * and fetching is disabled or unavailable; an opted-in live fetch refreshes on top.
- * Only the vendors this fork supports are embedded (ADR 0005), sorted by provider id
+ * Only the vendors this fork supports are embedded (ADR 0006), sorted by provider id
  * so refreshing unchanged registry data rewrites identical bytes.
  */
 import { ModelsDev } from "@opencode/schema/models-dev"

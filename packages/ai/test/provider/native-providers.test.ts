@@ -8,8 +8,6 @@ import {
   AnthropicCompatible,
   DeepSeek,
   OpenAICompatible,
-  ZAI,
-  ZAICodingPlan,
 } from "../../src/providers/index.js"
 import { compileRequest } from "../../src/route/client.js"
 import { it } from "../lib/effect.js"
@@ -28,9 +26,6 @@ describe("native providers", () => {
       ],
       [OpenAICompatible.configure({ baseURL: "https://example.test/v1", provider: "custom" }).model("model"), "custom"],
       [DeepSeek.configure({ apiKey: "test" }).model("model"), "deepseek"],
-      [ZAI.configure({ apiKey: "test" }).chat("model"), "zai"],
-      [ZAICodingPlan.configure({ apiKey: "test" }).chat("model"), "zai"],
-      [ZAICodingPlan.configure({ apiKey: "test" }).messages("model"), "zai"],
     ] as const
 
     for (const [model, key] of providers) expect(model.route.providerMetadataKey).toBe(key)

@@ -104,10 +104,8 @@ describe("ForkPricing.toModelCost", () => {
 
 describe("ForkPricing against the bundled catalog", () => {
   test("estimates subscription-plan models from their canonical flagship", () => {
-    const glm = ForkPricing.estimate(catalog, "zhipuai-coding-plan", "glm-5.3")
-    expect(glm?.[0]).toMatchObject({ input: 1.4, output: 4.4, cache: { read: 0.26 } })
-    const mimo = ForkPricing.estimate(catalog, "xiaomi-token-plan-cn", "mimo-v2.6-pro")
-    expect(mimo?.[0]).toMatchObject({ input: 0.435, output: 0.87 })
+    const qwen = ForkPricing.estimate(catalog, "alibaba-coding-plan", "qwen3.7-plus")
+    expect(qwen?.[0]).toMatchObject({ input: 0.4, output: 1.6, cache: { read: 0.04, write: 0.5 } })
   })
 
   test("estimates a provider the catalog never carried by name", () => {
@@ -124,14 +122,14 @@ describe("ForkPricing named table", () => {
   test("keeps the median across same-named rows and clones on read", () => {
     ForkPricing.publishNamed(
       new Map([
-        ["glm-5.3", [[entry(1.1, 3.1)], [entry(1.4, 4.4)], [entry(1.5, 4.5)]]],
+        ["mimo-v2.6-pro", [[entry(1.1, 3.1)], [entry(1.4, 4.4)], [entry(1.5, 4.5)]]],
       ]),
     )
-    const found = ForkPricing.namedCost("GLM-5.3")
+    const found = ForkPricing.namedCost("MIMO-V2.6-PRO")
     expect(found?.[0]).toMatchObject({ input: 1.4, output: 4.4 })
     expect(ForkPricing.namedCost("missing")).toBeUndefined()
     // The read must be a copy: a consumer that mutates it cannot corrupt the table.
-    const second = ForkPricing.namedCost("glm-5.3")
+    const second = ForkPricing.namedCost("mimo-v2.6-pro")
     expect(second).not.toBe(found)
     expect(second?.[0]).not.toBe(found?.[0])
   })

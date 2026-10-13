@@ -42,7 +42,7 @@ const patterns = [
   /context[_ ]length[_ ]exceeded/i,
   /context length is only \d+ tokens/i,
   /input length.*exceeds.*context length/i,
-  // Z.ai code 1261 arrives as `Prompt too long` or `Prompt 超长`.
+  // Providers phrase the rejection as `Prompt too long` or `Prompt 超长`.
   /prompt (?:too long|超长)/i,
   /too large for model with \d+ maximum context length/i,
   /prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i,
@@ -240,9 +240,6 @@ export function classifyProviderFailure(input: ProviderFailure): AIError["reason
     (codes.includes("context_length_exceeded") ||
       codes.includes("model_context_window_exceeded") ||
       codes.includes("request_too_large") ||
-      zhipuOverflowCode(input.data) ||
-      zhipuOverflowCode(input.rawBody) ||
-      zhipuOverflowCode(input.message) ||
       isContextOverflow(text))
   )
     return new InvalidRequestError({ ...details, classification: "context-overflow" })
@@ -328,17 +325,4 @@ function providerCodes(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
-}
-
-// Zhipu (GLM) rejects oversized prompts with business code 1261 ("Prompt exceeds max
-// length"). It arrives as a JSON number, so it never reaches the string code list; the
-// matching message text is covered by the overflow patterns, but the code must be
-// checked directly or a differently-worded body loses its classification.
-function zhipuOverflowCode(value: unknown): boolean {
-  let decoded: unknown = value
-  if (typeof value === "string") decoded = Option.getOrUndefined(decodeJson(value))
-  if (!isRecord(decoded)) return false
-  const error = isRecord(decoded.error) ? decoded.error : undefined
-  const code = error?.code ?? decoded.code
-  return code === 1261 || code === "1261"
 }

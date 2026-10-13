@@ -4,9 +4,9 @@ import { OPENCODE_VERSION } from "../src/version"
 
 // Obviously fake values: the stub server never sees, and the CLI never prints, anything like a key.
 const integrations = [
-  { id: "glm-coding-plan", name: "GLM Coding Plan", labels: ["Work", "Personal"] },
-  { id: "zhipuai-coding-plan", name: "Zhipu AI Coding Plan", labels: ["default"] },
-  { id: "zhipuai-coding-pro", name: "Zhipu AI Coding Pro", labels: ["default"] },
+  { id: "mimo-coding-plan", name: "MiMo Coding Plan", labels: ["Work", "Personal"] },
+  { id: "alibaba-coding-plan", name: "Alibaba Coding Plan", labels: ["default"] },
+  { id: "alibaba-coding-plan-cn", name: "Alibaba Coding Plan CN", labels: ["default"] },
   { id: "deepseek", name: "DeepSeek", labels: [] },
 ]
 
@@ -22,12 +22,12 @@ describe("auth purge", () => {
   test("previews a purge by substring without confirming or changing anything", async () => {
     const stub = purgeServer()
     using server = stub.server
-    const result = await cli(["auth", "purge", "GLM", "--dry-run", "--server", server.url.toString()])
+    const result = await cli(["auth", "purge", "MIMO", "--dry-run", "--server", server.url.toString()])
     expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" })
     expect(stub.purges).toEqual([
-      { integrationIDs: ["glm-coding-plan"], files: true, history: false, compact: false, dryRun: true },
+      { integrationIDs: ["mimo-coding-plan"], files: true, history: false, compact: false, dryRun: true },
     ])
-    expect(result.stdout).toContain("GLM Coding Plan (glm-coding-plan): Work, Personal")
+    expect(result.stdout).toContain("MiMo Coding Plan (mimo-coding-plan): Work, Personal")
     expect(result.stdout).toContain("Would remove 1 of 1 credential(s)")
     expect(stub.paths).not.toContain("/api/credential")
   })
@@ -35,7 +35,7 @@ describe("auth purge", () => {
   test("requires --yes without an interactive terminal and sends nothing before it", async () => {
     const stub = purgeServer()
     using server = stub.server
-    const result = await cli(["auth", "purge", "glm", "--server", server.url.toString()])
+    const result = await cli(["auth", "purge", "mimo", "--server", server.url.toString()])
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toContain("Pass --yes to purge without an interactive terminal")
     expect(stub.purges).toEqual([])
@@ -43,9 +43,9 @@ describe("auth purge", () => {
 
   test.each([
     { args: ["nothing-like-it"], message: 'No integration with stored credentials matches "nothing-like-it"' },
-    { args: ["zhipuai-coding"], message: '"zhipuai-coding" is ambiguous: zhipuai-coding-plan, zhipuai-coding-pro' },
+    { args: ["alibaba-coding"], message: '"alibaba-coding" is ambiguous: alibaba-coding-plan, alibaba-coding-plan-cn' },
     { args: ["deepseek"], message: 'No integration with stored credentials matches "deepseek"' },
-    { args: ["glm", "--all"], message: "Pass integration targets or --all, not both" },
+    { args: ["mimo", "--all"], message: "Pass integration targets or --all, not both" },
     { args: [], message: "Name the integrations to purge, or pass --all" },
   ])("fails $args without purging, listing candidates", async ({ args, message }) => {
     const stub = purgeServer()
@@ -59,10 +59,10 @@ describe("auth purge", () => {
   test("prefers an exact ID over longer IDs that contain it", async () => {
     const stub = purgeServer()
     using server = stub.server
-    const result = await cli(["auth", "purge", "zhipuai-coding-plan", "--yes", "--no-files", "--history", "--server", server.url.toString()])
+    const result = await cli(["auth", "purge", "alibaba-coding-plan", "--yes", "--no-files", "--history", "--server", server.url.toString()])
     expect(result.exitCode).toBe(0)
     expect(stub.purges).toEqual([
-      { integrationIDs: ["zhipuai-coding-plan"], files: false, history: true, compact: false, dryRun: false },
+      { integrationIDs: ["alibaba-coding-plan"], files: false, history: true, compact: false, dryRun: false },
     ])
   })
 

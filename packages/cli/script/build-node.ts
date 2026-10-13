@@ -74,7 +74,7 @@ const builder =
 async function assertTextImportsInlined(bundlePath: string) {
   const bundle = await readFile(bundlePath, "utf8")
   const markers = [
-    { marker: '"zhipuai"', source: "models-dev snapshot" },
+    { marker: '"xiaomi-token-plan-cn"', source: "models-dev snapshot" },
     { marker: "/assets/snapshot", source: "models-dev snapshot inlined as asset URL", forbidden: true },
     { marker: '="/assets/', source: "text import inlined as asset URL", forbidden: true },
   ]

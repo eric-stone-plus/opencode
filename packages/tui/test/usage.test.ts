@@ -139,7 +139,7 @@ describe("per-model usage", () => {
             cost: 0.1,
           },
           {
-            model: { id: "glm-5.3", providerID: "zhipuai-coding-plan" },
+            model: { id: "deepseek-v4-pro", providerID: "deepseek" },
             steps: 4,
             compactions: 1,
             tokens: { input: 20, output: 10, reasoning: 3, cache: { read: 0, write: 0 } },
@@ -150,7 +150,7 @@ describe("per-model usage", () => {
     )
     expect(rows.map((row) => row.label)).toEqual([
       "xiaomi-token-plan-cn/mimo-v2.6-pro#high",
-      "zhipuai-coding-plan/glm-5.3",
+      "deepseek/deepseek-v4-pro",
     ])
     expect(rows[0]?.value).toBe("$0.10 · 2 steps · 15 tokens")
     expect(rows[1]?.value).toBe("$0.00 · 4 steps · 33 tokens")
@@ -161,7 +161,7 @@ describe("per-model usage", () => {
       stats({
         models: [
           {
-            model: { id: "glm-5.3", providerID: "zhipuai-coding-plan" },
+            model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn" },
             steps: 4,
             compactions: 0,
             tokens: { input: 20, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -177,14 +177,14 @@ describe("per-model usage", () => {
         ],
       }),
     )
-    expect(flagged.map((entry) => modelLabel(entry.model))).toEqual(["zhipuai-coding-plan/glm-5.3"])
+    expect(flagged.map((entry) => modelLabel(entry.model))).toEqual(["xiaomi-token-plan-cn/mimo-v2.6-pro"])
   })
 
   test("explains zero-cost models, and stays silent when every model has a price", () => {
     const value = stats({
       models: [
         {
-          model: { id: "glm-5.3", providerID: "zhipuai-coding-plan" },
+          model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn" },
           steps: 4,
           compactions: 0,
           tokens: { input: 20, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -193,7 +193,7 @@ describe("per-model usage", () => {
       ],
     })
     expect(zeroCostNote(value)).toBe(
-      "Subscription plans have no per-token prices, so zhipuai-coding-plan/glm-5.3 record $0 — not a measurement of what was actually billed.",
+      "Subscription plans have no per-token prices, so xiaomi-token-plan-cn/mimo-v2.6-pro record $0 — not a measurement of what was actually billed.",
     )
     expect(zeroCostNote(stats())).toBeUndefined()
   })

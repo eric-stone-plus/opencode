@@ -19,10 +19,10 @@ import { tmpdirScoped } from "./fixture/tmpdir"
 
 // Obviously fake values: long enough to be searched for, and nothing like a real key.
 const QWEN = "fake-qwen-key-aaaaaaaaaaaaaaaa"
-const GLM = "fake-glm-key-bbbbbbbbbbbbbbbb"
+const MIMO = "fake-mimo-key-bbbbbbbbbbbbbbbb"
 const DEEPSEEK = "fake-deepseek-key-cccccccccccc"
 const bailian = Integration.ID.make("bailian-token-plan-personal")
-const glm = Integration.ID.make("glm-coding-plan")
+const mimo = Integration.ID.make("mimo-coding-plan")
 const deepseek = Integration.ID.make("deepseek")
 type Fixture = {
   readonly root: string
@@ -148,19 +148,19 @@ describe("CredentialPurge", () => {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
         fixture.manager.set("QWEN_PIN", QWEN)
-        yield* key(glm, GLM, "Work")
-        yield* key(glm, QWEN, "Personal")
+        yield* key(mimo, MIMO, "Work")
+        yield* key(mimo, QWEN, "Personal")
         const kept = yield* key(deepseek, DEEPSEEK, "default")
 
-        const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [glm] }))
+        const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [mimo] }))
 
         expect(result.dryRun).toBe(false)
         // The selected credential is removed last, so the integration switches once, to nothing.
         expect(result.credentials.map((item) => [item.integrationID, item.label, item.removed])).toEqual([
-          [glm, "Work", true],
-          [glm, "Personal", true],
+          [mimo, "Work", true],
+          [mimo, "Personal", true],
         ])
-        expect(yield* credentials.list(glm)).toEqual([])
+        expect(yield* credentials.list(mimo)).toEqual([])
         expect(yield* credentials.all()).toEqual([kept])
         expect(result.secrets).toEqual({ distinct: 2, shared: 0, short: 0 })
         expect(result.swept).toEqual([])
@@ -179,7 +179,7 @@ describe("CredentialPurge", () => {
         const purge = yield* CredentialPurge.Service
         fixture.manager.set("QWEN_PIN", QWEN)
         yield* key(bailian, QWEN)
-        yield* key(glm, GLM)
+        yield* key(mimo, MIMO)
         const authFile = file(fixture, "data", "auth.json")
         const envFile = file(fixture, ".config", "opencode", "env")
         const confFile = file(fixture, ".config", "environment.d", "95-qwen-provider.conf")
@@ -191,7 +191,7 @@ describe("CredentialPurge", () => {
             {
               [bailian]: { type: "api", key: QWEN },
               "renamed-alias": { type: "api", key: QWEN },
-              [glm]: { type: "api", key: GLM },
+              [mimo]: { type: "api", key: MIMO },
               [deepseek]: { type: "api", key: DEEPSEEK },
             },
             null,
@@ -224,7 +224,7 @@ describe("CredentialPurge", () => {
         )
 
         expect(JSON.parse(yield* read(authFile))).toEqual({
-          [glm]: { type: "api", key: GLM },
+          [mimo]: { type: "api", key: MIMO },
           [deepseek]: { type: "api", key: DEEPSEEK },
         })
         expect((yield* read(authFile)).endsWith("}\n")).toBe(true)
@@ -330,12 +330,12 @@ describe("CredentialPurge", () => {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
         yield* key(bailian, QWEN)
-        yield* key(glm, QWEN)
-        yield* key(glm, "short")
+        yield* key(mimo, QWEN)
+        yield* key(mimo, "short")
         const envFile = file(fixture, ".config", "opencode", "env")
         yield* write(envFile, [`export SHARED=${QWEN}`, "export TINY=short", ""].join("\n"))
 
-        const result = yield* purge.run({ integrationIDs: [glm], files: true })
+        const result = yield* purge.run({ integrationIDs: [mimo], files: true })
 
         expect(result.secrets).toEqual({ distinct: 0, shared: 1, short: 1 })
         expect(yield* read(envFile)).toBe([`export SHARED=${QWEN}`, "export TINY=short", ""].join("\n"))

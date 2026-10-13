@@ -46,7 +46,6 @@ export const compatibility = {
   supportsStore: false,
   supportsStrictMode: false,
   reasoningField: "reasoning_content",
-  zaiToolStream: false,
 } satisfies LanguageModelCompatibility
 
 export const protocol = Protocol.make({

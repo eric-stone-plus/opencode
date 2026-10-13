@@ -61,7 +61,7 @@ function labels(integration: IntegrationInfo) {
   return integration.connections.flatMap((connection) => (connection.type === "credential" ? [connection.label] : []))
 }
 
-// Exact ID, then exact name, then substring: `zhipuai` stays unambiguous next to `zhipuai-coding-plan`.
+// Exact ID, then exact name, then substring: `alibaba-coding-plan` stays unambiguous next to `alibaba-coding-plan-cn`.
 function pick(candidates: IntegrationInfo[], target: string) {
   const needle = target.trim().toLowerCase()
   const tiers = [

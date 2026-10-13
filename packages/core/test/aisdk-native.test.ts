@@ -72,12 +72,6 @@ describe("AISDKNative", () => {
     const anthropic = "@ai-sdk/anthropic"
     for (const [providerID, npm, expected] of [
       ["deepseek", openaiCompatible, "@opencode/ai/providers/deepseek"],
-      ["zai", openaiCompatible, "@opencode/ai/providers/zai/chat"],
-      ["zhipuai", openaiCompatible, "@opencode/ai/providers/zai/chat"],
-      ["zai-coding-plan", openaiCompatible, "@opencode/ai/providers/zai-coding-plan/chat"],
-      ["zai-coding-plan", anthropic, "@opencode/ai/providers/zai-coding-plan/messages"],
-      ["zhipuai-coding-plan", openaiCompatible, "@opencode/ai/providers/zai-coding-plan/chat"],
-      ["zhipuai-coding-plan", anthropic, "@opencode/ai/providers/zai-coding-plan/messages"],
       ["alibaba", openaiCompatible, "@opencode/ai/providers/alibaba/chat"],
       ["alibaba-cn", anthropic, "@opencode/ai/providers/alibaba/messages"],
       ["alibaba-coding-plan-cn", openaiCompatible, "@opencode/ai/providers/alibaba/chat"],
@@ -90,7 +84,7 @@ describe("AISDKNative", () => {
     expect(AISDKNative.native("@ai-sdk/anthropic", { providerID: "bailian-token-plan-personal" })).toBe(
       "@opencode/ai/providers/anthropic",
     )
-    expect(AISDKNative.native("@ai-sdk/anthropic", { providerID: "glm-coding-plan" })).toBe(
+    expect(AISDKNative.native("@ai-sdk/anthropic", { providerID: "mimo-coding-plan" })).toBe(
       "@opencode/ai/providers/anthropic",
     )
     expect(AISDKNative.native("@ai-sdk/alibaba", { providerID: "alibaba" })).toBe("@opencode/ai/providers/alibaba/chat")

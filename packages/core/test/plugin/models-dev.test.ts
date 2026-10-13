@@ -717,8 +717,8 @@ describe("ModelsDevPlugin", () => {
       )
       expect(yield* integrations.list()).toEqual([
         Integration.Info.make({
-          id: Integration.ID.make("xiaomi"),
-          name: "Xiaomi",
+          id: Integration.ID.make("xiaomi-token-plan-cn"),
+          name: "Xiaomi Token Plan (China)",
           methods: [
             { type: "key" },
             {
@@ -941,24 +941,6 @@ describe("ModelsDevPlugin", () => {
           settings: { thinking: { type: "enabled" }, effort: id },
         })),
       )
-
-      const zai = Provider.ID.make("zai-coding-plan")
-      const glm = yield* modelState.get(zai, Model.ID.make("glm-effort"))
-      expect(glm?.variants).toEqual(
-        ["low", "high", "max"].map((id) => ({
-          id: Model.VariantID.make(id),
-          settings: { thinking: { type: "enabled", clear_thinking: false }, reasoningEffort: id },
-        })),
-      )
-
-      const glmMessages = yield* modelState.get(zai, Model.ID.make("glm-messages"))
-      expect(glmMessages?.package).toBe("@opencode/ai/providers/zai-coding-plan/messages")
-      expect(glmMessages?.variants).toEqual(
-        ["high", "max"].map((id) => ({
-          id: Model.VariantID.make(id),
-          settings: { thinking: { type: "enabled" }, effort: id },
-        })),
-      )
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "fixtures", "models-dev-reasoning.json")))),
   )
 })
@@ -974,10 +956,8 @@ describe("fork pricing in the live catalog", () => {
         snapshot
           .find((entry) => String(entry.info.id) === providerID)
           ?.models.find((model) => String(model.id) === modelID)
-      // canonical chain: xiaomi-token-plan-cn/mimo-v2.6-pro -> xiaomi/mimo-v2.6-pro
-      expect(row("xiaomi-token-plan-cn", "mimo-v2.6-pro")?.cost[0]).toMatchObject({ input: 0.435, output: 0.87 })
-      // canonical chain: zhipuai-coding-plan/glm-5.3 -> zhipuai/glm-5.3
-      expect(row("zhipuai-coding-plan", "glm-5.3")?.cost[0]).toMatchObject({ input: 1.4, output: 4.4 })
+      // canonical chain: alibaba-coding-plan/qwen3.7-plus -> alibaba/qwen3.7-plus
+      expect(row("alibaba-coding-plan", "qwen3.7-plus")?.cost[0]).toMatchObject({ input: 0.4, output: 1.6 })
       // declared prices stay untouched
       expect(row("deepseek", "deepseek-flash")?.cost[0]).toMatchObject({ input: 0.15, output: 0.6 })
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "../../src/models-dev/snapshot.txt")))),
