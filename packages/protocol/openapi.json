@@ -14047,6 +14047,9 @@
               "auto": {
                 "type": "boolean"
               },
+              "prune": {
+                "type": "boolean"
+              },
               "keep": {
                 "type": "object",
                 "properties": {

@@ -1872,6 +1872,15 @@ export type McpResourcesChanged = {
   data: { server: string }
 }
 
+export type LspUpdated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "lsp.updated"
+  location?: LocationRef
+  data: {}
+}
+
 export type SessionToolSuccess = {
   id: EventID
   created: number
@@ -2652,6 +2661,7 @@ export type V2Event =
   | VcsBranchUpdated
   | McpStatusChanged
   | McpResourcesChanged
+  | LspUpdated
   | V2EventRpc
   | V2EventServerConnected
 

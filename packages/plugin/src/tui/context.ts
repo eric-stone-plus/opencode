@@ -23,6 +23,7 @@ import type {
   SkillInfo,
   VcsInfo,
 } from "@opencode/client"
+import type { ForkLsp } from "@opencode/schema/fork-lsp"
 import type { ResolvedTheme } from "@opencode/theme/tui"
 import type { CliRenderer, KeyEvent, MarkdownCodeBlockRenderer, Renderable } from "@opentui/core"
 import type { JSX } from "@opentui/solid"
@@ -132,6 +133,7 @@ export interface Data {
       readonly server: LocationCollection<McpServer>
       readonly resource: LocationCollection<McpResource>
     }
+    readonly lspStatus: LocationCollection<ForkLsp.Status>
     readonly model: LocationCollection<ModelInfo>
     readonly provider: LocationCollection<ProviderInfo>
     readonly reference: LocationCollection<ReferenceInfo>

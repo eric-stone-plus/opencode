@@ -78,6 +78,8 @@ export const ServerDefinitions = Event.inventory(
   ...VcsEvent.Definitions,
   McpEvent.StatusChanged,
   McpEvent.ResourcesChanged,
+  // Restored for the fork's sidebar LSP panel (upstream removed its placeholder panel in #39955).
+  LspEvent.Updated,
 )
 export const Server = Event.latest(ServerDefinitions)
 export type ServerEvent = Schema.Schema.Type<(typeof ServerDefinitions)[number]>

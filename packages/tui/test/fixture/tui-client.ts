@@ -134,6 +134,9 @@ export function createFetch(override?: FetchHandler, events?: ReturnType<typeof 
         location: { directory, project: { id: "proj_test", directory: worktree, canonical: worktree } },
         data: { resources: [], templates: [] },
       })
+    // The fork's LSP status RPC: an empty server list is the idle state every fixture starts in.
+    // Rpc.Output is `{ output }` with additionalProperties: false — no location envelope here.
+    if (url.pathname === "/api/rpc/fork.lsp/status") return json({ output: [] })
     if (url.pathname === "/api/session") return json({ data: [], cursor: {} })
     if (url.pathname === "/api/config") return json([])
     if (url.pathname === "/api/session/active") return json({ data: {} })

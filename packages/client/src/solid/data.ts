@@ -41,6 +41,7 @@ import type {
 import { Worktree } from "@opencode/schema/worktree"
 import { SessionID } from "@opencode/schema/session-id"
 import { SessionMessage } from "@opencode/schema/session-message"
+import { ForkLsp } from "@opencode/schema/fork-lsp"
 import {
   isFormAlreadySettledError,
   isFormNotFoundError,
@@ -99,6 +100,7 @@ type LocationData = {
   integration?: IntegrationInfo[]
   mcpServer?: McpServer[]
   mcpResource?: McpResource[]
+  lspStatus?: ForkLsp.Status[]
   model?: ModelInfo[]
   provider?: ProviderInfo[]
   reference?: ReferenceInfo[]
@@ -1300,6 +1302,12 @@ export function createData(config: CreateDataInput) {
         result.location.mcp.resource.invalidate(location)
         refresh(() => result.location.mcp.resource.sync(location))
         break
+      // The runtime emits one event as each language server settles, so a burst of reads
+      // that spins up several servers costs one refetch.
+      case "lsp.updated":
+        result.location.lspStatus.invalidate(location)
+        settle(`lsp.status:${locationKey(location)}`, () => result.location.lspStatus.sync(location))
+        break
     }
   }
 
@@ -1904,6 +1912,7 @@ export function createData(config: CreateDataInput) {
           result.location.integration.sync(location),
           result.location.mcp.server.sync(location),
           result.location.mcp.resource.sync(location),
+          result.location.lspStatus.sync(location),
           result.location.model.sync(location),
           result.location.provider.sync(location),
           result.location.reference.sync(location),
@@ -1922,6 +1931,7 @@ export function createData(config: CreateDataInput) {
         result.location.integration.invalidate(location)
         result.location.mcp.server.invalidate(location)
         result.location.mcp.resource.invalidate(location)
+        result.location.lspStatus.invalidate(location)
         result.location.model.invalidate(location)
         result.location.provider.invalidate(location)
         result.location.reference.invalidate(location)
@@ -1944,6 +1954,18 @@ export function createData(config: CreateDataInput) {
           return { location: response.location, data: response.data.resources }
         }),
       },
+      lspStatus: locationResource("lspStatus", async (location) => {
+        // `fork.lsp` is a plugin-registered effect-schema RPC, so it has no portable
+        // definition for the typed helper; call the generic transport directly.
+        const response = await api().rpc.call({
+          rpcID: "fork.lsp",
+          method: "status",
+          input: {},
+          location: { directory: location.directory },
+        })
+        const data: ForkLsp.Status[] = response.output ?? []
+        return { location: { directory: location.directory }, data }
+      }),
       model: locationResource("model", (location) => api().model.list({ location }), { alias: true }),
       provider: locationResource("provider", (location) => api().provider.list({ location }), { alias: true }),
       reference: locationResource("reference", (location) => api().reference.list({ location })),
