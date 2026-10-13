@@ -47,117 +47,8 @@
             // Per-model compaction adaptation (2026-10-10): raise the
             // conservative 256k WORKING_CONTEXT_CAP clamp (overflow.ts) to the
             // hand-calibrated limit.input of this block. Same pattern pinned on
-            // the zhipuai/mimo/deepseek blocks.
+            // the mimo/deepseek blocks.
             "workingContextCap": 852544
-          }
-        }
-      }
-    },
-    // GLM-5.3 via Zhipu Coding Plan, Anthropic-compatible surface (tested
-    // 2026-09-27: tools/streaming/parallel tool_use/cache_control all pass;
-    // baseURL MUST keep the /v1 suffix — @ai-sdk/anthropic only appends
-    // /messages, and the no-suffix path returns HTTP 200 wrapping a 404).
-    // Key lives in auth.json under the same provider id; direct connection
-    // only (open.bigmodel.cn is in the no_proxy lists).
-    // 2026-09-28: NOT the default anymore — billing surface does not match
-    // the mainland token plan. Manual fallback only; tuned limits moved to
-    // the zhipuai-coding-plan block below.
-    "glm-coding-plan": {
-      "npm": "@ai-sdk/anthropic",
-      "name": "GLM Coding Plan",
-      "options": {
-        "baseURL": "https://open.bigmodel.cn/api/anthropic/v1"
-      },
-      "models": {
-        "glm-5.3": {
-          "name": "GLM-5.3",
-          "reasoning": true,
-          "limit": {
-            "context": 1000000,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text"],
-            "output": ["text"]
-          },
-          "options": {
-            // Raised with the coding-plan block 2026-09-29; same
-            // model/plan, anthropic face itself untested (extrapolated).
-            "maxOutputTokens": 131072
-          }
-        },
-        "glm-5.3-flash": {
-          "name": "GLM-5.3 Flash",
-          "reasoning": true,
-          "limit": {
-            "context": 1000000,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text", "image", "video"],
-            "output": ["text"]
-          },
-          "options": {
-            "maxOutputTokens": 131072
-          }
-        }
-      }
-    },
-    // Mainland token-plan track: merges onto the binary's built-in
-    // zhipuai-coding-plan models.dev entry (npm/baseURL duplicated verbatim
-    // so nothing overrides the registry). Carries the tuned limits migrated
-    // from the glm block on 2026-09-28.
-    "zhipuai-coding-plan": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Zhipu AI Coding Plan",
-      "options": {
-        "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4"
-      },
-      "models": {
-        "glm-5.3": {
-          "name": "GLM-5.3",
-          "reasoning": true,
-          "limit": {
-            "context": 1000000,
-            // overflow.ts:29 — without limit.input it deducts the full
-            // maxOutputTokens (131072 since 2026-09-29) leaving 124928;
-            // with it the min(20000,...) keep branch yields 236000 per
-            // compaction cycle.
-            "input": 868928,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text"],
-            "output": ["text"]
-          },
-          "options": {
-            // 2026-09-29 swarm (R2-C): zhipu coding-plan counts
-            // reasoning_tokens against max_tokens exactly like xiaomi
-            // (8192-budget run: 7818 reasoning + 374 text = 8192,
-            // finish=length); 131072 accepted for glm-5.3 AND flash
-            // (262144 → 400 "限制数值范围[1,131072]").
-            "maxOutputTokens": 131072,
-            "workingContextCap": 868928
-          }
-        },
-        "glm-5.3-flash": {
-          "name": "GLM-5.3 Flash",
-          "reasoning": true,
-          "limit": {
-            "context": 1000000,
-            // Same as glm-5.3. The old 236k compaction watermark is
-            // superseded by the workingContextCap pin below (2026-10-10).
-            "input": 868928,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "options": {
-            // Raised with glm-5.3 2026-09-29 (flash validated to 131072).
-            "maxOutputTokens": 131072,
-            "workingContextCap": 868928
           }
         }
       }
@@ -182,9 +73,8 @@
     //   (917504 − 20k = 897504 per compaction cycle; the pre-2026-10-10
     //   256k clamp yielded 236k). Without it the full maxOutputTokens is
     //   deducted and the cycle lands at 190464. 917504 = context − output.
-    // - maxOutputTokens is the FULL 131072 on purpose (glm blocks raised
-    //   to match 2026-09-29 — same shared-budget semantics measured on
-    //   the zhipu endpoint; bailian left at 65536, endpoint untested):
+    // - maxOutputTokens is the FULL 131072 on purpose (bailian left at
+    //   65536, endpoint untested):
     //   reasoning_tokens count against max_tokens (complex prompt at
     //   max_tokens=2000 → completion 2000, of which 1036 reasoning,
     //   finish=length, visible answer truncated). A 65536 cap lets the

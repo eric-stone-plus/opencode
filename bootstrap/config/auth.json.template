@@ -3,14 +3,6 @@
     "type": "api",
     "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
   },
-  "glm-coding-plan": {
-    "type": "api",
-    "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
-  },
-  "zhipuai-coding-plan": {
-    "type": "api",
-    "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
-  },
   "xiaomi-token-plan-cn": {
     "type": "api",
     "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
