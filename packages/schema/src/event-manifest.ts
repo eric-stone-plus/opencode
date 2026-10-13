@@ -32,6 +32,7 @@ import { Skill } from "./skill.js"
 import { SessionCompactionEvent } from "./session-compaction-event.js"
 import { SessionEvent } from "./session-event.js"
 import { SessionStatusEvent } from "./session-status-event.js"
+import { SessionTodo } from "./session-todo.js"
 import { TuiEvent } from "./tui-event.js"
 import { VcsEvent } from "./vcs-event.js"
 import { WorkspaceEvent } from "./workspace-event.js"
@@ -65,6 +66,7 @@ const featureDefinitions = Event.inventory(
   ...PersistentPty.Event.Definitions,
   ...Shell.Event.Definitions,
   ...Form.Event.Definitions,
+  ...SessionTodo.Event.Definitions,
   ...WebSearch.Event.Definitions,
 )
 

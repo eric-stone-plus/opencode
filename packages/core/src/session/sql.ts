@@ -174,3 +174,23 @@ export const InstructionStateTable = sqliteTable("instruction_state", {
   initial_values: text({ mode: "json" }).notNull().$type<Instruction.Values>(),
   current_values: text({ mode: "json" }).notNull().$type<Instruction.Values>(),
 })
+
+// The session todo list behind the todowrite tool and the sidebar panel. Restored
+// from V1 after upstream removed the feature (#35989); the table is rebuilt onto
+// session_v2 by migration 20261013081054_todo_session_state — before that it still
+// pointed at the V1 `session` table, which no new session ever enters.
+export const TodoTable = sqliteTable(
+  "todo",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    content: text().notNull(),
+    status: text().notNull(),
+    priority: text().notNull(),
+    position: integer().notNull(),
+    ...Timestamps,
+  },
+  (table) => [primaryKey({ columns: [table.session_id, table.position] })],
+)

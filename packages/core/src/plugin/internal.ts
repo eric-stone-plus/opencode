@@ -62,6 +62,7 @@ import { Session } from "../session.js"
 import { SessionCompaction } from "../session/compaction.js"
 import { SessionInstructions } from "../session/instructions.js"
 import { SubagentJob } from "../session/subagent-job.js"
+import { SessionTodo } from "../session/todo.js"
 import { Shell } from "../shell.js"
 import { ShellSelect } from "../shell/select.js"
 import { Snapshot } from "../snapshot.js"
@@ -80,6 +81,7 @@ import { ReadTool } from "../tool/plugin/read.js"
 import { ShellTool } from "../tool/plugin/shell.js"
 import { SkillTool } from "../tool/plugin/skill.js"
 import { SubagentTool } from "../tool/plugin/subagent.js"
+import { TodoWriteTool } from "../tool/plugin/todowrite.js"
 import { Tool } from "../tool.js"
 import { ToolOutput } from "../tool-output.js"
 import { WebFetchTool } from "../tool/plugin/webfetch.js"
@@ -142,6 +144,7 @@ const services = [
   Ripgrep.Service,
   Session.Service,
   SessionCompaction.Service,
+  SessionTodo.Service,
   SessionInstructions.Service,
   SubagentJob.Service,
   Shell.Service,
@@ -196,6 +199,7 @@ export const requirements = LayerNode.group([
   Ripgrep.node,
   Session.node,
   SessionCompaction.node,
+  SessionTodo.node,
   SessionInstructions.node,
   SubagentJob.node,
   Shell.node,
@@ -245,6 +249,7 @@ const pre = [
   ShellTool.Plugin,
   SkillTool.Plugin,
   SubagentTool.Plugin,
+  TodoWriteTool.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,

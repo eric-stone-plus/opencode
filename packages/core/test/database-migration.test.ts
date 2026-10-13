@@ -21,6 +21,7 @@ import executionClaimsMigration from "@opencode/core/database/migration/20260811
 import sessionInboxMigration from "@opencode/core/database/migration/20260812181746_session_inbox"
 import sessionViewedStateMigration from "@opencode/core/database/migration/20260819222447_session_viewed_state"
 import azureCliCredentialMigration from "@opencode/core/database/migration/20261007190000_azure_cli_external_credential"
+import todoSessionStateMigration from "@opencode/core/database/migration/20261013081054_todo_session_state"
 import { Global } from "@opencode/util/global"
 
 const run = <A, E>(
@@ -210,6 +211,69 @@ describe("DatabaseMigration", () => {
           time_viewed: null,
           idle_outcome: null,
         })
+        expect(yield* db.get(sql`SELECT count(*) AS count FROM migration`)).toEqual({ count: 1 })
+      }),
+    )
+  })
+
+  test("rebuilds the legacy todo table onto session_v2 and keeps surviving rows", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`CREATE TABLE session (id text PRIMARY KEY)`)
+        yield* db.run(sql`CREATE TABLE session_v2 (id text PRIMARY KEY)`)
+        yield* db.run(sql`
+          CREATE TABLE todo (
+            session_id text NOT NULL,
+            content text NOT NULL,
+            status text NOT NULL,
+            priority text NOT NULL,
+            position integer NOT NULL,
+            time_created integer NOT NULL,
+            time_updated integer NOT NULL,
+            CONSTRAINT todo_pk PRIMARY KEY(session_id, position),
+            CONSTRAINT fk_todo_session_id_session_id_fk FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE
+          )
+        `)
+        yield* db.run(sql`INSERT INTO session (id) VALUES ('ses_old')`)
+        yield* db.run(sql`INSERT INTO session_v2 (id) VALUES ('ses_old')`)
+        yield* db.run(sql`
+          INSERT INTO todo (session_id, content, status, priority, position, time_created, time_updated)
+          VALUES
+            ('ses_old', 'kept', 'pending', 'high', 0, 1, 1),
+            ('ses_gone', 'dropped', 'pending', 'low', 0, 1, 1)
+        `)
+
+        yield* DatabaseMigration.applyOnly(db, [todoSessionStateMigration])
+
+        expect(yield* db.all(sql`SELECT session_id, content, position FROM todo ORDER BY position`)).toEqual([
+          { session_id: "ses_old", content: "kept", position: 0 },
+        ])
+        const foreignKeys = yield* db.all<{ table: string; from: string; to: string; on_delete: string }>(
+          sql`PRAGMA foreign_key_list(todo)`,
+        )
+        expect(foreignKeys.map((row) => ({ table: row.table, from: row.from, to: row.to, on_delete: row.on_delete }))).toEqual(
+          [{ table: "session_v2", from: "session_id", to: "id", on_delete: "CASCADE" }],
+        )
+        expect(yield* db.get(sql`SELECT count(*) AS count FROM migration`)).toEqual({ count: 1 })
+      }),
+    )
+  })
+
+  test("creates the todo table when the legacy table never existed", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`CREATE TABLE session_v2 (id text PRIMARY KEY)`)
+
+        yield* DatabaseMigration.applyOnly(db, [todoSessionStateMigration])
+
+        const foreignKeys = yield* db.all<{ table: string; from: string; on_delete: string }>(
+          sql`PRAGMA foreign_key_list(todo)`,
+        )
+        expect(foreignKeys.map((row) => ({ table: row.table, from: row.from, on_delete: row.on_delete }))).toEqual([
+          { table: "session_v2", from: "session_id", on_delete: "CASCADE" },
+        ])
         expect(yield* db.get(sql`SELECT count(*) AS count FROM migration`)).toEqual({ count: 1 })
       }),
     )

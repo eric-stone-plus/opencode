@@ -222,6 +222,19 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`todo\` (
+          \`session_id\` text NOT NULL,
+          \`content\` text NOT NULL,
+          \`status\` text NOT NULL,
+          \`priority\` text NOT NULL,
+          \`position\` integer NOT NULL,
+          \`time_created\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL,
+          CONSTRAINT \`todo_pk\` PRIMARY KEY(\`session_id\`, \`position\`),
+          CONSTRAINT \`fk_todo_session_id_session_v2_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session_v2\`(\`id\`) ON DELETE CASCADE
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`workspace\` (
           \`id\` text PRIMARY KEY,
           \`provider\` text NOT NULL,
