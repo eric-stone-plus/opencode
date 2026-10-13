@@ -78,6 +78,32 @@ export function formatContextUsage(tokens: number, percent?: number) {
   return percent === undefined ? value : `${value} (${percent}%)`
 }
 
+/** Page size for the compaction count, at the message endpoint's maximum. */
+export const COMPACTION_PAGE = 200
+
+/**
+ * Counts a session's own compactions. The caller supplies the type-filtered page fetch;
+ * pages are followed only while one comes back full, so a session with fewer compactions
+ * than a page costs a single request. The count is the session's own — `stats.compactions`
+ * sums the whole subagent tree, and a subagent compacts its own window, not this one's.
+ * A page shorter than the limit ends the list; a full page continues behind its cursor.
+ */
+export async function countCompactions(
+  page: (cursor: string | undefined) => Promise<{
+    readonly data: ReadonlyArray<unknown>
+    readonly cursor: { readonly next?: string | null | undefined }
+  }>,
+): Promise<number> {
+  let count = 0
+  let cursor: string | undefined
+  do {
+    const response = await page(cursor)
+    count += response.data.length
+    cursor = response.data.length < COMPACTION_PAGE ? undefined : (response.cursor.next ?? undefined)
+  } while (cursor !== undefined)
+  return count
+}
+
 /**
  * Pending permission or question anywhere in a session's family, for the session
  * dialogs' status gutter. Lifted from the removed session-tabs status computation —

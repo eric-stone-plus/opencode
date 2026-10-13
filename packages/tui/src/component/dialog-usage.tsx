@@ -11,12 +11,12 @@ import { Keymap } from "../context/keymap"
 import { useConfig } from "../config"
 import { getScrollAcceleration } from "../util/scroll"
 import { errorMessage } from "../util/error"
-import { Locale } from "../util/locale"
-import { contextUsage } from "../util/session"
+import { COMPACTION_PAGE, contextUsage, countCompactions } from "../util/session"
 import { Spinner } from "./spinner"
 import {
   USAGE_ESTIMATE_NOTE,
   USAGE_SOURCE_NOTE,
+  contextWindowRows,
   usageActivity,
   usageModels,
   usageTotals,
@@ -25,11 +25,6 @@ import {
 } from "../util/usage"
 
 type Section = { readonly title?: string; readonly rows: UsageRow[]; readonly continuous?: boolean }
-
-function contextBar(percent: number) {
-  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)))
-  return `[${"█".repeat(filled)}${"░".repeat(10 - filled)}] ${percent}%`
-}
 
 /**
  * Session usage report, laid out as labelled sections over `session.stats` — recorded step
@@ -56,6 +51,20 @@ export function DialogUsage(props: { sessionID: string }) {
   const [stats] = createResource(() => props.sessionID, (sessionID) =>
     client.api.session.stats({ session: sessionID, tools: "summary" }),
   )
+  // The Context window section counts this session's own compactions, so the count comes
+  // from the session's own compaction messages; `stats.compactions` sums the whole subagent
+  // tree instead (a subagent compacts its own window).
+  const [compactions] = createResource(() => props.sessionID, (sessionID) =>
+    countCompactions(async (cursor) => {
+      const response = await client.api.message.list({
+        sessionID,
+        type: "compaction",
+        limit: COMPACTION_PAGE,
+        ...(cursor === undefined ? { order: "desc" as const } : { cursor }),
+      })
+      return response
+    }),
+  )
   const session = createMemo(() => data.session.get(props.sessionID))
   const messages = createMemo(() => data.session.message.list(props.sessionID))
   const context = createMemo(() => {
@@ -78,16 +87,7 @@ export function DialogUsage(props: { sessionID: string }) {
       if (info.model) meta.push({ label: "Model", value: `${info.model.providerID}/${info.model.id}` })
       if (info.parentID) meta.push({ label: "Parent session", value: info.parentID })
     }
-    const window: UsageRow[] = []
-    const usage = context()
-    if (usage) {
-      window.push({ label: "Context tokens", value: Locale.number(usage.tokens) })
-      window.push({
-        label: "Context window",
-        value: usage.limit ? Locale.number(usage.limit) : "window size unknown for this model",
-      })
-      if (usage.percent !== undefined) window.push({ label: "Context used", value: contextBar(usage.percent) })
-    }
+    const window = contextWindowRows(context(), compactions())
     return [
       ...(meta.length ? [{ title: "Session", rows: meta }] : []),
       { title: "Usage (this session)", rows: [...usageTotals(value), ...usageActivity(value)] },

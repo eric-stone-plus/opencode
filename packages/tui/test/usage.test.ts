@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionStatsInfo } from "@opencode/client"
 import {
+  contextWindowRows,
   cost,
   modelLabel,
   usageActivity,
@@ -68,16 +69,18 @@ describe("usage totals", () => {
 })
 
 describe("usage activity", () => {
-  test("counts prompts, steps, tools, compactions and scope", () => {
+  test("counts prompts, steps, tools and scope", () => {
     const rows = usageActivity(stats({ subagents: 2, sessions: 1 }))
     expect(rows.find((row) => row.label === "Prompts")?.value).toBe("3")
     expect(rows.find((row) => row.label === "Steps")?.value).toBe("5")
     expect(rows.find((row) => row.label === "Tool calls")?.value).toBe("7 · 1 failed")
-    expect(rows.find((row) => row.label === "Compactions")?.value).toBe("1")
     expect(rows.find((row) => row.label === "Scope")?.value).toBe("1 session · 2 subagents")
+    // The compaction count lives in the Context window section, scoped to this session
+    // rather than to `stats.compactions` (which sums the subagent tree).
+    expect(rows.find((row) => row.label === "Compactions")).toBeUndefined()
   })
 
-  test("omits tools, compactions and scope when absent", () => {
+  test("omits tools and scope when absent", () => {
     const rows = usageActivity(
       stats({
         compactions: 0,
@@ -85,6 +88,41 @@ describe("usage activity", () => {
       }),
     )
     expect(rows.map((row) => row.label)).toEqual(["Prompts", "Steps"])
+  })
+})
+
+describe("context window section", () => {
+  const usage = { tokens: 25_800, limit: 1_000_000, percent: 3 }
+
+  test("reads the window, then the session's own compaction count", () => {
+    expect(contextWindowRows(usage, 12)).toEqual([
+      { label: "Context tokens", value: "25.8K" },
+      { label: "Context window", value: "1.0M" },
+      { label: "Context used", value: "[░░░░░░░░░░] 3%" },
+      { label: "Compactions", value: "12" },
+    ])
+  })
+
+  test("shows the count as 0 instead of hiding it — the row is the indicator", () => {
+    const rows = contextWindowRows(usage, 0)
+    expect(rows.find((row) => row.label === "Compactions")?.value).toBe("0")
+  })
+
+  test("keeps the count when the window has no reading of its own", () => {
+    expect(contextWindowRows(undefined, 3)).toEqual([{ label: "Compactions", value: "3" }])
+  })
+
+  test("names an unknown window size instead of a blank", () => {
+    expect(contextWindowRows({ tokens: 900, percent: 40 }, 0)).toEqual([
+      { label: "Context tokens", value: "900" },
+      { label: "Context window", value: "window size unknown for this model" },
+      { label: "Context used", value: "[████░░░░░░] 40%" },
+      { label: "Compactions", value: "0" },
+    ])
+  })
+
+  test("renders nothing before either input arrives", () => {
+    expect(contextWindowRows(undefined, undefined)).toEqual([])
   })
 })
 

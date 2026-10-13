@@ -3,6 +3,35 @@ import { Locale } from "./locale"
 
 export type UsageRow = { readonly label: string; readonly value: string }
 
+/**
+ * The Context window section: the window's current reading, then how many times this
+ * session has compacted. `stats.compactions` is deliberately not used — it sums the
+ * whole subagent tree, and a subagent compacts its own window, not the one this
+ * section describes. Zero is shown rather than omitted: "never compacted" is the
+ * reading the row exists to give, and the count must not vanish exactly when it is 0.
+ */
+export function contextWindowRows(
+  usage: { readonly tokens: number; readonly limit?: number; readonly percent?: number } | undefined,
+  compactions: number | undefined,
+): UsageRow[] {
+  const rows: UsageRow[] = []
+  if (usage) {
+    rows.push({ label: "Context tokens", value: Locale.number(usage.tokens) })
+    rows.push({
+      label: "Context window",
+      value: usage.limit ? Locale.number(usage.limit) : "window size unknown for this model",
+    })
+    if (usage.percent !== undefined) rows.push({ label: "Context used", value: contextBar(usage.percent) })
+  }
+  if (compactions !== undefined) rows.push({ label: "Compactions", value: Locale.number(compactions) })
+  return rows
+}
+
+function contextBar(percent: number) {
+  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)))
+  return `[${"█".repeat(filled)}${"░".repeat(10 - filled)}] ${percent}%`
+}
+
 /** Cost strings keep tiny amounts visible instead of rounding them to $0.00. */
 export function cost(value: number) {
   if (value === 0) return "$0.00"
@@ -30,7 +59,11 @@ export function usageTotals(stats: SessionStatsInfo): UsageRow[] {
   ]
 }
 
-/** Activity counts: what happened, not what it cost. */
+/**
+ * Activity counts: what happened, not what it cost. Compaction counts are not activity that
+ * belongs here: the report carries one under the Context window section, counting the
+ * session's own compactions against the loaded message window's own scope.
+ */
 export function usageActivity(stats: SessionStatsInfo): UsageRow[] {
   const rows: UsageRow[] = [
     { label: "Prompts", value: Locale.number(stats.prompts) },
@@ -43,7 +76,6 @@ export function usageActivity(stats: SessionStatsInfo): UsageRow[] {
       value: `${Locale.number(tools.calls)}${tools.failed > 0 ? ` · ${Locale.number(tools.failed)} failed` : ""}`,
     })
   }
-  if (stats.compactions > 0) rows.push({ label: "Compactions", value: Locale.number(stats.compactions) })
   if (stats.sessions > 1 || stats.subagents > 0) {
     rows.push({
       label: "Scope",

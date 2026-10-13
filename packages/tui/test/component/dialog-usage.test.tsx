@@ -70,7 +70,18 @@ test("usage dialog reports sections, notes, and copies the report", async () => 
             time: { created: 0, updated: 0 },
           },
         })
-      if (url.pathname === `/api/session/${sessionID}/message`) return json({ data: [], cursor: {} })
+      if (url.pathname === `/api/session/${sessionID}/message`) {
+        // The usage report counts this session's own compactions from the type-filtered page.
+        if (url.searchParams.get("type") === "compaction")
+          return json({
+            data: [
+              { id: "msg_compaction_1", sessionID, type: "compaction", status: "completed", time: { created: 1 } },
+              { id: "msg_compaction_2", sessionID, type: "compaction", status: "completed", time: { created: 2 } },
+            ],
+            cursor: {},
+          })
+        return json({ data: [], cursor: {} })
+      }
       if (url.pathname === `/api/session/${sessionID}/inbox` || url.pathname === `/api/session/${sessionID}/permission`)
         return json({ data: [] })
       return undefined
@@ -148,6 +159,9 @@ test("usage dialog reports sections, notes, and copies the report", async () => 
     const scrolled = app.captureCharFrame()
     expect(scrolled).toContain("deepseek/deepseek-flash#max")
     expect(scrolled).toContain("Source: recorded step usage")
+    // The Context window section carries the session's own compaction count, and it is
+    // shown even when it is 0 — the row is the indicator, not a >0 decoration.
+    expect(scrolled).toMatch(/Compactions\s+2/)
 
     app.mockInput.pressKey("y")
     await app.waitFor(() => copied.length === 1)
@@ -155,6 +169,7 @@ test("usage dialog reports sections, notes, and copies the report", async () => 
     expect(copied[0]).toContain("Tool calls: 7 · 1 failed")
     expect(copied[0]).toContain("Session ID: " + sessionID)
     expect(copied[0]).toContain("deepseek/deepseek-flash#max: $0.42 · 3 steps")
+    expect(copied[0]).toContain("Compactions: 2")
     expect(copied[0]).toContain("Source: recorded step usage")
     expect(copied[0]).toContain("Subscription plans have no per-token prices")
 

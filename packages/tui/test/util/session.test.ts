@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode/client"
-import { lastAssistantWithUsage, sessionFamily } from "../../src/util/session"
+import { COMPACTION_PAGE, countCompactions, lastAssistantWithUsage, sessionFamily } from "../../src/util/session"
 
 const assistant = (id: string, input: number): SessionMessageInfo => ({
   id,
@@ -59,5 +59,38 @@ describe("util.session", () => {
 
     messages.push(assistant("msg_after", 5))
     expect(lastAssistantWithUsage(messages)?.tokens.input).toBe(5)
+  })
+
+  test("counts a session's compactions without paging when the first page is short", async () => {
+    const calls: Array<string | undefined> = []
+    const count = await countCompactions(async (cursor) => {
+      calls.push(cursor)
+      return { data: Array.from({ length: 12 }, () => ({})), cursor: { next: "unused" } }
+    })
+
+    expect(count).toBe(12)
+    expect(calls).toEqual([undefined])
+  })
+
+  test("follows the cursor while pages come back full", async () => {
+    const calls: Array<string | undefined> = []
+    const pages = [
+      { data: Array.from({ length: COMPACTION_PAGE }, () => ({})), cursor: { next: "page-2" } },
+      { data: Array.from({ length: COMPACTION_PAGE }, () => ({})), cursor: { next: "page-3" } },
+      { data: Array.from({ length: 5 }, () => ({})), cursor: {} },
+    ]
+    const count = await countCompactions(async (cursor) => {
+      calls.push(cursor)
+      return pages[calls.length - 1]!
+    })
+
+    expect(count).toBe(COMPACTION_PAGE * 2 + 5)
+    expect(calls).toEqual([undefined, "page-2", "page-3"])
+  })
+
+  test("stops when a full page carries no cursor, and counts nothing as zero", async () => {
+    const full = Array.from({ length: COMPACTION_PAGE }, () => ({}))
+    expect(await countCompactions(async () => ({ data: full, cursor: {} }))).toBe(COMPACTION_PAGE)
+    expect(await countCompactions(async () => ({ data: [], cursor: { next: "ignored" } }))).toBe(0)
   })
 })
