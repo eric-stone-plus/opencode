@@ -41,8 +41,11 @@ export function SidebarLsp(props: { context: Plugin.Context; sessionID: string }
               >
                 •
               </text>
-              <text fg={theme.text.muted} wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}>
-                {item.id} {item.root}
+              {/* The server name alone: names are the readable unit ("gopls", "typescript"),
+                  and the root path added noise without disambiguating anything a single
+                  working directory can hold twice. */}
+              <text fg={theme.text.base} wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}>
+                <b>{item.name}</b>
               </text>
             </box>
           )}

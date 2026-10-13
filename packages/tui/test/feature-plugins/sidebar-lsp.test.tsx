@@ -38,12 +38,20 @@ test("sidebar shows the idle hint before servers start", async () => {
   }
 })
 
-test("sidebar lists running language servers", async () => {
+test("sidebar lists running language servers by name only", async () => {
   const app = await testRender(
     () =>
       <SidebarLsp
         context={context({
-          servers: [{ id: "typescript", name: "typescript", root: "/workspace", status: "connected" }],
+          servers: [
+            {
+              id: "typescript",
+              name: "typescript",
+              root: "/very/long/workspace/root/that/would/never/fit/the/sidebar",
+              status: "connected",
+            },
+            { id: "gopls", name: "gopls", root: "/workspace", status: "error" },
+          ],
         })}
         sessionID="session"
       />,
@@ -55,7 +63,10 @@ test("sidebar lists running language servers", async () => {
     const frame = app.captureCharFrame()
     expect(frame).toContain("LSP")
     expect(frame).toContain("typescript")
-    expect(frame).toContain("/workspace")
+    expect(frame).toContain("gopls")
+    // The rows carry the server name alone; root paths are noise on a sidebar this narrow.
+    expect(frame).not.toContain("/very/long")
+    expect(frame).not.toContain("/workspace")
     expect(frame).not.toContain("LSPs will activate as files are read")
   } finally {
     app.renderer.destroy()
