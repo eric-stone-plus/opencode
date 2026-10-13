@@ -10,7 +10,7 @@ Deleted, not disabled — the same policy as ADR 0005, and the same consequence 
 - **`packages/cli`**: the build-time snapshot marker moves from `"zhipuai"` to `"xiaomi-token-plan-cn"`, and the auth-purge fixtures use kept providers.
 - **Docs/tests**: the Z.AI section in `packages/ai/README.md`, the AGENTS.md examples, and the TUI /usage display fixtures.
 
-Kept deliberately: the shared error-classifier vocabulary in `packages/ai/src/provider-error.ts` (generic text patterns such as `prompt too long`, the plan/quota phrases, the `permission_denied` code). It classifies incoming failures for any provider and ADR 0005's sweep kept the same vocabulary for every other removed vendor (Azure, OpenRouter, Cohere, …); removing it would be transport churn, not vendor removal. The stats and console apps keep their public-site vendor lists for the same reason: they were never part of the support surface.
+Kept deliberately: the shared error-classifier vocabulary in `packages/ai/src/provider-error.ts` (generic text patterns such as `prompt too long`, the plan/quota phrases, the `permission_denied` code). It classifies incoming failures for any provider and ADR 0005's sweep kept the same vocabulary for every other removed vendor (Azure, OpenRouter, Cohere, …); removing it would be transport churn, not vendor removal. The stats and console apps keep their public-site vendor lists for the same reason: they were never part of the support surface. The provider-icon registry (`packages/ui/src/components/provider-icons/types.ts`) keeps its rows for the removed vendors too: it is an asset lookup keyed by whatever a stored session or snapshot names, so pruning it belongs to a later asset sweep, not to this removal.
 
 Consequences:
 
