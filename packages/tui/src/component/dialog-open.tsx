@@ -9,7 +9,7 @@ import { useRoute } from "../context/route"
 import { useData } from "../context/data"
 import { useClient } from "../context/client"
 import { useLocation } from "../context/location"
-import { useSessionTabs } from "../context/session-tabs"
+import { sessionAttention } from "../util/session"
 import { useTheme } from "../context/theme"
 import { Keymap } from "../context/keymap"
 import { Locale } from "../util/locale"
@@ -27,9 +27,7 @@ import { projectName } from "../util/project"
 const RECENT_LIMIT = 8
 export const DialogOpenKey = Symbol("DialogOpen")
 
-type OpenTarget =
-  | { type: "session"; sessionID: string }
-  | { type: "project"; directory: string; projectID?: string }
+type OpenTarget = { type: "session"; sessionID: string } | { type: "project"; directory: string; projectID?: string }
 
 type OpenView = { type: "projects" } | { type: "worktrees"; projectID: string }
 
@@ -41,7 +39,6 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
   const data = useData()
   const client = useClient()
   const location = useLocation()
-  const sessionTabs = useSessionTabs()
   const toast = useToast()
   const theme = useTheme().surface("dialog")
   const paths = useTuiPaths()
@@ -150,13 +147,10 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
         .catch(() => undefined),
   )
 
-  const openTabs = createMemo(
-    () => new Set(sessionTabs.enabled() ? sessionTabs.tabs().map((tab) => tab.sessionID) : []),
-  )
   const currentSessionID = createMemo(() =>
     route.data.type === "session" ? data.session.root(route.data.sessionID) : undefined,
   )
-  const attention = (sessionID: string) => sessionTabs.status(sessionID).attention
+  const attention = (sessionID: string) => sessionAttention(data.session, sessionID)
   const sessions = createMemo(() => {
     const seen = new Set<string>()
     const match = matched()
@@ -195,14 +189,7 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
   })
 
   const options = createMemo(() => {
-    const tabs = openTabs()
-    const currentID = currentSessionID()
-    // With an empty query the menu shows what is not already one keystroke away: open tabs are
-    // visible in the strip, so recents exclude them unless a background session is awaiting input.
-    // Typing widens the pool to every session so matching a loaded tab by name still switches to it.
-    const candidates = sessions().filter(
-      (session) => !tabs.has(session.id) || (attention(session.id) && session.id !== currentID),
-    )
+    const candidates = sessions()
     const attentionCount = candidates.filter((session) => attention(session.id)).length
     const recent = filter().trim() ? sessions() : candidates.slice(0, Math.max(RECENT_LIMIT, attentionCount))
     const sessionOptions = recent.map((session) => {
@@ -225,12 +212,7 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
         category: "Sessions",
         footer: `${label ? `${Locale.truncate(label, 30)} · ` : ""}${timeAgo(session.time.updated)}`,
         onSelect: () => location.set(session.location),
-        gutter: sessionStatusGutter(
-          theme,
-          state,
-          running,
-          tabs.has(session.id) ? () => <text fg={theme.hue.accent[200]}>▪</text> : undefined,
-        ),
+        gutter: sessionStatusGutter(theme, state, running),
       }
     })
 
@@ -239,7 +221,9 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
       .list()
       .filter((project) => project.canonical !== "/")
       // Historical project identities can share a checkout. The list is newest-active first.
-      .filter((project, index, projects) => projects.findIndex((item) => item.canonical === project.canonical) === index)
+      .filter(
+        (project, index, projects) => projects.findIndex((item) => item.canonical === project.canonical) === index,
+      )
       .map((project) => ({ directory: project.canonical, project }))
       .map((item) => {
         const title =
@@ -263,8 +247,7 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
           } as OpenTarget,
           category: "Projects",
           gutter:
-            item.directory === current.directory ||
-            item.directory === location.current?.project.canonical
+            item.directory === current.directory || item.directory === location.current?.project.canonical
               ? () => <text fg={theme.text.formfield.selected}>●</text>
               : undefined,
         }
@@ -315,8 +298,7 @@ export function DialogOpen(props: { sessions: SessionInfo[]; onLoad: (sessions: 
           title,
           footer: footer + " ".repeat(Math.max(0, width - stringWidth(footer))),
           value: { type: "project", directory } as OpenTarget,
-          gutter:
-            directory === current.directory ? () => <text fg={theme.text.formfield.selected}>●</text> : undefined,
+          gutter: directory === current.directory ? () => <text fg={theme.text.formfield.selected}>●</text> : undefined,
         }
       })
   })

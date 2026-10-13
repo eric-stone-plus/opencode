@@ -8,7 +8,7 @@ import {
   type TextOptions,
 } from "@opentui/core"
 import { extend } from "@opentui/solid"
-import { coast, intensityAt, smootherstep } from "./tab-pulse"
+import { coast, intensityAt, smootherstep } from "../ui/ease"
 
 type TitleShimmerOptions = TextOptions & {
   rename?: { title: string; pending: boolean }

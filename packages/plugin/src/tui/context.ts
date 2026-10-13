@@ -508,27 +508,6 @@ export interface UI {
     /** This plugin's active panel, if any. Reactive when read in a Solid computation. */
     current(): { readonly name: string; readonly sessionID: string } | undefined
   }
-  readonly tabs: {
-    /** Returns whether session tabs are enabled for this TUI. */
-    enabled(): boolean
-    /** Returns the currently open root-session tabs. Reactive when read in a Solid computation. */
-    list(): readonly {
-      readonly sessionID: string
-      readonly title?: string
-      readonly active: boolean
-      readonly busy: boolean
-      readonly attention: boolean
-      readonly unread?: "activity" | "error"
-    }[]
-    /** Opens a tab for a session without focusing it. Returns false when tabs are disabled. */
-    open(sessionID: string): boolean
-    /** Opens a tab when needed, then focuses it. Returns false when tabs are disabled. */
-    focus(sessionID: string): boolean
-    /** Moves an open tab to an index and returns false when it is not open. */
-    move(sessionID: string, index: number): boolean
-    /** Closes an open tab, or the active tab when omitted, and returns false when no tab matched. */
-    close(sessionID?: string): boolean
-  }
   readonly model: {
     /** The prompt's selected model; variant is undefined for the model default. Reactive when read in a Solid computation. */
     current(): { readonly providerID: string; readonly modelID: string; readonly variant?: string } | undefined

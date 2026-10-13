@@ -9,7 +9,7 @@ import {
 } from "@opentui/core"
 import { extend } from "@opentui/solid"
 import { createEffect, onCleanup } from "solid-js"
-import { smootherstep } from "./tab-pulse"
+import { smootherstep } from "../ui/ease"
 import { stringWidth } from "../util/string-width"
 import { webSearchProviderName } from "../util/tool-display"
 

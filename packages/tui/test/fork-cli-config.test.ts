@@ -8,7 +8,7 @@ import { Info, resolve } from "../src/config"
 // keybind or session setting it names.
 const shipped = await Bun.file(new URL("../../../cli.json", import.meta.url)).json()
 const info = Object.fromEntries(Object.entries(shipped).filter(([key]) => key !== "$schema"))
-const config = resolve(Schema.decodeUnknownSync(Info)(info), { terminalSuspend: true, environment: {} })
+const config = resolve(Schema.decodeUnknownSync(Info)(info), { terminalSuspend: true })
 
 const keys = (command: string) => config.keybinds.get(command).flatMap((binding) => String(binding.key).split(","))
 

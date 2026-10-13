@@ -26,7 +26,7 @@ import { useToast } from "../ui/toast"
 import { TerminalPane } from "./terminal-pane"
 import { PanelHost } from "./panel-host"
 
-export function SessionFrame(props: { sessionID: string; verticalTabsWidth: number }) {
+export function SessionFrame(props: { sessionID: string }) {
   const sessions = useSessionTerminals()
   const prompt = usePromptRef()
   const config = useConfig()
@@ -37,7 +37,7 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
   const dimensions = useTerminalDimensions()
   const panels = usePanel()
   const dialog = useDialog()
-  const availableWidth = () => Math.max(0, dimensions().width - props.verticalTabsWidth)
+  const availableWidth = () => dimensions().width
   const defaultPaneWidth = () => Math.max(1, Math.floor(panels.width() / 2))
   const [layout, updateLayout] = useStorage().store<{ paneWidth?: number; terminalWidth?: number }>("layout", {
     initial: {},
@@ -103,7 +103,7 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
       }
     }),
   )
-  const wide = createMemo(() => dimensions().width - props.verticalTabsWidth > 120)
+  const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
     if (data.session.get(props.sessionID)?.parentID) return false
     if (sidebarOpen()) return true
@@ -287,7 +287,6 @@ export function SessionFrame(props: { sessionID: string; verticalTabsWidth: numb
         <InteractivityProvider enabled={activePane() === "session" && !fullscreen()}>
           <Session
             scrollRef={(value) => (sessionScroll = value)}
-            verticalTabsWidth={props.verticalTabsWidth}
             promptMuted={activePane() !== "session"}
             sidebarVisible={rightPane() === "sidebar"}
             onToggleSidebar={toggleSidebar}

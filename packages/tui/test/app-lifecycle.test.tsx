@@ -122,7 +122,7 @@ test.each(["dismissed", "refreshing"])(
     const locations: string[] = []
     await using setup = await createAppFixture({
       state: state.path,
-      config: { animations: false, tabs: { mode: "off" } },
+      config: { animations: false },
       fetch: (url) => {
         if (url.pathname === "/api/session") {
           if (url.searchParams.has("parentID")) {
@@ -432,82 +432,6 @@ test("session title generated while an untitled session is loading remains visib
   }
 })
 
-test("vertical session tabs switch to horizontal below readable content width", async () => {
-  await using state = await tmpdir()
-  await Bun.write(path.join(state.path, "test", "tui", "layout.json"), JSON.stringify({ verticalTabsWidth: 42 }))
-  const session = {
-    id: "ses_resize",
-    title: "Resize fixture",
-    projectID: "project",
-    location: { directory },
-    cost: 0,
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    time: { created: 1, updated: 2 },
-  }
-  await using setup = await createAppFixture({
-    width: 120,
-    state: state.path,
-    config: {
-      animations: false,
-      tabs: { mode: "on", layout: "vertical", indicators: "status" },
-      session: { sidebar: "hide" },
-    },
-    args: { sessionID: session.id },
-    fetch: (url) => {
-      if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
-      if (/^\/api\/session\/ses_resize\/(message|inbox|permission)$/.test(url.pathname))
-        return json({ data: [], cursor: {} })
-      return undefined
-    },
-  })
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.split("\n")[1].slice(0, 42).includes(session.title))
-
-  setup.resize(100, 30)
-  await setup.waitForFrame((frame) => frame.split("\n")[0].includes(session.title))
-  expect(setup.captureCharFrame()).not.toContain("⌕")
-  setup.resize(120, 30)
-  await setup.waitForFrame((frame) => frame.split("\n")[1].slice(0, 42).includes(session.title))
-})
-
-test("narrow vertical session tabs collapse to a compact rail with the terminal", async () => {
-  await using state = await tmpdir()
-  await Bun.write(path.join(state.path, "test", "tui", "layout.json"), JSON.stringify({ verticalTabsWidth: 5 }))
-  const session = {
-    id: "ses_resize",
-    title: "Resize fixture",
-    projectID: "project",
-    location: { directory },
-    cost: 0,
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    time: { created: 1, updated: 2 },
-  }
-  await using setup = await createAppFixture({
-    width: 80,
-    state: state.path,
-    config: {
-      animations: false,
-      tabs: { mode: "on", layout: "vertical", indicators: "status" },
-      session: { sidebar: "hide" },
-    },
-    args: { sessionID: session.id },
-    fetch: (url) => {
-      if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
-      if (/^\/api\/session\/ses_resize\/(message|inbox|permission)$/.test(url.pathname))
-        return json({ data: [], cursor: {} })
-      return undefined
-    },
-  })
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.split("\n")[1].slice(0, 10).trim() === "⌕")
-
-  setup.resize(68, 30)
-  await setup.waitForFrame((frame) => frame.split("\n")[0].includes(session.title))
-  expect(setup.captureCharFrame()).not.toContain("⌕")
-  setup.resize(80, 30)
-  await setup.waitForFrame((frame) => frame.split("\n")[1].slice(0, 10).trim() === "⌕")
-})
-
 test("automatic rename refreshes the displayed title before settling, even without a renamed event", async () => {
   await using state = await tmpdir()
   const response = Promise.withResolvers<Response>()
@@ -525,10 +449,10 @@ test("automatic rename refreshes the displayed title before settling, even witho
     time: { created: 0, updated: 0 },
   }
   await using setup = await createAppFixture({
-    width: 110,
+    width: 140,
     height: 20,
     state: state.path,
-    config: { tabs: { mode: "on", layout: "vertical" }, session: { sidebar: "hide" } },
+    config: { animations: false },
     args: { sessionID: session.id },
     fetch: async (url, request) => {
       if (url.pathname === "/api/location") return json(location)
@@ -550,6 +474,7 @@ test("automatic rename refreshes the displayed title before settling, even witho
   })
 
   try {
+    // With session tabs gone, the session sidebar is the surface that shows the live title.
     await setup.waitForFrame((frame) => frame.includes(session.title) && frame.includes("Build · Model Provider"))
     await setup.mockInput.typeText("/rename")
     setup.mockInput.pressEscape()
@@ -587,7 +512,7 @@ test.each([80, 120])("completes custom Markdown and ordinary fences in a session
     width,
     height: 55,
     state: state.path,
-    config: { animations: false, tabs: { mode: "off" }, session: { sidebar: "hide" } },
+    config: { animations: false, session: { sidebar: "hide" } },
     args: { sessionID: session.id },
     fetch: (url) => {
       if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
@@ -692,7 +617,7 @@ test("keeps assistant footer metrics current after prepend, same-length refresh,
     width: 100,
     height: 40,
     state: state.path,
-    config: { animations: false, tabs: { mode: "off" }, session: { sidebar: "hide", tps: true } },
+    config: { animations: false, session: { sidebar: "hide", tps: true } },
     args: { sessionID: session.id },
     fetch: (url) => {
       if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
@@ -889,7 +814,7 @@ test("home startup prompt is submitted exactly once", async () => {
   await using setup = await createAppFixture({
     state: state.path,
     args: { prompt: "HOME_READY" },
-    config: { animations: false, tabs: { mode: "off" } },
+    config: { animations: false },
     fetch: async (url, request) => {
       if (url.pathname === "/api/location") return json(location)
       if (url.pathname === "/api/fs/list") return json({ location, data: [] })
@@ -944,7 +869,7 @@ test.each([false, true])("uses the resolved launch directory for new prompts (fa
   let session: unknown
   await using setup = await createAppFixture({
     state: state.path,
-    config: { animations: false, tabs: { mode: "off" }, keybinds: { "session.new": "f6" } },
+    config: { animations: false, keybinds: { "session.new": "f6" } },
     fetch: async (url, request) => {
       requests.push(url)
       if (url.searchParams.has("location[directory]") && url.searchParams.get("location[directory]") !== target)
@@ -1082,7 +1007,7 @@ test("completed user shell output replaces a partial live read when the final re
   let failedReads = 0
   await using setup = await createAppFixture({
     state: state.path,
-    config: { animations: false, tabs: { mode: "off" }, session: { sidebar: "hide" } },
+    config: { animations: false, session: { sidebar: "hide" } },
     args: { sessionID: session.id },
     fetch: (url) => {
       if (url.pathname === "/api/session") return json({ data: [session], cursor: {} })
@@ -1515,7 +1440,7 @@ test.each([100, 44])(
       width,
       state: state.path,
       args: { sessionID: session.id },
-      config: { animations: false, tabs: { mode: "off" } },
+      config: { animations: false },
       fetch: (url) => {
         if (url.pathname === "/api/session") return json({ data: [session], cursor: {} })
         if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
@@ -1679,7 +1604,7 @@ test.each([44, 100])(
       width,
       state: state.path,
       args: { sessionID: session.id },
-      config: { animations: false, tabs: { mode: "off" } },
+      config: { animations: false },
       fetch: (url) => {
         if (url.pathname === "/api/session") return json({ data: [session], cursor: {} })
         if (url.pathname === `/api/session/${session.id}`) return json({ data: session })

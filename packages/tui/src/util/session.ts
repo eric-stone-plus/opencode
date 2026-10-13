@@ -77,3 +77,25 @@ export function formatContextUsage(tokens: number, percent?: number) {
   const value = Locale.number(tokens)
   return percent === undefined ? value : `${value} (${percent}%)`
 }
+
+/**
+ * Pending permission or question anywhere in a session's family, for the session
+ * dialogs' status gutter. Lifted from the removed session-tabs status computation —
+ * the signalling reads the same data layer, tabs or no tabs.
+ */
+export function sessionAttention(
+  session: {
+    root(sessionID: string): string
+    family(sessionID: string): readonly string[]
+    permission: { list(sessionID: string): readonly unknown[] | undefined }
+    form: { list(sessionID: string): readonly unknown[] | undefined }
+  },
+  sessionID: string,
+): "permission" | "question" | false {
+  const root = session.root(sessionID)
+  const family = session.family(root)
+  const members = family.includes(root) ? family : [root, ...family]
+  if (members.some((id) => (session.permission.list(id)?.length ?? 0) > 0)) return "permission"
+  if (members.some((id) => (session.form.list(id)?.length ?? 0) > 0)) return "question"
+  return false
+}

@@ -20,7 +20,6 @@ import { Spinner } from "../spinner"
 import { useClient } from "../../context/client"
 import { useRoute } from "../../context/route"
 import { usePromptRef } from "../../context/prompt"
-import { useSessionTabs } from "../../context/session-tabs"
 import { useEvent } from "../../context/event"
 import { editorSelectionKey, useEditorContext, type EditorSelection } from "../../context/editor"
 import { normalizePromptContent, openEditor } from "../../editor"
@@ -199,7 +198,6 @@ export function Prompt(props: PromptProps) {
   const editor = useEditorContext()
   const route = useRoute()
   const promptRef = usePromptRef()
-  const sessionTabs = useSessionTabs()
   const data = useData()
   const directoryRecents = useDirectoryRecents()
   const keymapCommands = Keymap.useCommands()
@@ -1261,9 +1259,7 @@ export function Prompt(props: PromptProps) {
             : (takeDraft(created.id) ?? { prompt: entry, cursor: entry.text.length })
           saveDraft(undefined, draft)
           active?.reset()
-          if (sessionTabs.enabled()) {
-            sessionTabs.close(created.id)
-          } else if (route.data.type === "session" && route.data.sessionID === created.id) {
+          if (route.data.type === "session" && route.data.sessionID === created.id) {
             route.navigate({ type: "home" })
           }
         },

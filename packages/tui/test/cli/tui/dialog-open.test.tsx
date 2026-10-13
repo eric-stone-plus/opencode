@@ -14,7 +14,6 @@ import { Keymap } from "../../../src/context/keymap"
 import { LocationProvider, useLocation } from "../../../src/context/location"
 import { RouteProvider, useRoute } from "../../../src/context/route"
 import { TuiAppProvider } from "../../../src/context/runtime"
-import { SessionTabsProvider } from "../../../src/context/session-tabs"
 import { StorageProvider, useStorage } from "../../../src/context/storage"
 import { ThemeProvider } from "../../../src/context/theme"
 import { DialogProvider, useDialog } from "../../../src/ui/dialog"
@@ -933,9 +932,7 @@ test("surfaces sessions awaiting permissions or questions at the top with attent
         value.includes("? Parent awaiting question") &&
         value.includes("Recent session 1"),
     )
-    expect(frame.indexOf("? Parent awaiting question")).toBeLessThan(
-      frame.indexOf("! Old session awaiting permission"),
-    )
+    expect(frame.indexOf("? Parent awaiting question")).toBeLessThan(frame.indexOf("! Old session awaiting permission"))
     expect(frame.indexOf("! Old session awaiting permission")).toBeLessThan(frame.indexOf("Recent session 1"))
 
     fixture.app.mockInput.pressEnter()
@@ -992,13 +989,11 @@ async function renderOpen(
                     <ClientProvider api={createApi(calls.fetch)}>
                       <DataProvider directory={process.cwd()}>
                         <LocationProvider>
-                          <SessionTabsProvider>
-                            <ThemeProvider mode="dark" source={emptyThemeSource}>
-                              <DialogProvider>
-                                <Probe />
-                              </DialogProvider>
-                            </ThemeProvider>
-                          </SessionTabsProvider>
+                          <ThemeProvider mode="dark" source={emptyThemeSource}>
+                            <DialogProvider>
+                              <Probe />
+                            </DialogProvider>
+                          </ThemeProvider>
                         </LocationProvider>
                       </DataProvider>
                     </ClientProvider>

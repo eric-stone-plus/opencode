@@ -115,7 +115,6 @@ import { findMessageBoundary, messageNavigationSlack } from "./message-navigatio
 import { stringWidth } from "../../util/string-width"
 import { useArgs } from "../../context/args"
 import { withTimestampedFallback } from "@opencode/util/session-title-fallback"
-import { useSessionTabs, type ScrollAnchor } from "../../context/session-tabs"
 import { createSingleFlight } from "../../util/single-flight"
 import { createDelayedPresence } from "../../util/delayed-presence"
 import { SessionLocationMissing } from "./location-missing"
@@ -126,7 +125,7 @@ import { INLINE_TOOL_ICON_WIDTH, InlineToolRow, ReasoningPart, TextPart, toolDis
 import { defaultVerbosity, type GroupKind, type SessionEntry } from "./grouping/session"
 import { SessionGroupView } from "./group-view"
 import { useEntryAnchor } from "./anchor-view"
-import { containsAnchor, createTimelineAnchors, groupID } from "./anchors"
+import { createTimelineAnchors, groupID } from "./anchors"
 import { rowsAfter, rowsBefore, rowWeight } from "./mount-budget"
 export { InlineToolRow } from "./message-parts"
 export { toolDisplay } from "./message-parts"
@@ -144,7 +143,6 @@ const TRANSCRIPT_BACKFILL_CHUNK = 60
 
 export function Session(props: {
   scrollRef?: (scroll: ScrollBoxRenderable | undefined) => void
-  verticalTabsWidth: number
   promptMuted?: boolean
   sidebarVisible: boolean
   onToggleSidebar: () => void
@@ -240,19 +238,22 @@ export function Session(props: {
   const diffWrapMode = createMemo(() => config.diffs?.wrap ?? "word")
   const groupExploration = createMemo(() => config.session?.grouping !== "none")
   const verbosity = createMemo(() => config.session?.verbosity ?? defaultVerbosity)
+  // Group expansion lives with the view: the transcript stays mounted while the session is
+  // open, and leaving it resets to the verbosity default — the tab-strip store that used to
+  // hold this across tab switches is gone.
+  const [expandedGroups, setExpandedGroup] = createStore<Record<string, boolean>>({})
   // High opens exploration and instruction summaries by default; everything else starts collapsed.
   const groupExpanded = (groupID: string, kind: GroupKind) =>
-    sessionTabs.groupExpanded(sessionID, groupID) ??
-    (verbosity() === "high" && (kind === "exploration" || kind === "instructions"))
+    expandedGroups[groupID] ?? (verbosity() === "high" && (kind === "exploration" || kind === "instructions"))
   const groupedKind = (kind: GroupKind) =>
     kind === "reasoning" ? thinkingMode() === "hide" : kind === "exploration" ? groupExploration() : true
 
   Keymap.createLayer(() => ({
     priority: 10,
-    enabled: () => props.sidebarVisible && dimensions().width - props.verticalTabsWidth <= 120 && !disabled(),
+    enabled: () => props.sidebarVisible && dimensions().width <= 120 && !disabled(),
     commands: [{ bind: "escape,ctrl+c", title: "Close sidebar", group: "Session", run: props.onToggleSidebar }],
   }))
-  const contentWidth = createMemo(() => (props.width ?? dimensions().width - props.verticalTabsWidth) - 4)
+  const contentWidth = createMemo(() => (props.width ?? dimensions().width) - 4)
   const models = createMemo(() => data.location.model.list(location()) ?? [])
 
   const scrollAcceleration = createMemo(() => getScrollAcceleration(config))
@@ -290,7 +291,6 @@ export function Session(props: {
   const [navigationSlack, setNavigationSlack] = createSignal(0)
   const [firstJump, setFirstJump] = createSignal<() => void>()
   const [synced, setSynced] = createSignal(false)
-  const sessionTabs = useSessionTabs()
   const [awayFromBottom, setAwayFromBottom] = createSignal(false)
   const [latestHovered, setLatestHovered] = createSignal(false)
   let ensureAllRowsPending: (() => void)[] | undefined
@@ -309,7 +309,7 @@ export function Session(props: {
 
   createEffect(
     on(
-      () => [dimensions().width, dimensions().height, props.verticalTabsWidth] as const,
+      () => [dimensions().width, dimensions().height] as const,
       (_, previous) => {
         if (!previous) return
         clearMessageNavigation()
@@ -344,7 +344,7 @@ export function Session(props: {
           variant: "error",
           duration: 5000,
         })
-        sessionTabs.enabled() ? sessionTabs.close(sessionID) : navigate({ type: "home" })
+        navigate({ type: "home" })
         return
       }
       editor.reconnect(info.location.directory)
@@ -356,7 +356,7 @@ export function Session(props: {
         variant: "error",
         duration: 5000,
       })
-      sessionTabs.enabled() ? sessionTabs.close(sessionID) : navigate({ type: "home" })
+      navigate({ type: "home" })
     })
   })
 
@@ -368,7 +368,10 @@ export function Session(props: {
     if (restored || !synced() || !rowsSynced() || !scroll || scroll.isDestroyed) return
     restored = true
     // Initial synchronization can finish after the reader has already navigated.
-    if (!isAwayFromBottom()) restoreScrollPosition()
+    if (!isAwayFromBottom()) {
+      scroll.scrollTo(scroll.scrollHeight)
+      setAwayFromBottom(false)
+    }
   })
   let awayTimer: ReturnType<typeof setTimeout> | undefined
   onCleanup(() => {
@@ -379,7 +382,6 @@ export function Session(props: {
     if (!scroll || scroll.isDestroyed) return
     scroll.verticalScrollBar.off("change", updateAwayFromBottom)
     scroll.content.off("resize", holdAnchor)
-    saveScrollAnchor(true)
   })
   const [prompt, setPrompt] = createSignal<PromptRef>()
   const bind = (r: PromptRef | undefined) => {
@@ -531,86 +533,7 @@ export function Session(props: {
         if (!renderer.getSelection()) setHiddenRows(undefined)
         scroll.stickyScroll = true
       }
-      saveScrollAnchor()
     })
-  }
-  function saveScrollAnchor(unmounting = false) {
-    // Initial layout must not overwrite the saved position before synchronization restores it.
-    if (!restored) return
-    const mounted = anchors.list()
-    // Solid disposes child registrations before the route's cleanup. Keep the
-    // last scroll-event anchor once those children have gone away.
-    if (unmounting && !mounted.length) return
-    if (!isAwayFromBottom()) {
-      sessionTabs.setScrollAnchor(sessionID, undefined)
-      return
-    }
-    let first: ScrollAnchor | undefined
-    let anchor: ScrollAnchor | undefined
-    for (const child of mounted) {
-      const item = {
-        target: child.target,
-        screenY: child.node.y - scroll.viewport.y,
-      }
-      first ??= item
-      const inset =
-        item.target.type === "group" ||
-        data.session.message.get(sessionID, item.target.ref.messageID)?.type === "assistant"
-          ? 1
-          : 0
-      if (item.screenY <= inset && (!anchor || item.screenY > anchor.screenY)) anchor = item
-    }
-    anchor ??= first
-    if (anchor) sessionTabs.setScrollAnchor(sessionID, anchor)
-    else sessionTabs.setScrollAnchor(sessionID, undefined)
-  }
-  function restoreScrollPosition() {
-    const anchor = sessionTabs.scrollAnchor(sessionID)
-    const index = anchor ? rows.findIndex((row) => containsAnchor(row, anchor.target)) : -1
-    if (!anchor || index === -1) {
-      scroll.scrollTo(scroll.scrollHeight)
-      setAwayFromBottom(false)
-      return
-    }
-    setHiddenRows(rowsBefore(weights(), index, TRANSCRIPT_BACKFILL_CHUNK))
-    const end = rowsAfter(weights(), index, TRANSCRIPT_BACKFILL_CHUNK)
-    setVisibleRowsEnd(end === rows.length ? undefined : end)
-    scroll.stickyScroll = false
-    const restore = () =>
-      afterLayout(() => {
-        const boundary = anchors.get(anchor.target)
-        if (!boundary) {
-          sessionTabs.setScrollAnchor(sessionID, undefined)
-          scroll.stickyScroll = true
-          scroll.scrollTo(scroll.scrollHeight)
-          setAwayFromBottom(false)
-          return
-        }
-        const contentY = scroll.scrollTop + boundary.node.y - scroll.viewport.y
-        const target = contentY - anchor.screenY
-        const maximum = Math.max(0, scroll.scrollHeight - scroll.viewport.height)
-        if (target > maximum && visibleEnd() < rows.length) {
-          const next = rowsAfter(weights(), visibleEnd(), TRANSCRIPT_BACKFILL_CHUNK)
-          setVisibleRowsEnd(next === rows.length ? undefined : next)
-          restore()
-          return
-        }
-        if (target > maximum) {
-          setNavigationSlack(
-            messageNavigationSlack({
-              top: target,
-              viewportHeight: scroll.viewport.height,
-              scrollHeight: scroll.scrollHeight,
-              currentSlack: scroll.getRenderable(NAVIGATION_SLACK_ID)?.height ?? 0,
-            }),
-          )
-          restore()
-          return
-        }
-        scroll.scrollTo(target)
-        updateAwayFromBottom()
-      })
-    restore()
   }
 
   createEffect(() => {
@@ -754,7 +677,6 @@ export function Session(props: {
     if (awayTimer) clearTimeout(awayTimer)
     awayTimer = undefined
     setAwayFromBottom(false)
-    sessionTabs.setScrollAnchor(route.sessionID, undefined)
     setHiddenRows(undefined)
     setVisibleRowsEnd(undefined)
     setTimeout(() => {
@@ -1364,8 +1286,7 @@ export function Session(props: {
               if (held === hold) held = undefined
             })
           }
-          sessionTabs.setGroupExpanded(sessionID, id, expanded)
-          afterLayout(saveScrollAnchor)
+          setExpandedGroup(id, expanded)
         },
         get width() {
           return contentWidth()
@@ -1463,9 +1384,7 @@ export function Session(props: {
                   onMouseOut={() => setLatestHovered(false)}
                   onMouseUp={toBottom}
                 >
-                  <text
-                    fg={latestHovered() ? theme.text.action.secondary.hovered : theme.text.action.secondary.base}
-                  >
+                  <text fg={latestHovered() ? theme.text.action.secondary.hovered : theme.text.action.secondary.base}>
                     Jump to latest ↓
                   </text>
                 </box>
@@ -1511,12 +1430,7 @@ export function Session(props: {
                     }}
                   </Show>
                 </Match>
-                <Match
-                  when={
-                    session() &&
-                    currentLocation.error?.location.directory === session()!.location.directory
-                  }
-                >
+                <Match when={session() && currentLocation.error?.location.directory === session()!.location.directory}>
                   <SessionLocationMissing
                     directory={session()!.location.directory}
                     projectID={session()!.projectID}
@@ -2772,9 +2686,7 @@ function BlockTool(props: BlockToolProps) {
               <Show
                 when={props.spinner}
                 fallback={
-                  <text
-                    fg={permission() ? theme.text.feedback.warning.base : (props.headerColor ?? theme.text.muted)}
-                  >
+                  <text fg={permission() ? theme.text.feedback.warning.base : (props.headerColor ?? theme.text.muted)}>
                     {title()}
                   </text>
                 }
@@ -2962,11 +2874,7 @@ function ShellDisplay(props: {
           <Show
             when={isRunning()}
             fallback={
-              <text
-                fg={theme.text.base}
-                wrapMode={expanded() ? "word" : "char"}
-                maxHeight={expanded() ? undefined : 2}
-              >
+              <text fg={theme.text.base} wrapMode={expanded() ? "word" : "char"} maxHeight={expanded() ? undefined : 2}>
                 {limitedInput()}
               </text>
             }
@@ -3067,7 +2975,9 @@ function Read(props: ToolProps) {
         Read {pathFormatter.format(stringValue(props.input.path))}
         <Show when={props.input.offset !== undefined || props.input.limit !== undefined}>
           :{finiteNumber(props.input.offset) || 1}-
-          {props.input.limit ? (finiteNumber(props.input.offset) || 1) + (finiteNumber(props.input.limit) || 0) - 1 : ""}
+          {props.input.limit
+            ? (finiteNumber(props.input.offset) || 1) + (finiteNumber(props.input.limit) || 0) - 1
+            : ""}
         </Show>
       </InlineTool>
       <For each={loaded()}>

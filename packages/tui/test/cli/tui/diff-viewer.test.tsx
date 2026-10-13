@@ -1423,13 +1423,11 @@ test.each([80, 160])(
   },
 )
 
-test.each([false, true])("Alt+arrows navigate files rather than session tabs (after Tab: %s)", async (afterTab) => {
-  let tabChanges = 0
+test.each([false, true])("Alt+arrows navigate files (after Tab: %s)", async (afterTab) => {
   const viewer = await renderDiffViewer(manyDiffs, {
     width: 160,
     height: 24,
     kittyKeyboard: true,
-    onSessionTab: () => tabChanges++,
   })
   try {
     await viewer.app.waitForFrame((frame) => frame.includes("const first"))
@@ -1442,7 +1440,6 @@ test.each([false, true])("Alt+arrows navigate files rather than session tabs (af
     viewer.app.mockInput.pressKey("up", { meta: true })
     await viewer.app.flush()
     expect(scroll.scrollTop).toBe(0)
-    expect(tabChanges).toBe(0)
   } finally {
     viewer.app.renderer.destroy()
   }
@@ -1873,7 +1870,6 @@ async function renderDiffViewer(
     mode?: "dark" | "light"
     single?: boolean
     readImage?: (file: string, signal: AbortSignal) => Promise<Uint8Array>
-    onSessionTab?: () => void
     keybinds?: TuiKeybind.KeybindOverrides
     kittyKeyboard?: boolean
     source?: "branch" | "committed" | "working" | "turn"
@@ -1962,16 +1958,6 @@ async function renderDiffViewer(
       const dialog = useDialog()
       const keymap = Keymap.use()
       const shortcuts = Keymap.useShortcuts()
-      if (options.onSessionTab) {
-        Keymap.createLayer(() => ({
-          mode: "global",
-          commands: ["session.tab.next", "session.tab.previous"].map((id) => ({
-            id,
-            title: id,
-            run: () => options.onSessionTab?.(),
-          })),
-        }))
-      }
       shortcut = shortcuts.get
       theme = useThemes().currentTokens()
       const context = {

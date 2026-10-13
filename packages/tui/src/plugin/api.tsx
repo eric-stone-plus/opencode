@@ -28,7 +28,6 @@ import { useDialog } from "../ui/dialog"
 import { useToast } from "../ui/toast"
 import { useAttention } from "../context/attention"
 import { useStorage } from "../context/storage"
-import { useSessionTabs } from "../context/session-tabs"
 import { useOptionalPanel } from "../context/panel"
 import { useLocal } from "../context/local"
 import { abbreviateHome } from "../util/path-format"
@@ -79,7 +78,6 @@ export function usePluginHost() {
     toast: useToast(),
     attention: useAttention(),
     storage: useStorage(),
-    sessionTabs: useSessionTabs(),
     panel: useOptionalPanel(),
     local: useLocal(),
   }
@@ -240,43 +238,6 @@ export function createPluginContext(input: {
           const current = host.panel?.current()
           if (current?.plugin !== input.id) return
           return { name: current.name, sessionID: current.sessionID }
-        },
-      },
-      tabs: {
-        enabled: host.sessionTabs.enabled,
-        list: () =>
-          host.sessionTabs.tabs().map((tab) => {
-            const status = host.sessionTabs.status(tab.sessionID)
-            return {
-              ...tab,
-              active: host.sessionTabs.current() === tab.sessionID,
-              ...status,
-              attention: Boolean(status.attention),
-            }
-          }),
-        open(sessionID) {
-          if (!host.sessionTabs.enabled()) return false
-          host.sessionTabs.open(sessionID)
-          return true
-        },
-        focus(sessionID) {
-          if (!host.sessionTabs.enabled()) return false
-          host.sessionTabs.select(sessionID)
-          return true
-        },
-        move(sessionID, index) {
-          if (!host.sessionTabs.enabled()) return false
-          const target = host.data.session.root(sessionID)
-          if (!host.sessionTabs.tabs().some((tab) => tab.sessionID === target)) return false
-          host.sessionTabs.move(target, index)
-          return true
-        },
-        close(sessionID) {
-          if (!host.sessionTabs.enabled()) return false
-          const target = sessionID ?? host.sessionTabs.current()
-          if (!target || !host.sessionTabs.tabs().some((tab) => tab.sessionID === target)) return false
-          host.sessionTabs.close(target)
-          return true
         },
       },
       model: {

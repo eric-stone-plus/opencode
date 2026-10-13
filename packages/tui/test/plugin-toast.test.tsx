@@ -25,7 +25,6 @@ function setup(route: Route) {
     keymap: {},
     shortcuts: {},
     keymapState: {},
-    sessionTabs: {},
     toast: { show: (toast: Shown) => shown.push(toast) },
     route: {
       get data() {

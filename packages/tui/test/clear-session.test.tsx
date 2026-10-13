@@ -20,7 +20,7 @@ function render(state: string) {
   return createAppFixture({
     state,
     args: { sessionID: session.id },
-    config: { animations: false, tabs: { mode: "on" } },
+    config: { animations: false },
     fetch: (url) => {
       if (url.pathname === "/api/fs/list") return json({ location, data: [] })
       if (url.pathname === "/api/location") return json(location)
@@ -40,28 +40,31 @@ function render(state: string) {
   })
 }
 
-test("/clear replaces the active session tab", async () => {
+// The session route shows the prompt but no home wordmark; home shows the wordmark.
+const onSessionScreen = (frame: string) => frame.includes("Build · Model Provider") && !frame.includes("█▀▀█")
+const onHomeScreen = (frame: string) => frame.includes("█▀▀█ █▀▀█")
+
+test("/clear leaves the session for the home screen", async () => {
   await using state = await tmpdir()
   await using setup = await render(state.path)
 
-  await setup.waitForFrame((frame) => frame.includes("Session to clear"))
+  await setup.waitForFrame(onSessionScreen)
   await setup.mockInput.typeText("/clear")
   setup.mockInput.pressEnter()
-  const frame = await setup.waitForFrame((frame) => !frame.includes("Session to clear"))
+  const frame = await setup.waitForFrame(onHomeScreen)
 
   expect(frame).not.toContain("Session to clear")
 })
 
-test("/new keeps the active session tab", async () => {
+test("/new opens the home screen and leaves the session behind it", async () => {
   await using state = await tmpdir()
   await using setup = await render(state.path)
 
-  await setup.waitForFrame((frame) => frame.includes("Session to clear"))
+  await setup.waitForFrame(onSessionScreen)
   await setup.mockInput.typeText("/new")
   setup.mockInput.pressEnter()
-  const frame = await setup.waitForFrame(
-    (frame) => frame.includes("New session") && frame.includes("Session to clear"),
-  )
+  const frame = await setup.waitForFrame(onHomeScreen)
 
-  expect(frame).toContain("Session to clear")
+  // The session is no longer on screen anywhere — with tabs gone, home is the only surface.
+  expect(frame).not.toContain("Session to clear")
 })

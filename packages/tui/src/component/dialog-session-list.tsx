@@ -17,9 +17,8 @@ import { useToast } from "../ui/toast"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { Spinner } from "./spinner"
 import { errorMessage } from "../util/error"
-import { useSessionTabs } from "../context/session-tabs"
+import { sessionAttention } from "../util/session"
 import { useStorage } from "../context/storage"
-import { useConfig } from "../config"
 import { withTimestampedFallback } from "@opencode/util/session-title-fallback"
 import { projectName } from "../util/project"
 import { useLocation } from "../context/location"
@@ -31,8 +30,6 @@ export function DialogSessionList() {
   const theme = useTheme().surface("dialog")
   const client = useClient()
   const local = useLocal()
-  const sessionTabs = useSessionTabs()
-  const config = useConfig().data
   const toast = useToast()
   const activeLocation = useLocation()
   const [filter, setFilter] = createSignal("")
@@ -40,7 +37,7 @@ export function DialogSessionList() {
   const [search, setSearch] = createDebouncedSignal("", 150)
   const [toDelete, setToDelete] = createSignal<string>()
   const [prefs, updatePrefs] = useStorage().store("session-list", {
-    initial: { allProjects: config.tabs?.scope !== "cwd" },
+    initial: { allProjects: false },
   })
   const allProjects = () => prefs.allProjects
   const pickerLocation = () =>
@@ -121,7 +118,6 @@ export function DialogSessionList() {
   })
 
   const quickSwitchHint = createMemo(() => {
-    if (sessionTabs.enabled()) return
     const first = shortcuts.get("session.quick_switch.1")
     const last = shortcuts.get("session.quick_switch.9")
     if (!first || !last) return
@@ -145,7 +141,7 @@ export function DialogSessionList() {
         .filter((session) => !session.parentID)
         .map((session) => [session.id, session]),
     )
-    const pinned = sessionTabs.enabled() ? [] : local.session.pinned().filter((sessionID) => sessionMap.has(sessionID))
+    const pinned = local.session.pinned().filter((sessionID) => sessionMap.has(sessionID))
     const pinnedSet = new Set(pinned)
     const slotByID = new Map(local.session.slots().map((sessionID, index) => [sessionID, index + 1]))
 
@@ -158,9 +154,9 @@ export function DialogSessionList() {
         relative.startsWith("..") || path.isAbsolute(relative)
           ? Locale.truncate(path.basename(relative), 25)
           : undefined
-      const slot = sessionTabs.enabled() ? undefined : slotByID.get(session.id)
+      const slot = slotByID.get(session.id)
       const deleting = toDelete() === session.id
-      const attention = sessionTabs.status(session.id).attention
+      const attention = sessionAttention(data.session, session.id)
       return {
         title: deleting
           ? `Press ${shortcuts.get("session.delete")} again to confirm`
@@ -248,7 +244,6 @@ export function DialogSessionList() {
         {
           command: "session.pin.toggle",
           title: "pin/unpin",
-          hidden: sessionTabs.enabled(),
           onTrigger: (option) => local.session.togglePin(option.value),
         },
         {
