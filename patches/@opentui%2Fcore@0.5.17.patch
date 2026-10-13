@@ -154,3 +154,137 @@ index 8a014caa43ae6edb6118dd803ab8553bc917a6e6..d4daa787050a0a1d5a3824c4bc2d9ca4
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
+diff --git a/chunk-bun-6rvkxs1v.js b/chunk-bun-6rvkxs1v.js
+index 4b632a668bbee5a038fd6eb169140c736d6b89c9..55304609edeabc31f9bfdec504aa31afab2b46fb 100644
+--- a/chunk-bun-6rvkxs1v.js
++++ b/chunk-bun-6rvkxs1v.js
+@@ -11643,8 +11643,60 @@
+       return;
+     const style = parseBorderStyle2(options.borderStyle, "single");
+     const borderChars = options.customBorderChars ?? BorderCharArrays2[style];
+-    const packedOptions = packDrawOptions(options.border, options.shouldFill ?? false, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
+-    this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, options.backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++    const fill = options.shouldFill ?? false;
++    const backgroundColor = options.backgroundColor;
++    // Fork patch: a translucent fill must not take the native path. The native blend replaces every wide character
++    // (CJK, emoji) it covers with a space, so a dimmed dialog backdrop erases the text underneath it. Blend into
++    // the existing cells from JS instead, which keeps each cell's character and width untouched.
++    if (fill && backgroundColor && backgroundColor.a > 0 && backgroundColor.a < 1) {
++      const border =
++        options.border === true
++          ? 15
++          : Array.isArray(options.border)
++            ? (options.border.includes("top") ? 8 : 0) |
++              (options.border.includes("right") ? 4 : 0) |
++              (options.border.includes("bottom") ? 2 : 0) |
++              (options.border.includes("left") ? 1 : 0)
++            : 0;
++      const packedOptions = packDrawOptions(options.border, false, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
++      this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++      const insetLeft = border & 1 ? 1 : 0;
++      const insetRight = border & 4 ? 1 : 0;
++      const insetTop = border & 8 ? 1 : 0;
++      const insetBottom = border & 2 ? 1 : 0;
++      this.blendRect(options.x + insetLeft, options.y + insetTop, options.width - insetLeft - insetRight, options.height - insetTop - insetBottom, backgroundColor);
++      return;
++    }
++    const packedOptions = packDrawOptions(options.border, fill, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
++    this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++  }
++  blendRect(x, y, width, height, color) {
++    this.guard();
++    const minX = Math.max(0, x);
++    const minY = Math.max(0, y);
++    const maxX = Math.min(this._width, x + width);
++    const maxY = Math.min(this._height, y + height);
++    if (maxX <= minX || maxY <= minY)
++      return;
++    const buffers = this.buffers;
++    const source = color.buffer;
++    const alpha = color.a;
++    const overlay = [source[0] & 255, source[1] & 255, source[2] & 255];
++    const meta = [source[0] & 65280, source[1] & 65280, source[2] & 65280, source[3] & 65280];
++    for (let row = minY;row < maxY; row++) {
++      const base = row * this._width;
++      for (let col = minX;col < maxX; col++) {
++        const cell = (base + col) * 4;
++        for (let channel = 0;channel < 3; channel++) {
++          const fg = buffers.fg[cell + channel] & 255;
++          const bg = buffers.bg[cell + channel] & 255;
++          buffers.fg[cell + channel] = Math.round(fg * (1 - alpha) + overlay[channel] * alpha) | meta[channel];
++          buffers.bg[cell + channel] = Math.round(bg * (1 - alpha) + overlay[channel] * alpha) | meta[channel];
++        }
++        buffers.fg[cell + 3] = 255 | meta[3];
++        buffers.bg[cell + 3] = 255 | meta[3];
++      }
++    }
+   }
+   pushScissorRect(x, y, width, height) {
+     this.guard();
+diff --git a/chunk-node-tfvyz31s.js b/chunk-node-tfvyz31s.js
+index dc346fd4b1680151772e7979d8e699ec9e6c2c8a..74415bd2635026ebd38aa8f2d98bf920616e8937 100644
+--- a/chunk-node-tfvyz31s.js
++++ b/chunk-node-tfvyz31s.js
+@@ -11625,8 +11625,60 @@
+       return;
+     const style = parseBorderStyle2(options.borderStyle, "single");
+     const borderChars = options.customBorderChars ?? BorderCharArrays2[style];
+-    const packedOptions = packDrawOptions(options.border, options.shouldFill ?? false, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
+-    this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, options.backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++    const fill = options.shouldFill ?? false;
++    const backgroundColor = options.backgroundColor;
++    // Fork patch: a translucent fill must not take the native path. The native blend replaces every wide character
++    // (CJK, emoji) it covers with a space, so a dimmed dialog backdrop erases the text underneath it. Blend into
++    // the existing cells from JS instead, which keeps each cell's character and width untouched.
++    if (fill && backgroundColor && backgroundColor.a > 0 && backgroundColor.a < 1) {
++      const border =
++        options.border === true
++          ? 15
++          : Array.isArray(options.border)
++            ? (options.border.includes("top") ? 8 : 0) |
++              (options.border.includes("right") ? 4 : 0) |
++              (options.border.includes("bottom") ? 2 : 0) |
++              (options.border.includes("left") ? 1 : 0)
++            : 0;
++      const packedOptions = packDrawOptions(options.border, false, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
++      this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++      const insetLeft = border & 1 ? 1 : 0;
++      const insetRight = border & 4 ? 1 : 0;
++      const insetTop = border & 8 ? 1 : 0;
++      const insetBottom = border & 2 ? 1 : 0;
++      this.blendRect(options.x + insetLeft, options.y + insetTop, options.width - insetLeft - insetRight, options.height - insetTop - insetBottom, backgroundColor);
++      return;
++    }
++    const packedOptions = packDrawOptions(options.border, fill, options.titleAlignment || "left", options.bottomTitleAlignment || "left");
++    this.lib.bufferDrawBox(this.bufferPtr, options.x, options.y, options.width, options.height, borderChars, packedOptions, options.borderColor, backgroundColor, options.titleColor ?? options.borderColor, options.title ?? null, options.bottomTitle ?? null);
++  }
++  blendRect(x, y, width, height, color) {
++    this.guard();
++    const minX = Math.max(0, x);
++    const minY = Math.max(0, y);
++    const maxX = Math.min(this._width, x + width);
++    const maxY = Math.min(this._height, y + height);
++    if (maxX <= minX || maxY <= minY)
++      return;
++    const buffers = this.buffers;
++    const source = color.buffer;
++    const alpha = color.a;
++    const overlay = [source[0] & 255, source[1] & 255, source[2] & 255];
++    const meta = [source[0] & 65280, source[1] & 65280, source[2] & 65280, source[3] & 65280];
++    for (let row = minY;row < maxY; row++) {
++      const base = row * this._width;
++      for (let col = minX;col < maxX; col++) {
++        const cell = (base + col) * 4;
++        for (let channel = 0;channel < 3; channel++) {
++          const fg = buffers.fg[cell + channel] & 255;
++          const bg = buffers.bg[cell + channel] & 255;
++          buffers.fg[cell + channel] = Math.round(fg * (1 - alpha) + overlay[channel] * alpha) | meta[channel];
++          buffers.bg[cell + channel] = Math.round(bg * (1 - alpha) + overlay[channel] * alpha) | meta[channel];
++        }
++        buffers.fg[cell + 3] = 255 | meta[3];
++        buffers.bg[cell + 3] = 255 | meta[3];
++      }
++    }
+   }
+   pushScissorRect(x, y, width, height) {
+     this.guard();
