@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { Deferred, Effect, Exit, PlatformError, Stream } from "effect"
+import { Deferred, Effect, Exit, PlatformError, Schedule, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -250,6 +250,67 @@ describe("cross-spawn spawner", () => {
         const out = yield* decodeByteStream(handle.stdout)
         yield* handle.exitCode
         expect(out).toBe("a b c")
+      }),
+    )
+  })
+
+  describe("additional fds", () => {
+    fx.effect(
+      "reads data from an output fd",
+      Effect.gen(function* () {
+        const handle = yield* js('require("fs").writeSync(3, "hello fd")', {
+          additionalFds: { fd3: { type: "output" } },
+        })
+        const out = yield* decodeByteStream(handle.getOutputFd(3))
+        yield* handle.exitCode
+        expect(out).toBe("hello fd")
+      }),
+    )
+
+    fx.effect(
+      "writes data into an input fd",
+      Effect.gen(function* () {
+        const handle = yield* js('process.stdout.write(require("fs").readFileSync(3, "utf8"))', {
+          additionalFds: { fd3: { type: "input", stream: Stream.make(Buffer.from("hello fd", "utf-8")) } },
+        })
+        const out = yield* decodeByteStream(handle.stdout)
+        yield* handle.exitCode
+        expect(out).toBe("hello fd")
+      }),
+    )
+  })
+
+  describe("late pipe failures", () => {
+    // A child that exits before reading its input leaves the parent write end with no
+    // reader. The broken pipe must not surface as an unhandled stream error (it crashed
+    // the test process under load), and the spawner must keep working afterwards.
+    const followUp = ChildProcessSpawner.ChildProcessSpawner.use((svc) =>
+      svc.string(ChildProcess.make(process.execPath, ["-e", 'process.stdout.write("alive")'])),
+    )
+
+    fx.effect(
+      "survives a child that exits before reading stdin",
+      Effect.gen(function* () {
+        const handle = yield* js("process.exit(0)", {
+          stdin: Stream.fromIterable([Buffer.alloc(64 * 1024, 1), Buffer.alloc(64 * 1024, 2)]).pipe(
+            Stream.schedule(Schedule.spaced("50 millis")),
+          ),
+        })
+        yield* handle.exitCode
+        expect(yield* followUp).toBe("alive")
+      }),
+    )
+
+    fx.effect(
+      "survives a child that exits before reading an input fd",
+      Effect.gen(function* () {
+        const handle = yield* js("process.exit(0)", {
+          additionalFds: {
+            fd3: { type: "input", stream: Stream.make(Buffer.alloc(64 * 1024, 1), Buffer.alloc(64 * 1024, 2)) },
+          },
+        })
+        yield* handle.exitCode
+        expect(yield* followUp).toBe("alive")
       }),
     )
   })

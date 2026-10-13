@@ -187,6 +187,11 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
         case "input": {
           let sink: Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError> = Sink.drain
           if (node && "write" in node) {
+            // Same late-error guard as stdin: a child that closes the fd before reading (or
+            // exits mid-write) can emit the write failure while the sink has no listener
+            // attached, and the unhandled stream error would crash the process. The
+            // command's exit code and stderr carry the failure instead.
+            node.on("error", () => {})
             sink = NodeSink.fromWritable({
               evaluate: () => node,
               onError: (err) => toPlatformError(`fromWritable(fd${x.fd})`, toError(err), command),
@@ -230,9 +235,10 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
       let sink: Sink.Sink<void, unknown, never, PlatformError.PlatformError> = Sink.drain
       if (Predicate.isNotNull(proc.stdin)) {
         // The child can exit before it reads stdin, so the pipe can break mid-write (a broken git
-        // config makes `check-ignore` exit immediately). Keep the late EPIPE from surfacing as an
-        // unhandled stream error; the command's exit code and stderr carry the failure.
-        proc.stdin.once("error", () => {})
+        // config makes `check-ignore` exit immediately). Keep late EPIPEs from surfacing as
+        // unhandled stream errors; `on` covers a repeated emission, and the command's exit code
+        // and stderr still carry the failure.
+        proc.stdin.on("error", () => {})
         sink = NodeSink.fromWritable({
           evaluate: () => proc.stdin!,
           onError: (err) => toPlatformError("fromWritable(stdin)", toError(err), command),
@@ -340,7 +346,7 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
       while (readable.read() !== null) {}
     }
     readable.on("readable", drain)
-    readable.once("error", () => {})
+    readable.on("error", () => {})
     readable.once("close", () => readable.off("readable", drain))
     drain()
   }
