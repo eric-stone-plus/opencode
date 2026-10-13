@@ -1,11 +1,37 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createMemo, For, Show } from "solid-js"
 
+type Status = { id: string; name: string; status: "connected" | "error" }
+
+// The runtime runs one client per (server, root), so a server that matched two roots is reported once
+// per root. The sidebar lists servers: collapse to one row per server, and let an unhealthy row win so
+// the dot never hides a server that needs attention.
+const byServer = (rows: readonly Status[]) => [
+  ...rows
+    .reduce((servers, row) => {
+      const existing = servers.get(row.id)
+
+      if (!existing || (existing.status === "connected" && row.status !== "connected")) servers.set(row.id, row)
+      return servers
+    }, new Map<string, Status>())
+    .values(),
+]
+
+// Starting a client for a root already covered by a listed server changes nothing the sidebar shows.
+// Keeping the previous rows then leaves the list untouched instead of rebuilding it per spawn.
+const sameServers = (previous: readonly Status[] = [], next: readonly Status[] = []) =>
+  previous.length === next.length &&
+  previous.every((row, index) => row.id === next[index].id && row.status === next[index].status)
+
 export function SidebarLsp(props: { context: Plugin.Context; sessionID: string }) {
   const [view, updateView] = props.context.storage.store("view", { initial: { open: true } })
   const theme = props.context.theme
   const session = createMemo(() => props.context.data.session.get(props.sessionID))
-  const list = createMemo(() => props.context.data.location.lspStatus.list(session()?.location) ?? [])
+  const list = createMemo(
+    () => byServer(props.context.data.location.lspStatus.list(session()?.location) ?? []),
+    undefined,
+    { equals: sameServers },
+  )
 
   return (
     <box>
@@ -41,9 +67,8 @@ export function SidebarLsp(props: { context: Plugin.Context; sessionID: string }
               >
                 •
               </text>
-              {/* The server name alone: names are the readable unit ("gopls", "typescript"),
-                  and the root path added noise without disambiguating anything a single
-                  working directory can hold twice. */}
+              {/* The server name alone: root paths are noise on a sidebar this narrow, and `byServer`
+                  has already collapsed the roots of one server into this row. */}
               <text fg={theme.text.base} wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}>
                 <b>{item.name}</b>
               </text>

@@ -72,3 +72,32 @@ test("sidebar lists running language servers by name only", async () => {
     app.renderer.destroy()
   }
 })
+
+test("sidebar lists a server once when several roots run it", async () => {
+  const app = await testRender(
+    () =>
+      <SidebarLsp
+        context={context({
+          servers: [
+            { id: "typescript", name: "typescript", root: "/workspace", status: "connected" },
+            { id: "typescript", name: "typescript", root: "/workspace/packages/app", status: "connected" },
+            { id: "gopls", name: "gopls", root: "/workspace", status: "connected" },
+          ],
+        })}
+        sessionID="session"
+      />,
+    { width: 42, height: 8 },
+  )
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    // The runtime runs one client per (server, root); the sidebar shows the server, not each client.
+    expect(frame.match(/typescript/g)).toHaveLength(1)
+    expect(frame).toContain("gopls")
+    // Two servers stay expanded: the collapse chevron appears only above two rows.
+    expect(frame).not.toContain("▼")
+  } finally {
+    app.renderer.destroy()
+  }
+})
