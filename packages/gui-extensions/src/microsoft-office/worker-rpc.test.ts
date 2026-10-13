@@ -6,6 +6,10 @@ const clients: ReturnType<typeof createWorkerClient<FixtureMethods>>[] = []
 
 afterEach(() => clients.splice(0).forEach((client) => client.close()))
 
+// A worker boots asynchronously, so wait for its first reply before timing an abort: on a loaded runner a cold
+// start can outlast the sleeps in these tests, and then the abort beats the call instead of interrupting it.
+const booted = (client: ReturnType<typeof start>) => client.call("log", undefined)
+
 describe("worker rpc", () => {
   test("a newer call with the same key replaces one still waiting to run", async () => {
     const client = start()
@@ -34,6 +38,7 @@ describe("worker rpc", () => {
 
   test("an aborted running call aborts its handler's signal", async () => {
     const client = start()
+    await booted(client)
     const controller = new AbortController()
     const call = client.call("hold", undefined, { signal: controller.signal })
 
@@ -45,6 +50,7 @@ describe("worker rpc", () => {
 
   test("a handler that finishes after its call was aborted closes its bitmaps instead of replying", async () => {
     const client = start()
+    await booted(client)
     const controller = new AbortController()
     const call = client.call("paint", 50, { signal: controller.signal })
 
@@ -57,6 +63,7 @@ describe("worker rpc", () => {
 
   test("a reply that crosses its call's cancel is dropped", async () => {
     const client = start()
+    await booted(client)
     const controller = new AbortController()
     const call = client.call("spin", 100, { signal: controller.signal })
 
