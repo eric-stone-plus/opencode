@@ -377,12 +377,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     setFocusedAction(undefined)
     setStore("selected", next)
     const option = selected()
-    if (option) {
-      selection = option
-      resetSelection = !preserve
-    }
-    if (option) props.onMove?.(option)
-    scrollToSelection(center)
+    if (!option) return
+    selection = option
+    resetSelection = !preserve
+    props.onMove?.(option)
+    // onMove may replace the option rows; wait for the next layout pass so the
+    // row positions are final before scrolling to the selection.
+    scrollAfterLayout(center, option.value)
   }
 
   function scrollToSelection(center: boolean) {

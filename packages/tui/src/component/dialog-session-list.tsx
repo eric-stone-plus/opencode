@@ -264,13 +264,13 @@ export function DialogSessionList() {
                 )
               })
               .catch((error) => {
-                setToDelete(undefined)
                 toast.show({
                   message: `Failed to delete session: ${errorMessage(error)}`,
                   variant: "error",
                   duration: 5000,
                 })
               })
+              .finally(() => setToDelete(undefined))
           },
         },
         {
