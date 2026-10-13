@@ -61,11 +61,19 @@ export function PromptFooter(props: {
     // Speed cells follow the TPS setting; both are omitted until a settled step has measured them.
     const ttft = config.session.tps ? timeToFirstToken(messages) : undefined
     const rate = config.session.tps ? tokensPerSecond(messages) : undefined
+    // Cache hit rate over this conversation's own requests (the same scope as the speed
+    // cells): reads / (reads + uncached input + writes), omitted until tokens arrive.
+    const cacheHit = session.tokens?.cache?.read ?? 0
+    const cacheMiss = session.tokens?.input ?? 0
+    const cacheWrite = session.tokens?.cache?.write ?? 0
+    const cacheTotal = cacheHit + cacheMiss + cacheWrite
+    const cache = cacheTotal > 0 ? Math.round((cacheHit * 100) / cacheTotal) : undefined
     return [
       usage ? formatContextUsage(usage.tokens, usage.percent) : undefined,
       cost > 0 ? money.format(cost) : undefined,
       ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
       rate === undefined ? undefined : formatTokenRate(rate),
+      cache === undefined ? undefined : `cache ${cache}%`,
       generated > 0 ? `↓ ${Locale.number(generated)}` : undefined,
     ].filter((item): item is string => Boolean(item))
   })

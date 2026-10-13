@@ -254,6 +254,33 @@ test("prompt footer ticks a generated-output count that estimates the streaming 
   }
 })
 
+test("prompt footer reports the session's cache hit rate", async () => {
+  const withCache = {
+    ...settled,
+    tokens: { input: 1_000, output: 20, reasoning: 20, cache: { read: 9_000, write: 0 } },
+  }
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter
+          context={speedContext([settled], withCache)}
+          sessionID="session"
+          mode="normal"
+          showDetails={true}
+        />
+      </ConfigProvider>
+    ),
+    { width: 140, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    // 9,000 cache reads against 1,000 uncached input and no writes, ordered after tok/s
+    expect(app.captureCharFrame()).toContain("40 tok/s · cache 90%")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 test("prompt footer omits unmeasured speed cells and honors the TPS setting", async () => {
   const unmeasured = { ...settled, content: [], time: { created: 0 }, tokens: undefined }
   const render = (config: ReturnType<typeof createTuiResolvedConfig>, messages: unknown[]) =>
