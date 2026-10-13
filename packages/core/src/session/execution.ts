@@ -49,8 +49,9 @@ type InterruptReason = "user" | "shutdown" | "inactivity"
 
 export function terminal(exit: Exit.Exit<void, SessionRunner.RunError>, reason?: InterruptReason, selfInterrupted = false) {
   if (Exit.isSuccess(exit)) return { type: "succeeded" as const }
-  // A drain that interrupted itself did so deliberately (a declined permission is the only source today);
-  // an interrupt from outside without a recorded reason is teardown and keeps the shutdown meaning.
+  // A drain that interrupts itself did so deliberately (a declined permission in the runner step, or the
+  // location-move guard in context lookup); an interrupt from outside without a recorded reason is teardown
+  // and keeps the shutdown meaning.
   if (Cause.hasInterrupts(exit.cause))
     return { type: "interrupted" as const, reason: reason ?? (selfInterrupted ? "user" : "shutdown") }
   return { type: "failed" as const, error: toSessionError(Cause.squash(exit.cause)) }
@@ -124,7 +125,8 @@ export const layer = Layer.effect(
           sessionID,
           Effect.gen(function* () {
             // `settled` runs in the execution fiber, so an interruptor equal to this fiber means the drain
-            // stopped itself (a declined permission) rather than an external teardown. A success exit has no cause.
+            // stopped itself (a declined permission, or the location-move guard) rather than an external
+            // teardown. A success exit has no cause.
             const fiberId = yield* Effect.fiberId
             const selfInterrupted = Exit.isFailure(exit) && Cause.interruptors(exit.cause).has(fiberId)
             const outcome = terminal(exit, reason, selfInterrupted)
