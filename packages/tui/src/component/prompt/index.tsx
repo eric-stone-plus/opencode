@@ -30,6 +30,8 @@ import { parseSlashHead } from "../../prompt/parse"
 import { stringWidth } from "../../util/string-width"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { emptyPrompt, usePromptHistory, type PromptInfo, type PromptPartRef } from "../../prompt/history"
+import { projectedPromptInput } from "../../prompt/codec"
+import type { SessionMessageAssistant, SessionMessageInfo, SessionMessageUser } from "@opencode/client"
 import { saveDraft, takeDraft } from "./draft-stash"
 import { Skill } from "@opencode/schema/skill"
 import { computePromptTraits } from "../../prompt/traits"
@@ -102,6 +104,21 @@ const revealedPromptMetadata = new WeakSet<object>()
 function randomIndex(count: number) {
   if (count <= 0) return 0
   return Math.floor(Math.random() * count)
+}
+
+// Mirrors the v1 withdraw guard: a prompt counts as answered once a reply has
+// rendered content (or a second reply exists), so only a started-but-empty reply
+// is retracted back into the composer.
+function answered(messages: SessionMessageInfo[], userID: string) {
+  const index = messages.findIndex((message) => message.id === userID)
+  if (index === -1) return false
+  const replies = messages
+    .slice(index + 1)
+    .filter((message): message is SessionMessageAssistant => message.type === "assistant")
+  return (
+    replies.length > 1 ||
+    replies.some((reply) => reply.content.some((part) => part.type === "tool" || part.text.trim().length > 0))
+  )
 }
 
 export function PromptInterruptStatus(props: {
@@ -522,6 +539,11 @@ export function Prompt(props: PromptProps) {
               resume: true,
             })
             setStore("interrupt", 0)
+          } else {
+            // First press: peel a queued message back into the composer before
+            // (or instead of) only arming the double-esc interrupt. Skipped
+            // when the composer holds a draft so it is never clobbered.
+            void withdraw()
           }
           dialog.clear()
         },
@@ -1086,6 +1108,60 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  let withdrawing = false
+  const hasDraft = () =>
+    !!input?.plainText ||
+    !!store.prompt.text ||
+    !!store.prompt.files?.length ||
+    !!store.prompt.agents?.length ||
+    !!store.prompt.skills?.length
+  // Esc-only caller: pull the latest not-yet-answered prompt back into the
+  // composer, but never when the user has started typing something new (that
+  // draft is what they meant to keep).
+  async function withdraw() {
+    const sessionID = props.sessionID
+    if (disposed || withdrawing || submitting || !sessionID) return false
+    if (hasDraft()) return false
+    const messages = data.session.message.list(sessionID)
+    const message = messages.findLast(
+      (message): message is SessionMessageUser => message.type === "user" && !!message.text.trim(),
+    )
+    if (!message) return false
+    withdrawing = true
+    try {
+      if (data.session.pending.list(sessionID).some((item) => item.id === message.id)) {
+        const error = await client.api.session.inbox.cancel({ sessionID, inboxID: message.id }).then(
+          () => undefined,
+          (error) => error,
+        )
+        if (error) return false
+      } else {
+        // Answered messages stay for /undo; only a started reply that rendered
+        // no output is retracted here.
+        if (answered(messages, message.id)) return false
+        await client.api.session.interrupt({ sessionID })
+        await client.api.session.wait({ sessionID })
+        await client.api.session.revert.stage({ sessionID, messageID: message.id })
+      }
+      const restored = { ...projectedPromptInput(message), pasted: [] }
+      // The server has already retracted the message. Preserve it even if the
+      // user typed a new draft, switched sessions, or closed this composer.
+      if (disposed || !input || input.isDestroyed || props.sessionID !== sessionID || hasDraft()) {
+        stash.push({ prompt: restored })
+        if (!renderer.isDestroyed) toast.show({ message: "Withdrawn message saved to prompt stash", variant: "info" })
+        return true
+      }
+      ref.set(restored)
+      setStore("mode", "normal")
+      return true
+    } catch (error) {
+      if (!disposed) toast.show({ message: errorMessage(error), variant: "error" })
+      return false
+    } finally {
+      withdrawing = false
+    }
+  }
+
   let submitting = false
   async function submit(delivery: SessionInbox.Delivery = "steer") {
     if (disabled()) return false
@@ -1095,7 +1171,7 @@ export function Prompt(props: PromptProps) {
     // clears `store.prompt.text`, then awaits its own `session.create` and
     // ultimately reads the now-empty store — sending a phantom empty prompt
     // to a freshly created session.
-    if (submitting) return false
+    if (submitting || withdrawing) return false
     submitting = true
     try {
       return await submitInner(delivery)
