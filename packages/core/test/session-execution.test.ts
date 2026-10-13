@@ -46,10 +46,11 @@ describe("SessionExecution lifecycle", () => {
     ).toEqual({ type: "failed", error: { type: "provider.transport", message: "Disconnected" } })
   })
 
-  test("defaults owner-scope interruption to shutdown and preserves explicit reasons", () => {
+  test("defaults owner-scope interruption to shutdown, preserves explicit reasons, and reads self-interruption as user", () => {
     const interrupted = Effect.runSyncExit(Effect.interrupt)
     expect(SessionExecution.terminal(interrupted)).toEqual({ type: "interrupted", reason: "shutdown" })
     expect(SessionExecution.terminal(interrupted, "user")).toEqual({ type: "interrupted", reason: "user" })
+    expect(SessionExecution.terminal(interrupted, undefined, true)).toEqual({ type: "interrupted", reason: "user" })
   })
 
   it.effect("the sweep only lists claimed top-level Sessions", () =>
@@ -139,6 +140,53 @@ describe("SessionExecution lifecycle", () => {
       expect(yield* execution.interrupt(sessionID)).toBeTrue()
       yield* execution.awaitIdle(sessionID)
       expect((yield* claims(database))[sessionID]).toBe(false)
+    }),
+  )
+
+  it.effect("classifies a self-interrupted drain as a deliberate stop and never resurrects", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_claim_self_stop")
+      yield* seedSessions(database, [sessionID])
+
+      const draining = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const interrupted: SessionEvent.Execution.Interrupted["data"][] = []
+      yield* bus.project(SessionEvent.Execution.Interrupted, (event) =>
+        Effect.sync(() => void interrupted.push(event.data)),
+      )
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      // step.ts interrupts its own drain when the user declines a permission.
+      const context = yield* buildExecution(scope, () =>
+        Deferred.succeed(draining, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(Effect.interrupt),
+        ),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+      yield* execution.resume(sessionID).pipe(Effect.forkScoped)
+      yield* Deferred.await(draining)
+      expect((yield* claims(database))[sessionID]).toBe(true)
+
+      yield* Deferred.succeed(release, undefined)
+      yield* execution.awaitIdle(sessionID)
+      // A deliberate stop is the user's interruption: it releases the claim instead of preserving it.
+      expect(interrupted).toMatchObject([{ sessionID, reason: "user" }])
+      expect((yield* claims(database))[sessionID]).toBe(false)
+
+      // A restart finds nothing to resume.
+      yield* Scope.close(scope, Exit.void)
+      const restartedScope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(restartedScope, Exit.void))
+      const drained: Session.ID[] = []
+      const restarted = yield* buildExecution(restartedScope, ({ sessionID: id }) => Effect.sync(() => void drained.push(id)))
+      yield* Context.get(restarted, SessionRestart.Service).resumeSuspendedSessions
+      expect(drained).toEqual([])
+      expect(yield* store.listSuspended()).toEqual([])
+      expect(yield* attempts(database, sessionID)).toBe(0)
     }),
   )
 

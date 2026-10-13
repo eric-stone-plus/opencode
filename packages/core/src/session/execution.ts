@@ -47,9 +47,12 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 
 type InterruptReason = "user" | "shutdown" | "inactivity"
 
-export function terminal(exit: Exit.Exit<void, SessionRunner.RunError>, reason?: InterruptReason) {
+export function terminal(exit: Exit.Exit<void, SessionRunner.RunError>, reason?: InterruptReason, selfInterrupted = false) {
   if (Exit.isSuccess(exit)) return { type: "succeeded" as const }
-  if (Cause.hasInterrupts(exit.cause)) return { type: "interrupted" as const, reason: reason ?? "shutdown" }
+  // A drain that interrupted itself did so deliberately (a declined permission is the only source today);
+  // an interrupt from outside without a recorded reason is teardown and keeps the shutdown meaning.
+  if (Cause.hasInterrupts(exit.cause))
+    return { type: "interrupted" as const, reason: reason ?? (selfInterrupted ? "user" : "shutdown") }
   return { type: "failed" as const, error: toSessionError(Cause.squash(exit.cause)) }
 }
 
@@ -120,7 +123,11 @@ export const layer = Layer.effect(
         reportLifecycle(
           sessionID,
           Effect.gen(function* () {
-            const outcome = terminal(exit, reason)
+            // `settled` runs in the execution fiber, so an interruptor equal to this fiber means the drain
+            // stopped itself (a declined permission) rather than an external teardown. A success exit has no cause.
+            const fiberId = yield* Effect.fiberId
+            const selfInterrupted = Exit.isFailure(exit) && Cause.interruptors(exit.cause).has(fiberId)
+            const outcome = terminal(exit, reason, selfInterrupted)
             if (outcome.type === "succeeded") {
               yield* bus.publish(SessionEvent.Execution.Succeeded, { sessionID }, releaseOnCommit(sessionID))
               return
