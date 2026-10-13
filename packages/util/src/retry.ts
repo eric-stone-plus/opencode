@@ -13,6 +13,7 @@ const transientMessages = [
   "failed to fetch",
   "econnreset",
   "econnrefused",
+  "connectionrefused",
   "etimedout",
   "socket hang up",
 ]

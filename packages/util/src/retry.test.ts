@@ -47,6 +47,26 @@ describe("client retry", () => {
     expect(failures.every((cause) => cause instanceof TypeError)).toBe(true)
   })
 
+  test("retries Bun's ConnectionRefused transport failure under the default attempt count", async () => {
+    const failures: string[] = []
+    const value = await retry(
+      async () => {
+        failures.push("attempt")
+        if (failures.length < 3) {
+          const cause = Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), {
+            code: "ConnectionRefused",
+          })
+          throw new Error("Transport", { cause })
+        }
+        return "ready"
+      },
+      { delay: 0 },
+    )
+
+    expect(value).toBe("ready")
+    expect(failures).toHaveLength(3)
+  })
+
   test("does not retry a transport error whose cause is not transient", async () => {
     const failures: string[] = []
     await expect(
