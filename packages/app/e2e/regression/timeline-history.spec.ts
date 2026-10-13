@@ -69,6 +69,84 @@ test.describe("timeline history", () => {
     await expect.poll(positions).toEqual(before)
   })
 
+  test("keeps the rows a step left on screen when an older page lands in the same frame", async ({ page }) => {
+    const older = Promise.withResolvers<void>()
+    const requests: { before?: string; phase: "start" | "end" }[] = []
+    await openStressTarget(page, {
+      beforeMessagesResponse: ({ before }) => (before ? older.promise : Promise.resolve()),
+      onMessages: (request) => requests.push(request),
+    })
+    const scroller = timelineScroller(page)
+    await scroller.hover()
+    await page.mouse.wheel(0, -100_000)
+    await expect.poll(() => requests.some((request) => request.before && request.phase === "start")).toBe(true)
+    // Park inside the loaded page so the step below stays off the top edge.
+    await scroller.evaluate((element) => {
+      element.scrollTop = Math.round(element.clientHeight * 1.5)
+    })
+    await expect
+      .poll(() =>
+        scroller.evaluate((element) => {
+          const view = element.getBoundingClientRect()
+
+          const tops = [...element.querySelectorAll<HTMLElement>("[data-timeline-key]")].map((row) =>
+            row.getBoundingClientRect().top,
+          )
+
+          return tops.length > 0 && Math.min(...tops) <= view.top + 1
+        }),
+      )
+      .toBe(true)
+
+    // One page task: the step and the rows it leaves on screen. The page lands while the step's native
+    // scroll event is still owed, so the compensation must anchor the rows the step shows rather than
+    // the position no event has reported yet.
+    const stepped = await scroller.evaluate((element) => {
+      const view = element.getBoundingClientRect()
+      const into = (rect: DOMRect) => Math.round((rect.top - view.top) * devicePixelRatio) / devicePixelRatio
+      const step = Math.min(Math.round(element.clientHeight / 2), element.scrollTop)
+
+      element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -step }))
+      element.scrollTop -= step
+
+      return [...element.querySelectorAll<HTMLElement>("[data-timeline-part-id]")]
+        .filter((row) => {
+          const rect = row.getBoundingClientRect()
+
+          return rect.bottom > view.top && rect.top < view.bottom
+        })
+        .flatMap((row) => (row.dataset.timelinePartId ? [row.dataset.timelinePartId] : []))
+        .slice(0, 3)
+        .map((key) => ({
+          key,
+          top: into(element.querySelector<HTMLElement>(`[data-timeline-part-id="${key}"]`)!.getBoundingClientRect()),
+        }))
+    })
+
+    expect(stepped.length).toBeGreaterThan(0)
+
+    const height = await scroller.evaluate((element) => element.scrollHeight)
+    older.resolve()
+    await expect.poll(() => requests.some((request) => request.before && request.phase === "end")).toBe(true)
+    // The older page has landed above the rows the step left on screen.
+    await expect.poll(() => scroller.evaluate((element) => element.scrollHeight)).toBeGreaterThan(height)
+    await expect
+      .poll(() =>
+        scroller.evaluate((element, rows) => {
+          const top = element.getBoundingClientRect().top
+
+          return rows.map(({ key }) => {
+            const row = element.querySelector<HTMLElement>(`[data-timeline-part-id="${key}"]`)
+
+            if (!row) return undefined
+
+            return Math.round((row.getBoundingClientRect().top - top) * devicePixelRatio) / devicePixelRatio
+          })
+        }, stepped),
+      )
+      .toEqual(stepped.map(({ top }) => top))
+  })
+
   test("mounts every part once and in order while paging to the start", async ({ page }) => {
     test.setTimeout(360_000)
     const errors = trackPageErrors(page)
@@ -166,6 +244,7 @@ test.describe("timeline history", () => {
       const roots: { sessionID: string; messageID: string }[] = []
       const sequence: string[] = []
       const messages = rootHistory()
+      // SAFETY: the fixture's history is non-empty and ends with the assistant message under test.
       const last = messages.at(-1) as SessionMessageAssistant
       await page.addInitScript(installVisibilityProbe)
 
@@ -213,10 +292,12 @@ test.describe("timeline history", () => {
       ])
       expect(roots).toEqual([])
 
+      const failure = scenario.error ? { error: scenario.error } : undefined
+
       const completed = {
         ...last,
         time: { ...last.time, completed: last.time.created + 15_000 },
-        ...(scenario.error ? { error: scenario.error } : {}),
+        ...failure,
       }
 
       const message = messageUpdated(completed)
@@ -261,16 +342,16 @@ test.describe("timeline history", () => {
     })
   }
 
-  for (const shape of ["assistant-only", "mixed"] as const) {
-    test(`renders the ${shape} tail before parent hydration and preserves it afterward`, async ({ page }) => {
-      const session = { ...fixture.sessions[0]!, id: `ses_hydration_${shape}` }
+  for (const tailKind of ["assistant-only", "mixed"] as const) {
+    test(`renders the ${tailKind} tail before parent hydration and preserves it afterward`, async ({ page }) => {
+      const session = { ...fixture.sessions[0]!, id: `ses_hydration_${tailKind}` }
 
       // Compact's initial 40 and the next 20 begin with an assistant; page three supplies its parent.
       const messages = Array.from({ length: 61 }, (_, index): SessionMessageInfo => {
         const id = `msg_hydration_${index}`
         const time = { created: 1700000000000 + index * 1_000 }
 
-        if (index === 0 || (shape === "mixed" && index === 59))
+        if (index === 0 || (tailKind === "mixed" && index === 59))
           return { id, type: "user", time, text: `Prompt ${index}` }
 
         return {
@@ -341,7 +422,7 @@ test.describe("timeline history", () => {
         await expectReadyTail()
         await expect(orphan).toHaveAttribute("data-message-id", "msg_hydration_21")
 
-        if (shape === "mixed")
+        if (tailKind === "mixed")
           await expect(
             page.locator('[data-timeline-row="UserMessage"][data-message-id="msg_hydration_59"]'),
           ).toBeInViewport()
@@ -514,7 +595,9 @@ function installVisibilityProbe() {
   const state = {
     armed: false,
     hidden: false,
+    // SAFETY: probe-local record: `parts` is exactly what `visibleParts` returned.
     parts: [] as string[],
+    // SAFETY: the sampler's last frame, undefined until it samples once.
     final: undefined as ProbeFinal | undefined,
     settled: false,
     // Returns the parts that must stay visible.

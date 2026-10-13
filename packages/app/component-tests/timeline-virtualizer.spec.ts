@@ -91,12 +91,16 @@ for (const input of [
     await root.getByRole("button", { name: "Reconnect ready rows", exact: true }).click()
     await expect(content).toHaveCSS("visibility", "visible")
     await expect(root).toHaveAttribute("data-first-reveal", /.+/)
+
+    // The offset-only repair reports the element's own offset; the other cases never write one.
+    const offset = input.name === "offset-only" ? { scrollTop: 0 } : undefined
+
     expect(await root.evaluate((element) => JSON.parse(element.dataset.firstReveal!))).toMatchObject({
       rows: input.count === 1 ? [0] : [0, 1, 2, 3],
       pendingMarkdown: 0,
       clipped: [],
       viewportHeight: 180,
-      ...(input.name === "offset-only" ? { scrollTop: 0 } : {}),
+      ...offset,
     })
 
     if (input.name === "offset-only") {
@@ -106,3 +110,79 @@ for (const input of [
     }
   })
 }
+
+story("keeps the visible rows fixed when an older page lands during a scroll step", async ({ page }) => {
+  await page.evaluate(async (fixture) => {
+    const { mountTimelineVirtualizer } = await import(fixture)
+    mountTimelineVirtualizer({ count: 40, rowHeight: 60, immediate: true, prepend: 20 })
+  }, fixture)
+  const root = page.getByTestId("timeline-virtualizer-fixture")
+  const scroller = root.locator("[data-scrollable]")
+  const content = root.locator("[data-timeline-virtual-content]")
+  await expect(root).toHaveAttribute("data-observed-height", "180")
+  await expect(content).toHaveCSS("visibility", "hidden")
+  await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+  await expect(content).toHaveCSS("visibility", "visible")
+
+  // Leave the end anchor and park the viewport inside the loaded page.
+  await scroller.dispatchEvent("wheel", { deltaY: -1 })
+  await expect(root.getByTestId("timeline-controls")).toHaveAttribute("data-pinned", "false")
+  await scroller.evaluate((element) => {
+    element.scrollTop = 1200
+  })
+
+  const visibleRows = () =>
+    scroller.evaluate((element) => {
+      const view = element.getBoundingClientRect()
+
+      return [...element.querySelectorAll<HTMLElement>("[data-timeline-key]")].flatMap((row) => {
+        const rect = row.getBoundingClientRect()
+
+        if (rect.bottom <= view.top || rect.top >= view.bottom) return []
+
+        return [{ key: row.dataset.timelineKey!, top: Math.round(rect.top - view.top) }]
+      })
+    })
+
+  // Wait until the mounted rows cover the viewport top, so the step below is the user's own move.
+  await expect
+    .poll(() =>
+      scroller.evaluate((element) => {
+        const view = element.getBoundingClientRect()
+
+        const tops = [...element.querySelectorAll<HTMLElement>("[data-timeline-key]")].map((row) =>
+          row.getBoundingClientRect().top,
+        )
+
+        return tops.length > 0 && Math.min(...tops) <= view.top + 1
+      }),
+    )
+    .toBe(true)
+
+  // One page task: the step, the rows it leaves on screen, then the older page. The step's native
+  // scroll event has not been delivered yet, which is the same window a landing page can use.
+  const afterStep = await scroller.evaluate((element) => {
+    const view = element.getBoundingClientRect()
+
+    const rows = () =>
+      [...element.querySelectorAll<HTMLElement>("[data-timeline-key]")].flatMap((row) => {
+        const rect = row.getBoundingClientRect()
+
+        if (rect.bottom <= view.top || rect.top >= view.bottom) return []
+
+        return [{ key: row.dataset.timelineKey!, top: Math.round(rect.top - view.top) }]
+      })
+
+    const buttons = [...document.querySelectorAll("button")]
+
+    buttons.find((button) => button.textContent === "Scroll up")!.click()
+    const stepped = rows()
+    buttons.find((button) => button.textContent === "Prepend older page")!.click()
+
+    return stepped
+  })
+
+  expect(afterStep.length).toBeGreaterThan(0)
+
+  await expect.poll(visibleRows).toEqual(afterStep)
+})

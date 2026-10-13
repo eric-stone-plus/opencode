@@ -1,11 +1,16 @@
 import { TimelineRow } from "@opencode/session-ui/timeline/projection"
-import { onCleanup } from "solid-js"
+import { createMemo, createSignal, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { render } from "solid-js/web"
 import { LanguageProvider } from "../src/runtime/i18n/language"
 import { createTimelineVirtualizer } from "../src/session/timeline/virtualizer"
 
-export function mountTimelineVirtualizer(input: { count: number; rowHeight: number; immediate?: boolean }) {
+export function mountTimelineVirtualizer(input: {
+  count: number
+  rowHeight: number
+  immediate?: boolean
+  prepend?: number
+}) {
   const host = document.createElement("main")
   host.dataset.testid = "timeline-virtualizer-fixture"
   host.dataset.scrolls = "0"
@@ -16,13 +21,16 @@ export function mountTimelineVirtualizer(input: { count: number; rowHeight: numb
   function Fixture() {
     const [state, setState] = createStore({ pinned: true, ready: false })
 
-    const rows = Array.from(
+    const initial = Array.from(
       { length: input.count },
       (_, index) => new TimelineRow.UserMessage({ userMessageID: `message-${index}` }),
     )
 
-    const rowByKey = new Map(rows.map((row) => [TimelineRow.key(row), row]))
-    const indexes = new Map(rows.map((row, index) => [row.userMessageID, index]))
+    const [rows, setRows] = createSignal<TimelineRow.TimelineRow[]>(initial)
+    let pages = 0
+
+    const rowByKey = createMemo(() => new Map(rows().map((row) => [TimelineRow.key(row), row])))
+    const indexes = createMemo(() => new Map(rows().map((row, index) => [row.userMessageID, index])))
     let viewport!: HTMLDivElement
     let content!: HTMLDivElement
     let container!: HTMLDivElement
@@ -30,12 +38,12 @@ export function mountTimelineVirtualizer(input: { count: number; rowHeight: numb
     const timeline = createTimelineVirtualizer({
       sessionKey: () => "cold-reveal-fixture",
       projection: {
-        rows: () => rows,
-        rowByKey: () => rowByKey,
+        rows,
+        rowByKey,
         activeMessageID: () => undefined,
         messageByID: () => new Map(),
-        messageRowIndex: () => indexes,
-        messageLastRowIndex: () => indexes,
+        messageRowIndex: indexes,
+        messageLastRowIndex: indexes,
       },
       showHeader: () => false,
       pinned: () => state.pinned,
@@ -93,6 +101,23 @@ export function mountTimelineVirtualizer(input: { count: number; rowHeight: numb
       <div data-testid="timeline-controls" data-pinned={state.pinned}>
         <button type="button" onClick={() => setState("ready", true)}>
           Complete Markdown
+        </button>
+        <button type="button" onClick={() => (viewport.scrollTop -= Math.round(viewport.clientHeight / 2))}>
+          Scroll up
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setRows((current) => [
+              ...Array.from(
+                { length: input.prepend ?? 0 },
+                (_, index) => new TimelineRow.UserMessage({ userMessageID: `older-${pages++}-${index}` }),
+              ),
+              ...current,
+            ])
+          }
+        >
+          Prepend older page
         </button>
         <button type="button" onClick={() => (container.style.display = "none")}>
           Hide viewport
