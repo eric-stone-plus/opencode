@@ -20,6 +20,8 @@ describe("global", () => {
         XDG_CONFIG_HOME: directories[2],
         XDG_STATE_HOME: directories[3],
         TMPDIR: directories[4],
+        // Windows resolves the platform tmp through TEMP/TMP, not TMPDIR.
+        ...(process.platform === "win32" ? { TEMP: directories[4], TMP: directories[4] } : {}),
       },
       stderr: "pipe",
     })
@@ -71,6 +73,8 @@ describe("global", () => {
         XDG_CONFIG_HOME: directories[2],
         XDG_STATE_HOME: directories[3],
         TMPDIR: directories[4],
+        // Windows resolves the platform tmp through TEMP/TMP, not TMPDIR.
+        ...(process.platform === "win32" ? { TEMP: directories[4], TMP: directories[4] } : {}),
       },
       stdout: "pipe",
       stderr: "pipe",
