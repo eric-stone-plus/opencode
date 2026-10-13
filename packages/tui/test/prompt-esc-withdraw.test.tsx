@@ -134,6 +134,49 @@ test("the first escape withdraws a pending prompt, the second interrupts", async
   await setup.waitForFrame((frame) => count(frame, "withdraw me") === 1)
 })
 
+test("a queued prompt is withdrawn without interrupting the run", async () => {
+  await using state = await tmpdir()
+  const info = sessionInfo("ses_queue")
+  const deleted: string[] = []
+  const interrupts: (string | null)[] = []
+  // delivery: "queue" is the unsent queue the prompt dock surfaces: the runner only
+  // promotes it at an idle boundary, so the first escape must cancel it and refill
+  // the composer while the active run keeps streaming (no interrupt request).
+  const pending = {
+    id: "msg_queued",
+    sessionID: info.id,
+    time: { created: 3 },
+    type: "user",
+    delivery: "queue",
+    payload: { text: "queued draft text" },
+  }
+  await using setup = await createAppFixture({
+    width: 140,
+    height: 30,
+    state: state.path,
+    config: { animations: false, session: { sidebar: "hide" } },
+    args: { sessionID: info.id },
+    fetch: handlers({
+      info,
+      messages: [userMessage("msg_queued", "queued draft text", 3)],
+      inbox: [pending],
+      deleted,
+      interrupts,
+    }),
+  })
+  await setup.ready
+  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  setup.events.emit(started(info.id))
+  await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
+  await setup.waitForFrame((frame) => frame.includes("queued draft text"))
+  await setup.waitForFrame((frame) => frame.includes("1 queued"))
+
+  setup.mockInput.pressEscape()
+  await setup.waitFor(() => deleted.length === 1)
+  await setup.waitForFrame((frame) => count(frame, "queued draft text") === 2)
+  expect(interrupts.length).toBe(0)
+})
+
 test("a composer draft is never clobbered by the escape withdraw", async () => {
   await using state = await tmpdir()
   const info = sessionInfo("ses_draft")
