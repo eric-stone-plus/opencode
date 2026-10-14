@@ -187,31 +187,26 @@ async function skillsExtraRows(root: string, home: string): Promise<Row[]> {
   )
 }
 
-// install.sh converges the live config FROM the bundle snapshot (step 2 sed
-// replaces the first anchor per line — no /g — with an escaped literal). A
-// stale snapshot would overwrite a live config that evolved past it, so
-// compare after applying the same transformation. The `--link` seat mode is
-// not modeled (documented unused; it keeps the bundle copy unrewritten).
+// install.sh converges the live config FROM the bundle snapshot byte-for-byte
+// (the plans-path sed died with plan mode on 2026-10-14). A stale snapshot
+// would overwrite a live config that evolved past it, so the two files must
+// match exactly. The `--link` seat mode is not modeled (documented unused; it
+// points the seat at the bundle copy instead of copying it).
 async function configSnapshotRow(root: string, home: string): Promise<Row> {
   const label = "bootstrap/config/opencode.jsonc"
   const source = path.join(root, label)
   const destination = path.join(home, ".config/opencode/opencode.jsonc")
   if (!existsSync(source)) return { label, status: "missing", detail: "repo copy missing (check the mapping)" }
   if (!existsSync(destination)) return { label, status: "missing", detail: "seat copy missing: ~/.config/opencode/opencode.jsonc" }
-  const seatHome = home.replace(/^\//, "")
-  const expected = (await Bun.file(source).text())
-    .split("\n")
-    .map((line) => line.replace("home/eric/.local/share/opencode/plans/", () => `${seatHome}/.local/share/opencode/plans/`))
-    .join("\n")
-  if (expected !== (await Bun.file(destination).text())) {
+  if ((await Bun.file(source).text()) !== (await Bun.file(destination).text())) {
     return { label, status: "drift", detail: "live config differs; refresh the snapshot from the live file" }
   }
   return { label, status: "ok" }
 }
 
 export async function collectDrift(root: string, home: string): Promise<Row[]> {
-  // install.sh normalizes a trailing slash before rewriting; match it so
-  // `--home ~/` does not misreport the config row.
+  // install.sh normalizes a trailing slash before rewriting home-derived
+  // files; match it so `--home ~/` does not misreport those rows.
   const seat = home.replace(/\/+$/, "") || "/"
   return [
     ...(await Promise.all(MANAGED_FILES.map((mapping) => guard(mapping.source, () => fileRow(root, seat, mapping))))),

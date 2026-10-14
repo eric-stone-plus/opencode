@@ -2158,7 +2158,7 @@ function UserMessage(props: { message: SessionMessageUser }) {
   const theme = useTheme()
   const mode = themes.mode
   const [hover, setHover] = createSignal(false)
-  const color = createMemo(() => local.agent.color(data.session.get(ctx.sessionID)?.agent ?? "build"))
+  const color = createMemo(() => local.agent.color(data.session.get(ctx.sessionID)?.agent ?? "auto"))
   const delivery = createMemo(() => ctx.pendingDelivery(props.message.id))
   const dialog = useDialog()
   const renderer = useRenderer()

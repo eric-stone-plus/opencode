@@ -228,11 +228,13 @@ export function RunFooterView(props: RunFooterViewProps) {
   const runTheme = createMemo(() => props.theme())
   const theme = createMemo(() => runTheme().footer)
   const agentColor = createMemo(() => {
+    const agents = props.agents().filter((agent) => !agent.hidden)
+    const current = agents.find((agent) => agent.id === props.currentAgentID())
+    // The configured color wins; the categorical palette is the fallback for agents that
+    // carry none (upstream colored every agent by position, which ignored the seat config).
+    if (current?.color) return current.color
     const colors = theme().categorical
-    const index = props
-      .agents()
-      .filter((agent) => !agent.hidden)
-      .findIndex((agent) => agent.id === props.currentAgentID())
+    const index = agents.findIndex((agent) => agent.id === props.currentAgentID())
     return colors[Math.max(0, index) % colors.length]!
   })
   const block = createMemo(() => runTheme().block)

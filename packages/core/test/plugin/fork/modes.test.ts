@@ -8,7 +8,6 @@ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Location } from "@opencode/core/location"
 import { ForkModesPlugin } from "@opencode/core/plugin/fork/modes"
 import { Model } from "@opencode/core/model"
-import { Permission } from "@opencode/core/permission"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
@@ -136,7 +135,6 @@ const run = Effect.fnUntraced(function* (
     global,
     contextHook,
     goalFile: path.join(global.data, "goals", `${sessionID}.md`),
-    planFile: path.join(global.data, "plans", `${sessionID}.md`),
   }
 })
 
@@ -160,14 +158,13 @@ describe("fork modes: standing mode cards", () => {
       for (const [agent, marker] of [
         ["auto", "Operational mode: auto"],
         ["goal", "Operational mode: goal"],
-        ["build", "Operational mode: build"],
       ] as const) {
         const { contextHook } = yield* run({ users: [] })
         const context = request(agent, [Message.user("hello")])
         yield* contextHook(context)
         const card = modeCardText(context)!
         expect(card).toContain(marker)
-        expect(card).toContain("Plan mode is NOT active")
+        expect(card).toContain("There is no plan mode in this build")
         // The request messages stay untouched: no synthetic history, no spliced reminders.
         expect(context.messages).toHaveLength(1)
       }
@@ -200,56 +197,16 @@ describe("fork modes: standing mode cards", () => {
 
   it.effect("adds no mode card for agents without a standing card", () =>
     Effect.gen(function* () {
-      const { contextHook } = yield* run()
-      const context = request("explore", [Message.user("search")])
-      yield* contextHook(context)
-      expect(systemTexts(context)).toHaveLength(0)
-      expect(context.messages).toHaveLength(1)
-    }),
-  )
-})
-
-describe("fork modes: plan cards", () => {
-  it.effect("gives the plan agent the workflow card with its plan file", () =>
-    Effect.gen(function* () {
-      const { contextHook, planFile } = yield* run()
-      const context = request("plan", [Message.user("design this")])
-      yield* contextHook(context)
-      const card = systemTexts(context).find((text) => text.includes("Plan mode is active"))!
-      expect(card).toContain(`Your plan file is ${planFile}.`)
-      expect(card).toContain("Call the plan_exit tool")
-      expect((yield* Effect.promise(() => fs.stat(path.dirname(planFile)))).isDirectory()).toBe(true)
-    }),
-  )
-
-  it.effect("carries the transition card only on the first request after leaving plan", () =>
-    Effect.gen(function* () {
-      const leaving = yield* run({ assistants: ["plan"] })
-      const first = request("build", [Message.user("go")])
-      yield* leaving.contextHook(first)
-      expect(systemTexts(first).some((text) => text.includes("Plan mode has ended"))).toBe(true)
-      expect(systemTexts(first).some((text) => text.includes("A plan file exists at"))).toBe(false)
-
-      // A build reply now exists in history, so the landing is over.
-      const landed = yield* run({ assistants: ["plan", "build"] })
-      const later = request("build", [Message.user("go on")])
-      yield* landed.contextHook(later)
-      expect(systemTexts(later).some((text) => text.includes("Plan mode has ended"))).toBe(false)
-    }),
-  )
-
-  it.effect("points the transition card at an existing plan file", () =>
-    Effect.gen(function* () {
-      const { contextHook, planFile } = yield* run({ assistants: ["plan"] })
-      yield* Effect.promise(async () => {
-        await fs.mkdir(path.dirname(planFile), { recursive: true })
-        await fs.writeFile(planFile, "# plan")
-      })
-      const context = request("auto", [Message.user("go")])
-      yield* contextHook(context)
-      expect(systemTexts(context).find((text) => text.includes("Plan mode has ended"))).toContain(
-        `A plan file exists at ${planFile}. You should execute on the plan defined within it`,
-      )
+      // build/plan are removed by the seat config, but the card table must not carry them
+      // either: a re-enabled primary (upstream merge, local config change) would otherwise
+      // silently resurrect a mode card.
+      for (const agent of ["explore", "build", "plan"] as const) {
+        const { contextHook } = yield* run()
+        const context = request(agent, [Message.user("search")])
+        yield* contextHook(context)
+        expect(systemTexts(context)).toHaveLength(0)
+        expect(context.messages).toHaveLength(1)
+      }
     }),
   )
 })
@@ -304,7 +261,7 @@ describe("fork modes: goal", () => {
         await fs.mkdir(path.dirname(goalFile), { recursive: true })
         await fs.writeFile(goalFile, "Migrate the billing service\n")
       })
-      const context = request("build", [Message.user("x")])
+      const context = request("auto", [Message.user("x")])
       yield* contextHook(context)
       expect(goalCards(context)[0]).toContain("Migrate the billing service")
     }),
@@ -384,58 +341,19 @@ describe("fork modes: agents", () => {
       const agents = yield* Agent.Service
       const config = yield* Config.Test
       yield* agents.transform((editor) => {
-        ;["build", "general", "explore", "plan", "auto", "goal"].forEach((id) =>
+        ;["general", "explore", "auto", "goal"].forEach((id) =>
           editor.update(Agent.ID.make(id), (agent) => {
             agent.mode = id === "general" || id === "explore" ? "subagent" : "primary"
           }),
         )
         editor.default(Agent.ID.make("auto"))
       })
-      yield* config.setEntries([declared("auto", "goal", "build", "plan", "general")])
-      expect((yield* agents.list()).map((agent) => String(agent.id))).toEqual([
-        "auto",
-        "build",
-        "general",
-        "explore",
-        "plan",
-        "goal",
-      ])
+      yield* config.setEntries([declared("auto", "goal", "general")])
+      expect((yield* agents.list()).map((agent) => String(agent.id))).toEqual(["auto", "general", "explore", "goal"])
       yield* ForkModesPlugin.Plugin.effect(host({ agent: agentHost(agents), session: { hook: () => Effect.succeed({ dispose: Effect.void }) } })).pipe(
         Effect.provide(Layer.mock(Session.Service, { revert: unusedRevert })),
       )
-      expect((yield* agents.list()).map((agent) => String(agent.id))).toEqual([
-        "auto",
-        "goal",
-        "build",
-        "plan",
-        "general",
-        "explore",
-      ])
-    }),
-  )
-
-  it.effect("lets the plan agent write its own plan file after config denied edits", () =>
-    Effect.gen(function* () {
-      const agents = yield* Agent.Service
-      const config = yield* Config.Test
-      const global = yield* Global.Service
-      yield* agents.transform((editor) =>
-        editor.update(Agent.ID.make("plan"), (agent) => {
-          agent.permissions.push({ action: "edit", resource: "*", effect: "deny" })
-        }),
-      )
-      yield* config.setEntries([declared("plan")])
-      yield* ForkModesPlugin.Plugin.effect(host({ agent: agentHost(agents), session: { hook: () => Effect.succeed({ dispose: Effect.void }) } })).pipe(
-        Effect.provide(Layer.mock(Session.Service, { revert: unusedRevert })),
-      )
-      const plan = yield* agents.get(Agent.ID.make("plan"))
-      const file = path.join(global.data, "plans", `${sessionID}.md`)
-      expect(Permission.evaluate("edit", file, plan!.permissions).effect).toBe("allow")
-      // The location-relative form the file tools report for a plan file inside the location.
-      expect(
-        Permission.evaluate("edit", path.relative(workspace, file).replaceAll("\\", "/"), plan!.permissions).effect,
-      ).toBe("allow")
-      expect(Permission.evaluate("edit", "/workspace/src/index.ts", plan!.permissions).effect).toBe("deny")
+      expect((yield* agents.list()).map((agent) => String(agent.id))).toEqual(["auto", "goal", "general", "explore"])
     }),
   )
 })

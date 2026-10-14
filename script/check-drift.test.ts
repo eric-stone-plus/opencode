@@ -41,8 +41,8 @@ async function mirror() {
   await write(path.join(home, ".config/opencode/skills/PROVENANCE.md"), "provenance\n")
   await write(path.join(root, "bootstrap/skills-extra/longrun-stability-audit/SKILL.md"), "orphan skill\n")
   await write(path.join(home, ".config/opencode/skills/longrun-stability-audit/SKILL.md"), "orphan skill\n")
-  await write(path.join(root, "bootstrap/config/opencode.jsonc"), "plans: home/eric/.local/share/opencode/plans/\n")
-  await write(path.join(home, ".config/opencode/opencode.jsonc"), `plans: ${home.replace(/^\//, "")}/.local/share/opencode/plans/\n`)
+  await write(path.join(root, "bootstrap/config/opencode.jsonc"), "agent: two profiles\n")
+  await write(path.join(home, ".config/opencode/opencode.jsonc"), "agent: two profiles\n")
   return { root, home }
 }
 
@@ -133,7 +133,7 @@ describe("collectDrift", () => {
 
   test("a live config that evolved past the bundle snapshot is drift", async () => {
     const { root, home } = await mirror()
-    await write(path.join(home, ".config/opencode/opencode.jsonc"), "plans: changed\n")
+    await write(path.join(home, ".config/opencode/opencode.jsonc"), "agent: changed\n")
     const rows = await collectDrift(root, home)
     expect(row(rows, "bootstrap/config/opencode.jsonc")).toEqual({
       label: "bootstrap/config/opencode.jsonc",

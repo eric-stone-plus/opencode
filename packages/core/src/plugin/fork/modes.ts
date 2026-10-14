@@ -6,32 +6,21 @@ import type { SessionEvent } from "@opencode/schema/session-event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import { Effect, Option, Stream } from "effect"
-import path from "path"
 import { Config } from "../../config.js"
 import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
-import { Location } from "../../location.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { ForkCards } from "./cards.js"
 import { ForkFiles } from "./files.js"
 import AUTO from "./mode/auto.txt"
-import BUILD from "./mode/build.txt"
 import GOAL from "./mode/goal.txt"
 import GOAL_REMINDER from "./mode/goal-reminder.txt"
-import PLAN from "./mode/plan.txt"
-import TRANSITION from "./mode/transition.txt"
 
 const GOAL_REMINDER_MAX = 8000
 
 // Standing mode card per primary profile, presented on every request while that profile is active.
-const STANDING: Partial<Record<string, string>> = { auto: AUTO.trim(), goal: GOAL.trim(), build: BUILD.trim() }
-
-const planCard = (file: string) => PLAN.trim().replace("${plan}", () => file)
-
-const transitionCard = (file: string, exists: boolean) =>
-  exists
-    ? `${TRANSITION.trim()}\n\nA plan file exists at ${file}. You should execute on the plan defined within it`
-    : TRANSITION.trim()
+// Only auto and goal remain: build and plan are disabled in the seat config (owner call 2026-10-14).
+const STANDING: Partial<Record<string, string>> = { auto: AUTO.trim(), goal: GOAL.trim() }
 
 const goalCard = (goal: string, file: string) =>
   GOAL_REMINDER.trim()
@@ -61,29 +50,16 @@ export const Plugin = define({
     const config = yield* Config.Service
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
-    const location = yield* Location.Service
     const sessions = yield* Session.Service
     const cards = ForkCards.make()
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.agent.reload())
 
-    yield* ctx.agent.transform((editor) => {
-      // The plan agent may write its plan file. Rules are matched against the path the file tools report: relative
-      // to the location when the file is inside it, absolute otherwise. This runs after config, which re-asserts
-      // `edit: deny` for the plan agent and would otherwise win.
-      const plans = path.dirname(ForkFiles.plan(global, ""))
-      const relative = path.relative(location.directory, plans).replaceAll("\\", "/")
-      // update creates a missing agent, and a user who disabled the plan agent must not get it back.
-      if (editor.get("plan"))
-        editor.update("plan", (agent) =>
-          agent.permissions.push(
-            ...[`${plans}/*`, `${relative}/*`].map((resource) => ({ action: "edit", resource, effect: "allow" as const })),
-          ),
-        )
+    yield* ctx.agent.transform((editor) =>
       order(
         editor,
         loaded.entries.flatMap((entry) => (entry.type === "document" ? Object.keys(entry.info.agents ?? {}) : [])),
-      )
-    })
+      ),
+    )
 
     const goal = Effect.fn("ForkModesPlugin.goal")(function* (session: SessionSchema.Info, agent: string) {
       const file = ForkFiles.goal(global, session.id)
@@ -116,25 +92,9 @@ export const Plugin = define({
     yield* ctx.session.hook("context", (event) =>
       Effect.gen(function* () {
         const session = yield* ctx.session.get({ sessionID: event.sessionID })
-        const plan = event.agent === "plan"
-        const file = ForkFiles.plan(global, event.sessionID)
         const wanted: string[] = []
-        if (plan) {
-          yield* fs.ensureDir(path.dirname(file)).pipe(Effect.ignore)
-          wanted.push(planCard(file))
-        } else {
-          const card = STANDING[event.agent]
-          if (card !== undefined) wanted.push(card)
-          // Plan to anything else: the first request after the switch carries the transition card, once per landing.
-          const [previous] = yield* sessions.messages({
-            sessionID: event.sessionID,
-            limit: 1,
-            order: "desc",
-            type: "assistant",
-          })
-          if (previous?.type === "assistant" && previous.agent === "plan")
-            wanted.push(transitionCard(file, yield* fs.existsSafe(file)))
-        }
+        const card = STANDING[event.agent]
+        if (card !== undefined) wanted.push(card)
         // Subagent sessions never carry the goal; it belongs to the top-level session that owns it.
         if (!session.parentID)
           wanted.push(...(yield* goal(session, event.agent).pipe(isolate("failed to resolve the session goal", []))))
@@ -142,7 +102,7 @@ export const Plugin = define({
       }).pipe(isolate("failed to apply fork mode cards", undefined)),
     )
 
-    // A goal belongs to its session, so it goes away with it. The plan file is a document the user may keep.
+    // A goal belongs to its session, so it goes away with it.
     yield* ctx.event.subscribe().pipe(
       Stream.filter((event): event is SessionEvent.Deleted => event.type === "session.deleted"),
       Stream.runForEach((event) =>

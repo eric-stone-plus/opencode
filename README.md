@@ -53,12 +53,12 @@ The build bakes the channel in from the checked-out branch (`OPENCODE_CHANNEL` w
 
 ### Modes
 
-`opencode.jsonc` defines four primary agents, cycled with the agent-cycle key (`Tab` in this fork's `cli.json`):
+`opencode.jsonc` defines two primary agents, cycled with the agent-cycle key (`Tab` in this fork's `cli.json`):
 
-- **auto** — the default. Never asks: adopts the recommended option and runs to completion.
-- **goal** — every message steers one session goal; runs the adversarial subagent swarm playbook in `AGENTS.goal.md`.
-- **plan** — read-only analysis and planning; it writes only its own plan documents.
-- **build** — full-access development work.
+- **auto** (blue) — the default. Never asks: adopts the recommended option and runs to completion.
+- **goal** (red) — every message steers one session goal; runs the adversarial subagent swarm playbook in `AGENTS.goal.md`.
+
+Upstream's `build` and `plan` primaries are removed (`"disable": true` in the seat config, so the cycle is exactly auto <-> goal).
 
 Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches.
 

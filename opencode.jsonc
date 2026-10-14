@@ -209,10 +209,13 @@
   "default_agent": "auto",
   "instructions": ["~/.config/opencode/autonomy.md", "~/.config/opencode/AGENTS.goal.md"],
   "agent": {
+    // Two profiles (owner call 2026-10-14): auto (blue) and goal (red).
+    // Explicit colors: without them the TUI picks positionally from
+    // [secondary, accent, success, warning, primary, error, info].
     "auto": {
       "description": "Autonomous mode. Never asks, never blocks: adopts the recommended option and runs to completion.",
       "mode": "primary",
-      "color": "#7fd88f",
+      "color": "#5c9cf5",
       // Variant applies via the same-model gate (agent model must equal
       // the resolved model). deepseek-flash's effort set is
       // {low, high, max}; "max" is the top and is sent as
@@ -225,90 +228,49 @@
       // first and the narrow denials after it, or they get overridden.
       "permission": {
         "*": "allow",
-        "question": "deny",
-        "plan_enter": "deny",
-        "plan_exit": "deny"
+        "question": "deny"
       }
     },
     // Goal mode: red Goal profile. The prompt body lives in agent/goal.md
     // (markdown wins the merge per key; item.prompt = value.prompt ??
-    // item.prompt keeps it); this block pins the surface so all four
-    // profiles declare it in one place. Same no-interrupt surface as auto:
-    // the swarm playbook must never be blocked by a prompt mid-run.
+    // item.prompt keeps it); this block pins the surface so both profiles
+    // declare it in one place. Same no-interrupt surface as auto: the swarm
+    // playbook must never be blocked by a prompt mid-run.
     "goal": {
-      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
+      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.goal.md end to end.",
       "mode": "primary",
       "color": "#e06c75",
       "model": "deepseek/deepseek-flash",
       "variant": "max",
       "permission": {
         "*": "allow",
-        "question": "deny",
-        "plan_enter": "deny",
-        "plan_exit": "deny"
+        "question": "deny"
       }
     },
-    // Explicit colors: without them the TUI picks positionally from
-    // [secondary, accent, success, warning, primary, error, info], so adding
-    // `auto` would shift plan off orange. build keeps full allow except
-    // plan_exit: build is never in plan mode, and plan_exit prompts via
-    // Question.Service directly, bypassing the question gate.
-    "build": {
-      "color": "#5c9cf5",
-      "permission": {
-        "*": "allow",
-        "question": "allow",
-        "plan_enter": "allow",
-        "plan_exit": "deny"
-      }
-    },
-    // The global "permission": "allow" above merges AFTER plan's native
-    // edit-deny and findLast() keeps the last match, so it silently defeats
-    // plan mode's read-only guarantee. Re-asserting edit here merges last and
-    // restores it, while still letting plan write its own plan documents.
-    // Path forms: "home/eric/..." is the machine-A slash-less form (kept);
-    // ".local/..." and "*/.local/..." make the allowlist user-agnostic across
-    // homes, for both absolute and slash-less matcher inputs.
-    "plan": {
-      "color": "#f5a742",
-      "permission": {
-        "*": "allow",
-        "question": "allow",
-        "plan_enter": "deny",
-        "plan_exit": "allow",
-        "edit": {
-          "*": "deny",
-          ".opencode/plans/*.md": "allow",
-          "home/eric/.local/share/opencode/plans/*.md": "allow",
-          ".local/share/opencode/plans/*.md": "allow",
-          "*/.local/share/opencode/plans/*.md": "allow"
-        },
-        // Also defeated by the global wildcard: without this, plan mode can
-        // route edits around its own read-only rule via the general subagent.
-        "task": { "general": "deny" }
-      }
-    },
+    // build and plan are removed, not hidden. `disable` is the legacy `agent`
+    // block's spelling (V1 ConfigAgentV1.Info); `disabled` is NOT a V1 field —
+    // normalize would push it into request.body and leave the agent alive
+    // (packages/core/src/v1/config/agent.ts + v1/config/migrate.ts).
+    "build": { "disable": true },
+    "plan": { "disable": true },
     // Subagents keep their own ruleset and never inherit the parent agent's,
     // so they need the question tool denied too or they can block mid-task.
-    // plan_exit needs denying separately: it calls Question.Service directly
-    // and never goes through ctx.ask, so `question: deny` does NOT gate it
-    // (observed blocking 25s on an agent that already had question denied).
+    // The global wildcard beats the native subagent deny the same way it beat
+    // plan's edit deny, so without task deny general can nest subagents.
     // todowrite deny is likewise re-asserted after the global wildcard.
     "general": {
-      "permission": { "question": "deny", "todowrite": "deny", "plan_exit": "deny" }
+      "permission": { "task": "deny", "question": "deny", "todowrite": "deny" }
     },
-    // Same global-wildcard defeat as plan: without this, the global
-    // "permission": "allow" merges after explore's native "*": "deny" and
-    // findLast() keeps the allow, so explore can edit files (probed
-    // 2026-10-08: `explore edit /etc/passwd -> allow`). Re-assert the
+    // The global "permission": "allow" merges after explore's native
+    // "*": "deny" and findLast() keeps the allow, so explore could edit files
+    // (probed 2026-10-08: `explore edit /etc/passwd -> allow`). Re-assert the
     // native read-only surface so exploration cannot route edits.
     "explore": {
       "permission": {
         "edit": "deny",
         "task": "deny",
         "todowrite": "deny",
-        "question": "deny",
-        "plan_exit": "deny"
+        "question": "deny"
       }
     }
   }

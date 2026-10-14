@@ -131,7 +131,7 @@ a *function*).
 | Step | Target | Policy |
 | --- | --- | --- |
 | 1 | dirs under `~/.config/opencode`, `~/.config/environment.d`, `~/.config/agent-hooks`, `~/.local/bin` | create if missing |
-| 2 | `~/.config/opencode/opencode.jsonc` | copy (+ plans-path sed derived from `--home`) or `--link` symlink; timestamp-backup on overwrite. A plain install over an earlier `--link` replaces the link itself (backed up as a link) — it never writes through a symlink into the checkout; the same holds for every managed file |
+| 2 | `~/.config/opencode/opencode.jsonc` | copy (verbatim) or `--link` symlink; timestamp-backup on overwrite. A plain install over an earlier `--link` replaces the link itself (backed up as a link) — it never writes through a symlink into the checkout; the same holds for every managed file |
 | 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; mode converged 0600 (content never touched afterwards) |
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
@@ -288,8 +288,8 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * Fork binary `0.0.0-main-<ts>` built from branch `main` with the 14
   patchedDependencies, `bun@^1.4.2`, the committed `models.dev` snapshot.
 * DB consolidation: canonical `opencode-main.db` regardless of channel.
-* `opencode.jsonc` semantics (provider/model tracks, plan-agent edit allowlist —
-  its plans path is rewritten from `--home` on install).
+* `opencode.jsonc` semantics (provider/model tracks, the two-profile agent block
+  with the auto/goal colors).
 * The kill-guard battery and its five wirings.
 * Plugin set: `block-unsafe-kill.ts`, `secret-path-guard.ts`, `local-tools.ts`
   (drawio/marker/planning tools), `skill-hints.ts`, `mpskills-update.ts`,

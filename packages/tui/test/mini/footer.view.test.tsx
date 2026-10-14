@@ -2077,6 +2077,25 @@ test.each(["Build", "Plan"])("working marker matches the %s label and prompt rai
   }
 })
 
+test("working marker and prompt rail prefer the agent's configured color", async () => {
+  const app = await renderFooter({
+    currentAgent: "Goal",
+    agents: [{ id: "goal", name: "Goal", mode: "primary", hidden: false, color: "#e06c75" }],
+    tuiConfig: createTuiResolvedConfig({ animations: false }),
+    state: { phase: "running" },
+  })
+  try {
+    await app.renderOnce()
+    const spans = app.captureSpans().lines.flatMap((line) => line.spans)
+    const expected = RGBA.fromHex("#e06c75").toInts()
+    expect(spans.find((span) => span.text.includes("Goal"))?.fg.toInts()).toEqual(expected)
+    expect(spans.find((span) => span.text.includes("\u2503"))?.fg.toInts()).toEqual(expected)
+    expect(spans.find((span) => span.text === "\u25aa")?.fg.toInts()).toEqual(expected)
+  } finally {
+    app.cleanup()
+  }
+})
+
 test("spinner repaints keep the prompt instance, cursor state, and footer height stable", async () => {
   const app = await renderFooter({
     tuiConfig: createTuiResolvedConfig({ animations: true }),

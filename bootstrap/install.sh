@@ -9,8 +9,7 @@
 #     --dry-run              print every action, change nothing
 #     --home <path>          target home (default: $HOME). Use a scratch dir for
 #                            testing; NEVER point this at the wrong home.
-#     --user <name>          legacy, display only (banner). The opencode.jsonc
-#                            plans allowlist paths are rewritten from --home now.
+#     --user <name>          legacy, display only (banner).
 #     --link                 file-symlink config/opencode.jsonc into place instead
 #                            of copying (live-edit into the checkout). Never used
 #                            for skills/ or command/ (directory symlinks there are
@@ -20,7 +19,7 @@
 # What it installs (see README for the full runbook):
 #   1  dirs ~/.config/opencode/{plugin,command,agent} ~/.config/environment.d
 #      ~/.config/agent-hooks ~/.local/bin
-#   2  config: opencode.jsonc (copy + plans-path sed from --home, or --link), auth.json (template,
+#   2  config: opencode.jsonc (copy from --home, or --link), auth.json (template,
 #      only if absent), env (template, only if absent)
 #   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
 #      OPENCODE_DISABLE_MODELS_FETCH=1 + OPENCODE_DISABLE_LSP_DOWNLOAD=1 -> exec
@@ -59,7 +58,7 @@ install.sh — reproduce the opencode seat from this bootstrap bundle.
 
   --dry-run              print every action, change nothing
   --home <path>          target home (default: $HOME); use a scratch dir to test
-  --user <name>          legacy, display only (plans paths derive from --home)
+  --user <name>          legacy, display only
   --link                 file-symlink config/opencode.jsonc into place (live-edit)
   --no-bashrc            do not touch ~/.bashrc
   -h, --help             this text
@@ -91,7 +90,6 @@ while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
 done
 [ -d "$TARGET_HOME" ] || { echo "install.sh: target home is not a directory: $TARGET_HOME" >&2; exit 1; }
 
-SEAT_HOME="${TARGET_HOME#/}"
 
 sed_re_escape() {
   printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
@@ -287,11 +285,9 @@ if [ "$LINK_MODE" -eq 1 ]; then
       [ "$DRY_RUN" -eq 1 ] || ln -s "$want" "$dst"
     fi
     changed
-    note "NOTE: --link keeps the bundle copy byte-identical (no sed rewrite);"
-    note "      the plans allowlist is user-agnostic, so nothing needs patching."
+    note "NOTE: --link keeps the bundle copy byte-identical (no rewrite)."
   fi
 else
-  STAGE_SED="s|home/eric/.local/share/opencode/plans/|$(sed_re_escape "$SEAT_HOME")/.local/share/opencode/plans/|"
   install_file "$BOOTSTRAP_DIR/config/opencode.jsonc" "$CFG/opencode.jsonc"
 fi
 
