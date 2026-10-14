@@ -257,7 +257,7 @@ jobs:
         run: bun --cwd packages/app test:e2e:built
         env:
           CI: true
-        timeout-minutes: 30
+        timeout-minutes: 45
 
       - name: Verify service worker precaching and upgrades
         if: env.E2E_ENABLED == 'true'
@@ -272,12 +272,17 @@ jobs:
           CI: true
         timeout-minutes: 15
 
+      # The Windows hosted runner needs more headroom than upstream's Blacksmith
+      # machines: 26-29 minutes for the app suite and past 15 for the component
+      # suites once retries kick in, which used to kill the step mid-suite and
+      # report a partial failure list instead of a verdict. Linux finishes both
+      # in minutes, so these are ceilings, not costs.
       - name: Run app component tests
         if: ${{ !cancelled() && env.E2E_ENABLED == 'true' }}
         run: bun --cwd packages/app test:components
         env:
           CI: true
-        timeout-minutes: 15
+        timeout-minutes: 30
 
       - name: Upload Playwright artifacts
         if: always() && env.E2E_ENABLED == 'true'
