@@ -426,7 +426,9 @@ describe("Git objects", () => {
 
         expect((yield* git.tree.files({ repository, from: trees[0]!, to: trees.at(-1)! })).length).toBe(2100 + 16)
       }),
-    { timeout: 60_000 },
+    // This test writes 2100 files and folds 16 packs; the windows unit leg
+    // overran its 60s budget under a loaded runner (run 38498038870).
+    { timeout: 180_000 },
   )
 })
 
