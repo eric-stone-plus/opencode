@@ -93,24 +93,29 @@ const launch = Effect.fn(function* (fixture: Effect.Success<typeof setup>, name:
     .pipe(Effect.scoped, Effect.forkScoped)
   yield* Effect.promise(() => Bun.file(path.join(fixture.tmp.path, `${name}.started`)).exists()).pipe(
     Effect.repeat({ until: (exists) => exists, schedule: Schedule.spaced("10 millis") }),
-    Effect.timeout("5 seconds"),
+    Effect.timeout(budget),
   )
   const event = yield* log(fixture.session, fixture.created.id, true).pipe(
     Stream.filter((event): event is SessionEvent.Shell.Started => event.type === "session.shell.started"),
     Stream.filter((event) => event.data.shell.command === command),
     Stream.runHead,
     Effect.map(Option.getOrThrow),
-    Effect.timeout("5 seconds"),
+    Effect.timeout(budget),
   )
   return { caller, shellID: event.data.shell.id, release }
 })
+
+// Spawning a shell (PowerShell on Windows) and round-tripping its events can exceed five seconds on a
+// loaded CI runner; the file gates, not these clocks, are the real synchronization. Matches the
+// package's `--timeout 30000` budget, which cannot reach a timeout written inside the test.
+const budget = "30 seconds"
 
 describe("Session.shell", () => {
   it.live("runs shells concurrently with an active model and waits for each shell's own completion", () =>
     Effect.gen(function* () {
       const fixture = yield* setup
       const model = yield* fixture.execution.resume(fixture.created.id).pipe(Effect.forkScoped)
-      yield* Deferred.await(fixture.control.started).pipe(Effect.timeout("5 seconds"))
+      yield* Deferred.await(fixture.control.started).pipe(Effect.timeout(budget))
       const first = yield* launch(fixture, "first")
       const second = yield* launch(fixture, "second")
 
@@ -123,7 +128,7 @@ describe("Session.shell", () => {
       ])
 
       yield* second.release
-      yield* Fiber.join(second.caller).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(second.caller).pipe(Effect.timeout(budget))
       expect(first.caller.pollUnsafe()).toBeUndefined()
       expect(yield* fixture.session.inbox(fixture.created.id)).toMatchObject([
         {
@@ -135,7 +140,7 @@ describe("Session.shell", () => {
         },
       ])
       yield* first.release
-      yield* Fiber.join(first.caller).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(first.caller).pipe(Effect.timeout(budget))
       expect(
         (yield* fixture.session.inbox(fixture.created.id))
           .filter((item) => item.type === "synthetic")
@@ -144,7 +149,7 @@ describe("Session.shell", () => {
       expect(yield* fixture.execution.active).toContain(fixture.created.id)
       expect(fixture.control.wakes).toEqual([])
       yield* Deferred.succeed(fixture.control.release, undefined)
-      yield* Fiber.join(model).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(model).pipe(Effect.timeout(budget))
     }),
   )
 
@@ -172,10 +177,10 @@ describe("Session.shell", () => {
       })
       expect((yield* fixture.session.get(fixture.created.id)).location).toEqual(destination)
       yield* command.release
-      yield* Fiber.join(command.caller).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(command.caller).pipe(Effect.timeout(budget))
       yield* bus.publish(Done, {})
 
-      const events = yield* Effect.forEach(readers, (reader) => Fiber.join(reader).pipe(Effect.timeout("5 seconds")))
+      const events = yield* Effect.forEach(readers, (reader) => Fiber.join(reader).pipe(Effect.timeout(budget)))
       expect(events.map((items) => items.map((event) => event.type))).toEqual([
         [Done.type],
         ["session.shell.ended", "session.inbox.enqueued", Done.type],
@@ -201,14 +206,14 @@ describe("Session.shell", () => {
       const command = yield* launch(fixture, "prompt")
 
       const prompt = yield* fixture.session.prompt({ sessionID: fixture.created.id, text: "Continue while this runs" })
-      yield* Deferred.await(fixture.control.started).pipe(Effect.timeout("5 seconds"))
+      yield* Deferred.await(fixture.control.started).pipe(Effect.timeout(budget))
       expect(fixture.control.wakes).toEqual([fixture.created.id])
       expect(command.caller.pollUnsafe()).toBeUndefined()
       yield* Deferred.succeed(fixture.control.release, undefined)
       yield* fixture.execution.awaitIdle(fixture.created.id)
 
       yield* command.release
-      yield* Fiber.join(command.caller).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(command.caller).pipe(Effect.timeout(budget))
       expect(fixture.control.wakes).toEqual([fixture.created.id])
       expect(yield* fixture.execution.active).toEqual(new Set())
       expect(yield* fixture.session.inbox(fixture.created.id)).toMatchObject([
@@ -294,7 +299,7 @@ describe("Session.shell", () => {
         yield* outcome.status === "killed"
           ? fixture.shell.remove(command.shellID)
           : fixture.shell.timeout(command.shellID, 1)
-        yield* Fiber.join(command.caller).pipe(Effect.timeout("5 seconds"))
+        yield* Fiber.join(command.caller).pipe(Effect.timeout(budget))
         expect(yield* fixture.session.messages({ sessionID: fixture.created.id })).toMatchObject([
           {
             type: "shell",
@@ -346,7 +351,7 @@ describe("Session.shell", () => {
       const fixture = yield* setup
       const command = yield* launch(fixture, "detached")
 
-      yield* Fiber.interrupt(command.caller).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.interrupt(command.caller).pipe(Effect.timeout(budget))
       const exit = yield* Fiber.await(command.caller)
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true)
       expect(yield* fixture.shell.get(command.shellID)).toMatchObject({ status: "running" })
@@ -356,7 +361,7 @@ describe("Session.shell", () => {
       yield* log(fixture.session, fixture.created.id, true).pipe(
         Stream.filter((event) => event.type === "session.inbox.enqueued"),
         Stream.runHead,
-        Effect.timeout("5 seconds"),
+        Effect.timeout(budget),
       )
       expect(yield* fixture.session.messages({ sessionID: fixture.created.id })).toMatchObject([
         {
