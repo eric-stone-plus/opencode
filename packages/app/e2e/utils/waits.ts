@@ -1,7 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 import { sessionHref } from "./app"
 
-export const APP_READY_TIMEOUT = 30_000
+// The hosted Windows runner boots the app slowly: 30 seconds was not enough for
+// `whats-new.spec.ts`'s upgraded-storage case while other tests in the same run
+// came up fine (run 38540212948). Linux is unaffected in practice — it comes up
+// in seconds — so this is a ceiling, not a cost.
+export const APP_READY_TIMEOUT = 60_000
 
 export async function expectAppVisible(locator: Locator) {
   await expect(locator).toBeVisible({ timeout: APP_READY_TIMEOUT })
