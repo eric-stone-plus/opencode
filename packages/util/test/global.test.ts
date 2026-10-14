@@ -50,9 +50,16 @@ describe("global", () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
-  test("building a layer with default tmp creates and canonicalizes it", () => {
+  test("building a layer with default tmp creates and canonicalizes it", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-global-layer-"))
     const directories = ["data", "cache", "config", "state", "tmp"].map((directory) => path.join(root, directory))
+    // Point the platform tmp through a link so the assertion pins the canonicalization itself instead
+    // of the platform's tmp layout. Windows needs privileges to create a directory symlink.
+    const temporary = process.platform === "win32" ? directories[4] : path.join(root, "linked")
+    if (temporary !== directories[4]) {
+      fs.mkdirSync(directories[4])
+      fs.symlinkSync(directories[4], temporary, "dir")
+    }
     const module = pathToFileURL(path.join(import.meta.dir, "../src/global.ts")).href
     const result = Bun.spawnSync({
       cmd: [
@@ -72,16 +79,19 @@ describe("global", () => {
         XDG_CACHE_HOME: directories[1],
         XDG_CONFIG_HOME: directories[2],
         XDG_STATE_HOME: directories[3],
-        TMPDIR: directories[4],
+        TMPDIR: temporary,
         // Windows resolves the platform tmp through TEMP/TMP, not TMPDIR.
-        ...(process.platform === "win32" ? { TEMP: directories[4], TMP: directories[4] } : {}),
+        ...(process.platform === "win32" ? { TEMP: temporary, TMP: temporary } : {}),
       },
       stdout: "pipe",
       stderr: "pipe",
     })
 
     expect(result.exitCode, result.stderr.toString()).toBe(0)
-    expect(result.stdout.toString()).toBe(fs.realpathSync(path.join(directories[4], "opencode")))
+    // Compare through the realpath the service itself applies: on Windows the sync call expands the
+    // profile's 8.3 short name and the async one leaves it, so a sync reference measures a form the
+    // service never produces there.
+    expect(result.stdout.toString()).toBe(await fs.promises.realpath(path.join(temporary, "opencode")))
     const created = [
       path.join(directories[0], "opencode"),
       path.join(directories[1], "opencode", "bin"),
