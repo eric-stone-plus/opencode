@@ -252,6 +252,9 @@ jobs:
         working-directory: packages/app
         run: bunx playwright install chromium
 
+      # The Windows hosted runner needs 22-29 minutes for this suite (Linux
+      # finishes in ~17), so the ceiling leaves room for a slow runner to report
+      # a verdict instead of being killed mid-suite.
       - name: Run app e2e tests against production build
         if: env.E2E_ENABLED == 'true'
         run: bun --cwd packages/app test:e2e:built
@@ -265,24 +268,26 @@ jobs:
         run: bunx playwright test --config e2e/service-worker/playwright.config.ts
         timeout-minutes: 5
 
+      # The component suites need a Storybook dev server that can serve dynamic
+      # imports. The Windows hosted runner cannot: run 38526566580 failed with 84
+      # `Failed to fetch dynamically imported module` errors cascading into 56
+      # failing tests, and the pre-merge run 38503085645 failed the same suite
+      # with 67. They run on Linux, where they pass in minutes; Windows keeps its
+      # unit and app-e2e coverage. Re-enable here once that runner can serve the
+      # suite.
       - name: Run session UI component tests
-        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' }}
+        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' && runner.os == 'Linux' }}
         run: bun --cwd packages/session-ui test:components
         env:
           CI: true
         timeout-minutes: 15
 
-      # The Windows hosted runner needs more headroom than upstream's Blacksmith
-      # machines: 26-29 minutes for the app suite and past 15 for the component
-      # suites once retries kick in, which used to kill the step mid-suite and
-      # report a partial failure list instead of a verdict. Linux finishes both
-      # in minutes, so these are ceilings, not costs.
       - name: Run app component tests
-        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' }}
+        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' && runner.os == 'Linux' }}
         run: bun --cwd packages/app test:components
         env:
           CI: true
-        timeout-minutes: 30
+        timeout-minutes: 15
 
       - name: Upload Playwright artifacts
         if: always() && env.E2E_ENABLED == 'true'

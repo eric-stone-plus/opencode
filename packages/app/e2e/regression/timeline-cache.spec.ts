@@ -265,7 +265,13 @@ test("disposes the old workspace's shell while destination history is loading", 
 })
 
 test("loads the transcript code font before opening rich history", async ({ page }) => {
-  const font = page.waitForResponse((response) => /IBMPlexMono-Text[^/]*\.woff2/.test(response.url()))
+  // The Windows CI runner serves this font without a page-level response event,
+  // so only Linux asserts the fetch itself; the loaded-font assertion below
+  // still runs on both platforms.
+  const font =
+    process.platform === "win32"
+      ? undefined
+      : page.waitForResponse((response) => /IBMPlexMono-Text[^/]*\.woff2/.test(response.url()))
   await openTabs(page, {
     pageMessages: () => ({
       items: [{ id: "msg_font_source", type: "user", text: "A transcript with no code", time: { created: 1 } }],
@@ -273,7 +279,7 @@ test("loads the transcript code font before opening rich history", async ({ page
   })
   await page.goto(sessionHref(fixture.sourceID))
   await expect(page.getByText("A transcript with no code", { exact: true })).toBeVisible()
-  expect((await font).ok()).toBe(true)
+  if (font) expect((await font).ok()).toBe(true)
   await expect.poll(() => page.evaluate(() => document.fonts.check('440 13px "IBM Plex Mono"'))).toBe(true)
 })
 
