@@ -48,7 +48,7 @@ Every observed page also emits `BENCHMARK_PAGE` with the same run ID, navigation
 
 This follows the stack's own guidance: [Electron recommends repeated Chrome DevTools and Chrome Tracing measurement](https://www.electronjs.org/docs/latest/tutorial/performance), [Chrome DevTools recommends Performance recordings for runtime work](https://developer.chrome.com/docs/devtools/performance), and [Playwright uses traces for test debugging rather than renderer profiling](https://playwright.dev/docs/trace-viewer).
 
-These Playwright benchmarks profile the shared app renderer in Chromium. A future packaged Electron benchmark that needs main-process and multi-process attribution should use Electron's official [`contentTracing`](https://www.electronjs.org/docs/latest/api/content-tracing/) API rather than extending this renderer harness with bespoke process instrumentation.
+These Playwright benchmarks profile the shared app renderer in Chromium. A packaged Electron build (upstream's desktop app) would need Electron's official [`contentTracing`](https://www.electronjs.org/docs/latest/api/content-tracing/) API for main-process and multi-process attribution rather than bespoke instrumentation in this renderer harness.
 
 CPU and high-volume visual profiling are disabled by default. Set `TIMELINE_CPU_PROFILE=1` to enable both, or additionally set `TIMELINE_VISUAL_PROFILE=0` for CPU-only profiling.
 

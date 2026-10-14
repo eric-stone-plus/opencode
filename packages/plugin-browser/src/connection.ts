@@ -168,7 +168,7 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
       if (!browser)
         return yield* new Tool.Error({
           message:
-            "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
+            "[browser.disconnected] No browser is connected to this session. Open this session in a client that provides the browser pane and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
         })
       const tab = "tabID" in action ? browser.state.tabs.find((tab) => tab.id === action.tabID) : undefined
       if ("tabID" in action && !tab)
@@ -232,7 +232,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
         Effect.andThen(
           new Tool.Error({
             message:
-              "[browser.disconnected] Browser connection closed; the action may already have run. Reconnect this session in the desktop app, call browser.tabs.list({}), and inspect the target tab with browser.snapshot({tabID}). Do not repeat clicks, submissions, uploads, or evaluations until their outcome is known.",
+              "[browser.disconnected] Browser connection closed; the action may already have run. Reconnect this session's browser pane, call browser.tabs.list({}), and inspect the target tab with browser.snapshot({tabID}). Do not repeat clicks, submissions, uploads, or evaluations until their outcome is known.",
           }),
         ),
       ),

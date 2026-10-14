@@ -93,8 +93,9 @@ The publisher registers `cli` and `cli-node` (when built) with distribution
 `opencode`. Each record is published only after all of its files have uploaded
 successfully.
 Every `metadata.files` entry contains the direct CDN `url`, SHA-256 checksum,
-and byte size. `metadata.manifests` entries also use those CDN URLs and retain
-the original SHA-512 and blockmap metadata.
+and byte size. (Upstream's desktop publisher also sent `metadata.manifests`
+entries, which use those CDN URLs and retain the original SHA-512 and blockmap
+metadata; no publisher in this fork emits them.)
 
 For local verification, each package publisher accepts `--dry-run` with
 `OPENCODE_VERSION` and `OPENCODE_CHANNEL` matching the build. CLI reads its own

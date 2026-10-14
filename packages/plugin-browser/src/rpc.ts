@@ -403,7 +403,7 @@ export const Operations = [
   ),
   operation(
     "trace.start",
-    "Start a bounded Chromium performance trace for this tab's renderer process. Only one recording can run in the desktop app. It is not a network or system-wide capture.",
+    "Start a bounded Chromium performance trace for this tab's renderer process. Only one recording can run at a time. It is not a network or system-wide capture.",
     { ...tab, durationMs: optional(Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 30_000 }))) },
     recording,
   ),

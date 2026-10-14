@@ -92,7 +92,7 @@ and Sentry environment to `beta` without deploying the API, console, database, o
 
 In Vite development mode, `origin` uses `VITE_OPENCODE_SERVER_HOST` / `VITE_OPENCODE_SERVER_PORT`
 (default: `http://localhost:4096`) instead of the frontend origin. Both modes restore user-added servers
-from storage. Desktop provides the local server it discovers or starts through native initialization.
+from storage. (Upstream's desktop app provided the local server through native initialization; the web app takes it from the origin or the configured address.)
 
 With no configured servers, or when the only server rejects the saved credentials, the app shows a full-screen
 connection form. Enter a server address and password, paste a link from `opencode pair`, or choose
