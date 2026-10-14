@@ -33,7 +33,11 @@ export default defineConfig({
     process.env.OPENCODE_PERFORMANCE === "1" ? "performance/**/*.test.ts" : "performance/**",
   ],
   outputDir: "./e2e/test-results",
-  timeout: 60_000,
+  // `e2e/utils/waits.ts` spends up to APP_READY_TIMEOUT (60 s) waiting for the app to render, but a
+  // 60 s per-test ceiling kills the test before that budget is spent — the Windows runner never got
+  // the chance it was given (run 38568396298: `whats-new.spec.ts`'s seeded cases failed all three
+  // attempts with the app not rendered). Windows CI gets a ceiling wide enough to spend it.
+  timeout: process.env.CI && process.platform === "win32" ? 120_000 : 60_000,
   expect: {
     timeout: 10_000,
   },
