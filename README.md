@@ -37,15 +37,15 @@ Requires [Bun](https://bun.sh) — the tree pins `bun@1.4.2`.
 git clone https://github.com/eric-stone-plus/opencode
 cd opencode
 bun install --frozen-lockfile
-cd packages/cli
-bun run script/build.ts --single --skip-install
 ```
 
-Install the result where your shell's `opencode` shim points — `~/.opencode/bin/opencode` on this machine:
+Then build and install the binary where your shell's `opencode` shim points — `~/.opencode/bin/opencode` on this machine:
 
 ```bash
+cd packages/cli
+bun run script/build.ts --single --skip-install
 mkdir -p ~/.opencode/bin
-cp packages/cli/dist/cli-<platform>-<arch>/bin/opencode ~/.opencode/bin/opencode
+cp dist/cli-<platform>-<arch>/bin/opencode ~/.opencode/bin/opencode
 chmod 755 ~/.opencode/bin/opencode
 ```
 
