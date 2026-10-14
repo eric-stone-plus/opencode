@@ -1905,7 +1905,6 @@ export function Prompt(props: PromptProps) {
               <PromptMetadataRow
                 mode={store.mode}
                 agent={agentLabel()}
-                auto={local.permission.mode === "autoaccept"}
                 model={promptDisplay().modelLabel}
                 provider={promptDisplay().providerLabel}
                 variant={promptDisplay().variant}

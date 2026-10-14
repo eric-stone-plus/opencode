@@ -120,15 +120,6 @@ export const settings: Setting[] = [
     keywords: ["directory", "cwd", "inherit"],
   },
   {
-    title: "Permissions",
-    category: "Session",
-    path: ["session", "permissions"],
-    default: "prompt",
-    values: ["prompt", "autoaccept"],
-    labels: ["prompt", "auto accept"],
-    keywords: ["approve", "accept", "permission requests"],
-  },
-  {
     title: "Layout",
     category: "Diffs",
     path: ["diffs", "view"],

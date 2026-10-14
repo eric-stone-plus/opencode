@@ -87,7 +87,6 @@ export default Runtime.handler(Commands, (input) =>
         sessionID: sessionExists ? session : undefined,
         newSessionID: sessionExists ? undefined : session,
         prompt: Option.getOrUndefined(input.prompt),
-        auto: input.auto || input.yolo || input.dangerouslySkipPermissions,
       },
       config: {
         path: config.path,

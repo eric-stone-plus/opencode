@@ -236,6 +236,15 @@ test("keeps turn token usage inside developer tools", () => {
   expect(settings.some((setting) => setting.path.join(".") === "debug.turn_tokens")).toBe(false)
 })
 
+test("removes the permission-mode setting and tolerates a stale cli.json key", () => {
+  // The TUI auto-accepts permissions unconditionally, so neither the Settings
+  // row nor the config key exists anymore. A cli.json written by an older build
+  // still contains the key; decoding must strip it rather than fail.
+  expect(settings.some((setting) => setting.path.join(".") === "session.permissions")).toBe(false)
+  expect(decodeInfo({ session: { permissions: "autoaccept" } })).toEqual({ session: {} })
+  expect(decodeInfo({ session: { tps: false } })).toEqual({ session: { tps: false } })
+})
+
 test("provides config and its host interface", async () => {
   const config = resolve({}, { terminalSuspend: true })
   let current = {}

@@ -21,21 +21,15 @@ Each permission rule resolves to one of:
 
 ## Auto mode
 
-Start OpenCode with `--auto` to automatically approve permission requests that are not explicitly denied.
+The TUI always runs in auto mode: permission requests are accepted automatically, with no prompt, no toggle, and no `auto` indicator next to the agent.
 
-```bash
-opencode --auto
-```
-
-You can also use auto mode with [`opencode run`](/docs/cli#run).
+For non-interactive runs, pass `--auto` to [`opencode run`](/docs/cli#run):
 
 ```bash
 opencode run --auto "Refactor this module"
 ```
 
-Explicit `"deny"` rules are still enforced. Auto mode only changes requests that would otherwise ask for approval.
-
-In the TUI, open the command palette and select **Enable auto-approve permissions** or **Disable auto-approve permissions** to change modes. When auto mode is active, the prompt displays a muted `auto` indicator next to the current agent.
+`opencode --auto` is still accepted for compatibility, but it makes no difference in the TUI. Explicit `"deny"` rules are still enforced: auto mode only changes requests that would otherwise ask for approval.
 
 ---
 
