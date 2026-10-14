@@ -527,24 +527,27 @@ export function Prompt(props: PromptProps) {
           }
           if (!props.sessionID) return
 
-          setStore("interrupt", store.interrupt + 1)
-
-          setTimeout(() => {
-            setStore("interrupt", 0)
-          }, 5000)
-
-          if (store.interrupt >= 2) {
-            void client.api.session.interrupt({
-              sessionID: props.sessionID,
-              resume: true,
-            })
-            setStore("interrupt", 0)
-          } else {
-            // First press: peel a queued message back into the composer before
-            // (or instead of) only arming the double-esc interrupt. Skipped
-            // when the composer holds a draft so it is never clobbered.
-            void withdraw()
-          }
+          const sessionID = props.sessionID
+          void (async () => {
+            // Escape retracts a message; it must not stop a run by accident. A
+            // press that peels a message back clears the double-press window, so
+            // the next press starts fresh instead of completing an interrupt
+            // nobody asked for. Only a press with nothing left to withdraw arms
+            // the interrupt, and a press racing an in-flight withdrawal does
+            // neither.
+            if (await withdraw()) {
+              setStore("interrupt", 0)
+              return
+            }
+            if (withdrawing) return
+            if (store.interrupt >= 1) {
+              setStore("interrupt", 0)
+              void client.api.session.interrupt({ sessionID, resume: true })
+              return
+            }
+            setStore("interrupt", store.interrupt + 1)
+            setTimeout(() => setStore("interrupt", 0), 5000)
+          })()
           dialog.clear()
         },
       },

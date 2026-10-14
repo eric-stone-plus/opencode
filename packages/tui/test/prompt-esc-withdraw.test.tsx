@@ -35,14 +35,6 @@ const started = (sessionID: string) => ({
   data: { sessionID },
 })
 
-const cancelled = (sessionID: string, inboxID: string) => ({
-  id: "evt_cancelled",
-  created: 9,
-  type: "session.inbox.cancelled" as const,
-  durable: { aggregateID: sessionID, seq: 9, version: 1 as const },
-  data: { sessionID, inboxID },
-})
-
 type Recorders = {
   info: ReturnType<typeof sessionInfo>
   messages?: unknown[]
@@ -88,11 +80,12 @@ function handlers(input: Recorders): FetchHandler {
 
 const count = (frame: string, text: string) => frame.split(text).length - 1
 
-test("the first escape withdraws a pending prompt, the second interrupts", async () => {
+test("an escape that withdraws a pending prompt clears the interrupt window", async () => {
   await using state = await tmpdir()
   const info = sessionInfo("ses_withdraw")
   const deleted: string[] = []
   const interrupts: (string | null)[] = []
+  const staged: string[] = []
   const pending = {
     id: "msg_queued",
     sessionID: info.id,
@@ -113,6 +106,7 @@ test("the first escape withdraws a pending prompt, the second interrupts", async
       inbox: [pending],
       deleted,
       interrupts,
+      staged,
     }),
   })
   await setup.ready
@@ -125,13 +119,20 @@ test("the first escape withdraws a pending prompt, the second interrupts", async
   setup.mockInput.pressEscape()
   await setup.waitFor(() => deleted.length === 1)
   await setup.waitForFrame((frame) => count(frame, "withdraw me") === 2)
+  // Retracting a message is the whole job of this key: the withdraw clears the
+  // double-press window instead of arming an interrupt nobody asked for.
+  const withdrawn = setup.captureCharFrame()
+  expect(withdrawn).toContain("esc interrupt")
+  expect(withdrawn).not.toContain("esc again to interrupt")
+  expect(interrupts.length).toBe(0)
+  expect(staged.length).toBe(0)
 
+  // The next press finds the composer draft it must not clobber, so it only
+  // arms the interrupt; it must not fire one on the withdraw's account.
   setup.mockInput.pressEscape()
-  await setup.waitFor(() => interrupts.length === 1)
-  expect(interrupts[0]).toBe("true")
-
-  setup.events.emit(cancelled(info.id, "msg_queued"))
-  await setup.waitForFrame((frame) => count(frame, "withdraw me") === 1)
+  await setup.waitForFrame((frame) => frame.includes("esc again to interrupt"))
+  expect(interrupts.length).toBe(0)
+  expect(setup.captureCharFrame()).toContain("withdraw me")
 })
 
 test("a queued prompt is withdrawn without interrupting the run", async () => {
@@ -212,6 +213,7 @@ test("a composer draft is never clobbered by the escape withdraw", async () => {
 
   setup.mockInput.pressEscape()
   await setup.waitFor(() => interrupts.length === 1)
+  expect(interrupts[0]).toBe("true")
   expect(deleted.length).toBe(0)
   expect(setup.captureCharFrame()).toContain("keep my draft")
 })
