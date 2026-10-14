@@ -221,7 +221,7 @@
     // profiles declare it in one place. Same no-interrupt surface as auto:
     // the swarm playbook must never be blocked by a prompt mid-run.
     "goal": {
-      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.md end to end.",
+      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.goal.md end to end.",
       "mode": "primary",
       "color": "#e06c75",
       "model": "deepseek/deepseek-flash",
@@ -280,7 +280,9 @@
     // (observed blocking 25s on an agent that already had question denied).
     // todowrite deny is likewise re-asserted after the global wildcard.
     "general": {
-      "permission": { "question": "deny", "todowrite": "deny", "plan_exit": "deny" }
+      // The global wildcard beats the native subagent deny the same way it
+      // beats plan's edit deny, so without this general can nest subagents.
+      "permission": { "task": "deny", "question": "deny", "todowrite": "deny", "plan_exit": "deny" }
     },
     // Same global-wildcard defeat as plan: without this, the global
     // "permission": "allow" merges after explore's native "*": "deny" and
