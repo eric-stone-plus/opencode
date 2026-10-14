@@ -38,7 +38,6 @@ export const registerIntegrationPolicy = Effect.fn(function* (input: {
       },
       permission: {
         hook: () => Effect.succeed({ dispose: Effect.void }),
-        assert: () => Effect.die("unused permission.assert"),
         list: () => Effect.die("unused permission.list"),
         get: () => Effect.die("unused permission.get"),
         reply: () => Effect.die("unused permission.reply"),

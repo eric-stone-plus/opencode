@@ -4,13 +4,15 @@ import { Effect } from "effect"
 import { HttpClientRequest } from "effect/http"
 import { LLM, type RequestEncoding } from "../src/index.js"
 import { LLMClient } from "../src/route.js"
-import { configure } from "../src/providers/openai.js"
+import { configure } from "../src/providers/deepseek.js"
 import { dynamicResponse } from "./lib/http.js"
 import { deltaChunk, finishChunk } from "./lib/openai-chunks.js"
 import { sseEvents } from "./lib/sse.js"
 import { it } from "./lib/effect.js"
 
-const model = configure({ baseURL: "https://api.openai.test/v1/", apiKey: "test" }).chat("gpt-4.1-mini")
+// The fork ships the DeepSeek chat route instead of the deleted OpenAI provider;
+// both speak the OpenAI Chat protocol, which is what this encoding test drives.
+const model = configure({ baseURL: "https://api.deepseek.test/v1/", apiKey: "test" }).model("deepseek-chat")
 
 const send = (prompt: string, encoding?: RequestEncoding) =>
   Effect.gen(function* () {
@@ -38,11 +40,11 @@ describe("HTTP request encoding", () => {
     Effect.gen(function* () {
       const zstd = yield* send("Hello", "zstd")
       expect(zstd.encoding).toBe("zstd")
-      expect(JSON.parse(zstdDecompressSync(zstd.body).toString())).toMatchObject({ model: "gpt-4.1-mini" })
+      expect(JSON.parse(zstdDecompressSync(zstd.body).toString())).toMatchObject({ model: "deepseek-chat" })
 
       const gzip = yield* send("Hello", "gzip")
       expect(gzip.encoding).toBe("gzip")
-      expect(JSON.parse(gunzipSync(gzip.body).toString())).toMatchObject({ model: "gpt-4.1-mini" })
+      expect(JSON.parse(gunzipSync(gzip.body).toString())).toMatchObject({ model: "deepseek-chat" })
     }),
   )
 
@@ -50,7 +52,7 @@ describe("HTTP request encoding", () => {
     Effect.gen(function* () {
       for (const sent of [yield* send("Hello"), yield* send("Hello", "none")]) {
         expect(sent.encoding).toBeNull()
-        expect(JSON.parse(new TextDecoder().decode(sent.body))).toMatchObject({ model: "gpt-4.1-mini" })
+        expect(JSON.parse(new TextDecoder().decode(sent.body))).toMatchObject({ model: "deepseek-chat" })
       }
     }),
   )

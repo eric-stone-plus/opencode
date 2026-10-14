@@ -70,7 +70,7 @@ export function modelSelection(input?: string, variant?: string) {
   if (input === undefined || !/^[^/#]+\/[^#]+$/.test(input)) return undefined
   const separator = input.indexOf("/")
   return {
-    providerID: providerID(input.slice(0, separator)),
+    providerID: input.slice(0, separator),
     model: input.slice(separator + 1),
     ...(variant === undefined || variant.length === 0 || variant.includes("#") ? {} : { variant }),
   }

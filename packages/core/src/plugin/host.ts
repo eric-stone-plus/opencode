@@ -413,8 +413,6 @@ export const make = Effect.fn("PluginHost.make")(function* (
     },
     permission: {
       hook: (name, callback) => hooks.register("permission", name, callback),
-      // The plugin-facing gate is the blocking assert: plugins cannot fire-and-forget a prompt.
-      assert: (input) => permission.assert(input),
       list: (input) => permission.forSession(input.sessionID),
       get: (input) =>
         permission

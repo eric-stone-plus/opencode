@@ -14,9 +14,10 @@ import { makePluginTestLayer } from "./fixture"
 // A promise plugin cannot reach the permission service directly, so its tools
 // assert through the host's blocking gate. These tests drive one registered
 // tool across that boundary and pin the failure shapes the runner relies on:
-// a deny and a corrected rejection arrive as message-carrying defeats, and a
-// bare decline arrives as the very DeclinedError instance (the runner's
-// decline tunnel matches it with `instanceof`).
+// a deny and a corrected rejection arrive as message-carrying Tool.Error
+// defeats, and a bare decline stays the very DeclinedError instance inside
+// that wrapper (the runner's decline tunnel unwraps `Tool.Error.error` and
+// matches it with `instanceof`).
 
 const sessionID = Session.ID.make("ses_permission_tool")
 const agent = Agent.ID.make("build")
@@ -120,8 +121,9 @@ it.live("a denied action surfaces the deny message", () =>
     expect(Exit.isFailure(exit)).toBe(true)
     if (!Exit.isFailure(exit)) return
     const defect = Cause.squash(exit.cause)
-    expect(defect).toBeInstanceOf(Permission.BlockedError)
-    expect((defect as Permission.BlockedError).message).toBe("Permission denied: edit")
+    expect(defect).toBeInstanceOf(Tool.Error)
+    expect((defect as Tool.Error).message).toBe("Permission denied: edit")
+    expect((defect as Tool.Error).error).toBeInstanceOf(Permission.BlockedError)
   }),
 )
 
@@ -132,12 +134,13 @@ it.live("a rejection with feedback arrives as the feedback error", () =>
     expect(Exit.isFailure(exit)).toBe(true)
     if (!Exit.isFailure(exit)) return
     const defect = Cause.squash(exit.cause)
-    expect(defect).toBeInstanceOf(Permission.CorrectedError)
-    expect((defect as Permission.CorrectedError).feedback).toBe("Use a narrower path")
+    expect(defect).toBeInstanceOf(Tool.Error)
+    expect((defect as Tool.Error).message).toBe("Use a narrower path")
+    expect((defect as Tool.Error).error).toBeInstanceOf(Permission.CorrectedError)
   }),
 )
 
-it.live("a bare decline arrives as the exact DeclinedError instance", () =>
+it.live("a bare decline stays the exact DeclinedError instance inside the wrapper", () =>
   Effect.gen(function* () {
     const decline = new Permission.DeclinedError()
     behavior.current = () => Effect.die(decline)
@@ -145,7 +148,7 @@ it.live("a bare decline arrives as the exact DeclinedError instance", () =>
     expect(Exit.isFailure(exit)).toBe(true)
     if (!Exit.isFailure(exit)) return
     const defect = Cause.squash(exit.cause)
-    expect(defect).toBeInstanceOf(Permission.DeclinedError)
-    expect(defect).toBe(decline)
+    expect(defect).toBeInstanceOf(Tool.Error)
+    expect((defect as Tool.Error).error).toBe(decline)
   }),
 )

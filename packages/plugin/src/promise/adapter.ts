@@ -448,11 +448,10 @@ export function fromPromise(plugin: Plugin) {
           permission: {
             hook: (name, callback) =>
               register(host.permission.hook(name, (event) => Effect.promise(() => Promise.resolve(callback(event))))),
-            // Blocking assert runs on the plugin scope so a decline can reject the executor promise.
-            assert: (input) => run(host.permission.assert(input)),
             list: adaptApiMethod(PermissionEndpoints["session.permission.list"], host.permission.list),
             get: adaptApiMethod(PermissionEndpoints["session.permission.get"], host.permission.get),
             reply: adaptApiMethod(PermissionEndpoints["session.permission.reply"], host.permission.reply),
+            // Blocking assert runs on the plugin scope so a decline can reject the executor promise.
             assert: (input) =>
               run(Schema.decodeUnknownEffect(AssertInput)(input).pipe(Effect.flatMap(host.permission.assert))),
           },
