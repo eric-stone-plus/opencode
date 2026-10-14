@@ -70,9 +70,9 @@ const acquire = (input: Partial<Interface>) =>
         ),
       ),
     )
-    // A Windows runner hands back the profile's 8.3 short form from the async realpath while the sync
-    // one expands it, so only the sync call yields the canonical path the service promises callers.
-    const canonicalTmp = yield* Effect.sync(() => fs.realpathSync(service.tmp))
+    // The async realpath is what the service payload test and the rest of the flow compare against; the
+    // sync call expands more on Windows (the profile's 8.3 short name), which puts the two out of step.
+    const canonicalTmp = yield* Effect.promise(() => fs.promises.realpath(service.tmp))
     return Service.of({ ...service, tmp: input.tmp ?? canonicalTmp })
   })
 
