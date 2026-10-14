@@ -6,6 +6,7 @@ import { mermanLayoutsStory } from "./merman-layouts"
 import { sessionLocationMissingStory } from "./session-location-missing"
 import { oneCellSpinnerStory } from "./one-cell-spinner"
 import { linkClicksStory } from "./link-clicks"
+import { highlightsStory } from "./highlights"
 
 /**
  * A story is a full-screen, fixture-driven simulation of a real production component. Stories own
@@ -17,7 +18,13 @@ export type Story = {
   render: (context: Plugin.Context) => JSX.Element
 }
 
-const stories: Story[] = [mermanLayoutsStory, sessionLocationMissingStory, oneCellSpinnerStory, linkClicksStory]
+const stories: Story[] = [
+  mermanLayoutsStory,
+  sessionLocationMissingStory,
+  oneCellSpinnerStory,
+  linkClicksStory,
+  highlightsStory,
+]
 
 function Commands(props: { context: Plugin.Context }) {
   props.context.keymap.layer(() => ({

@@ -25,8 +25,8 @@ export const goModels = [
   {
     id: "deepseek-flash",
     name: "DeepSeek V4.1 Flash",
-    requests: 26000,
-    allowance: 60,
+    requests: 34670,
+    allowance: 80,
     featured: true,
   },
   { id: "longcat-2.0", name: "LongCat-2.0", requests: 11400, allowance: 60 },
@@ -71,6 +71,15 @@ export const goModels = [
     fresh: true,
     limitedTime: true,
   },
+  {
+    id: "cat-jam-free",
+    name: "Cat Jam Free",
+    requests: Infinity,
+    allowance: Infinity,
+    featured: true,
+    fresh: true,
+    limitedTime: true,
+  },
 ].sort((a, b) => a.requests - b.requests)
 
 // Go Plus limits are published per model in the Console, not a fixed multiplier of Go.
@@ -97,7 +106,7 @@ const plusLimits: Record<string, [number, number]> = {
   hy3: [17200, 240],
   "qwen3.8-flash": [16200, 90],
   "glm-5.3-flash": [18960, 180],
-  "deepseek-flash": [52000, 120],
+  "deepseek-flash": [69330, 160],
   "longcat-2.0": [45600, 240],
   "deepseek-v4-flash": [52000, 120],
   "mimo-v2.6-flash": [60200, 120],
@@ -106,6 +115,7 @@ const plusLimits: Record<string, [number, number]> = {
   "muse-spark-1.2-contributor": [90600, 120],
   "longcat-2.5-preview-free": [Infinity, Infinity],
   "step-5-preview-free": [Infinity, Infinity],
+  "cat-jam-free": [Infinity, Infinity],
 }
 
 export const goPlanModels = goModels.map((model) => ({

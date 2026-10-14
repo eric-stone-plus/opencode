@@ -1,5 +1,5 @@
 import "./index.css"
-import { createAsync, query, useSearchParams } from "@solidjs/router"
+import { useSearchParams } from "@solidjs/router"
 import { Title, Meta } from "@solidjs/meta"
 import { For, Show } from "solid-js"
 //import { HttpHeader } from "@solidjs/start"
@@ -10,7 +10,6 @@ import { Footer } from "~/component/footer"
 import { Header } from "~/component/header"
 import { GoPlanChart } from "~/component/go-plan-chart"
 import { config } from "~/config"
-import { getLastSeenWorkspaceID } from "../workspace/common"
 import {
   IconAlibaba,
   IconAnthropic,
@@ -32,15 +31,11 @@ import { useLanguage } from "~/context/language"
 import { LocaleLinks } from "~/component/locale-links"
 import { goUsageLimits } from "~/lib/language"
 
-const checkLoggedIn = query(async () => {
-  "use server"
-  return await getLastSeenWorkspaceID().catch(() => undefined)
-}, "checkLoggedIn.get")
-
 const models = [
   { name: "Space Bunny", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention0" },
   { name: "LongCat 2.5 Preview Free", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention0" },
   { name: "Step 5 Preview Free", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention0" },
+  { name: "Cat Jam Free", training: "go.faq.a5.used", retention: "go.faq.a5.notZdr" },
   { name: "Grok 4.7", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention30" },
   { name: "Grok 4.6", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention30" },
   { name: "GPT 6 Luna", training: "go.faq.a5.notUsed", retention: "go.faq.a5.retention30" },
@@ -72,7 +67,6 @@ const models = [
 ] as const
 
 export default function Home() {
-  const workspaceID = createAsync(() => checkLoggedIn())
   const subscribeUrl = "https://opencode.ai/console/go"
   const i18n = useI18n()
   const language = useLanguage()
@@ -98,7 +92,6 @@ export default function Home() {
         content={`${i18n.t("go.meta.description")} ${i18n.t("go.plans.plus.description")}`}
       />
       <Meta name="twitter:image" content="/social-share-black.png" />
-      <Meta name="opencode:auth" content={workspaceID() ? "true" : "false"} />
 
       <div data-component="container">
         <Header go hideGetStarted />
@@ -108,7 +101,7 @@ export default function Home() {
             <div data-component="desktop-app-banner">
               <span data-slot="badge">{i18n.t("home.banner.badge")}</span>
               <div data-slot="content">
-                <span data-slot="text">{i18n.t("go.promo.step5")}</span>
+                <span data-slot="text">{i18n.t("go.promo.catJam")}</span>
               </div>
             </div>
             <Show when={searchParams.ref}>
@@ -347,6 +340,9 @@ export default function Home() {
                         {i18n.t("go.faq.a5.learnMore")}
                       </a>
                       .
+                    </p>
+                    <p>
+                      <strong>Cat Jam Free:</strong> {i18n.t("go.faq.a5.catJamRetention")}
                     </p>
                     <p>
                       <strong>DeepSeek V4 Flash:</strong> {i18n.t("go.faq.a5.deepseekRetention")}

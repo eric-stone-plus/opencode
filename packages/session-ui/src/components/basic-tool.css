@@ -390,7 +390,7 @@
 
 .webfetch-link,
 [data-slot="basic-tool-tool-subtitle"].webfetch-link,
-[data-slot="exa-tool-link"].webfetch-link,
+[data-slot="websearch-tool-link"].webfetch-link,
 [data-component="tool-trigger"] [data-slot="basic-tool-tool-subtitle"].webfetch-link {
   display: inline-flex;
   align-items: center;

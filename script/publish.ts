@@ -109,3 +109,10 @@ if (Script.release && !Script.preview) {
     await $`git push origin HEAD:dev --no-verify`
   }
 }
+
+if (Script.release && Script.channel === "latest") {
+  console.log("\n=== winget ===\n")
+  // Everything else is published by now, and WinGet validation can reject a submission for reasons unrelated to the release.
+  if ((await $`bun ./script/publish-winget.ts`.nothrow()).exitCode !== 0)
+    console.log("::warning::WinGet submission failed; see the winget step output above")
+}
