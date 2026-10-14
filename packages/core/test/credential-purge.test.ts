@@ -107,6 +107,19 @@ const write = (target: string, content: string, mode = 0o600) =>
 const read = (target: string) => Effect.promise(() => fs.readFile(target, "utf8"))
 const modeOf = (target: string) => Effect.promise(async () => (await fs.stat(target)).mode & 0o777)
 
+// The product spells displayed locations with the platform separator (purge.ts placesOf) and only
+// sweeps systemd on Linux (purge.ts sweepSystemd returns early elsewhere). NTFS also reports
+// synthesized modes (0o666 for any writable file), so the POSIX mode assertions are gated rather
+// than reimplemented. Windows has no user manager to sweep, not a purge that skips one.
+const linux = process.platform === "linux"
+const win32 = process.platform === "win32"
+const home = (...segments: string[]) => path.join("~", ...segments)
+// Only Linux has a user manager to sweep, so this row exists in expectations there and nowhere else.
+const systemdRow = { kind: "systemd" as const, location: "QWEN_PIN", count: 1 }
+const expectMode = (actual: number, expected: number) => {
+  if (!win32) expect(actual).toBe(expected)
+}
+
 function key(integrationID: Integration.ID, value: string, label?: string) {
   return Effect.gen(function* () {
     const credentials = yield* Credential.Service
@@ -165,8 +178,8 @@ describe("CredentialPurge", () => {
         expect(result.secrets).toEqual({ distinct: 2, shared: 0, short: 0 })
         expect(result.swept).toEqual([])
         // Places the run was not asked to clean are still looked at, so the report says what is left in them.
-        expect(result.remaining).toEqual([{ kind: "systemd", location: "QWEN_PIN", count: 1 }])
-        expect(fixture.commands).toEqual([["systemctl", "--user", "show-environment"]])
+        expect(result.remaining).toEqual(linux ? [{ kind: "systemd", location: "QWEN_PIN", count: 1 }] : [])
+        expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
     ),
@@ -228,27 +241,31 @@ describe("CredentialPurge", () => {
           [deepseek]: { type: "api", key: DEEPSEEK },
         })
         expect((yield* read(authFile)).endsWith("}\n")).toBe(true)
-        expect(yield* modeOf(authFile)).toBe(0o600)
+        expectMode(yield* modeOf(authFile), 0o600)
         expect(yield* read(envFile)).toBe(
           ["# seed", "export OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536", ""].join("\n"),
         )
         expect(yield* read(confFile)).toBe("QIANWEN_TP_PERSONAL_BASE_URL=https://example.invalid/v1\n")
-        expect(yield* modeOf(confFile)).toBe(0o644)
+        expectMode(yield* modeOf(confFile), 0o644)
         expect(yield* read(otherConf)).toBe("QT_IM_MODULE=fcitx\n")
         expect(JSON.parse(yield* read(settingsFile))).toEqual({ password: "service-password-fake", env: { KEEP: "yes" } })
         expect(result.swept).toEqual([
-          { kind: "auth", location: "~/data/auth.json", count: 2 },
-          { kind: "env", location: "~/.config/opencode/env", count: 2 },
-          { kind: "environment.d", location: "~/.config/environment.d/95-qwen-provider.conf", count: 1 },
-          { kind: "service", location: "~/.config/opencode/service.json", count: 1 },
-          { kind: "systemd", location: "QWEN_PIN", count: 1 },
+          { kind: "auth", location: home("data", "auth.json"), count: 2 },
+          { kind: "env", location: home(".config", "opencode", "env"), count: 2 },
+          { kind: "environment.d", location: home(".config", "environment.d", "95-qwen-provider.conf"), count: 1 },
+          { kind: "service", location: home(".config", "opencode", "service.json"), count: 1 },
+          ...(linux ? [systemdRow] : []),
         ])
         expect(result.remaining).toEqual([])
-        expect(fixture.commands).toEqual([
-          ["systemctl", "--user", "show-environment"],
-          ["systemctl", "--user", "unset-environment", "QWEN_PIN"],
-          ["systemctl", "--user", "show-environment"],
-        ])
+        expect(fixture.commands).toEqual(
+          linux
+            ? [
+                ["systemctl", "--user", "show-environment"],
+                ["systemctl", "--user", "unset-environment", "QWEN_PIN"],
+                ["systemctl", "--user", "show-environment"],
+              ]
+            : [],
+        )
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
     ),
@@ -305,11 +322,11 @@ describe("CredentialPurge", () => {
         expect(result.compact).toEqual({ status: "skipped", reason: "dry run" })
         expect(result.swept.map((item) => [item.kind, item.location, item.count])).toEqual(
           expect.arrayContaining([
-            ["auth", "~/data/auth.json", 1],
-            ["env", "~/.config/opencode/env", 1],
+            ["auth", home("data", "auth.json"), 1],
+            ["env", home(".config", "opencode", "env"), 1],
             ["process", "PURGE_TEST_PREVIEW", 1],
             ["database", "kv.value", 1],
-            ["log", "~/data/log", 1],
+            ["log", home("data", "log"), 1],
           ]),
         )
         expect((yield* credentials.all()).length).toBe(1)
@@ -375,11 +392,13 @@ describe("CredentialPurge", () => {
         expect(exact).toBeUndefined()
         expect(embedded).toBe(`Bearer ${QWEN}`)
         expect(result.swept.filter((item) => item.kind === "process" || item.kind === "systemd")).toEqual([
-          { kind: "systemd", location: "QWEN_PIN", count: 1 },
+          ...(linux ? [systemdRow] : []),
           { kind: "process", location: "PURGE_TEST_EXACT", count: 1 },
         ])
-        expect([...fixture.manager.keys()]).toEqual(["PATH", "OPENCODE_DB"])
-        expect(fixture.commands).toContainEqual(["systemctl", "--user", "unset-environment", "QWEN_PIN"])
+        // systemd is the user manager: on Linux the sweep unsets QWEN_PIN there and the fake drops the
+        // key; elsewhere the variable is left in place because nothing can carry it out of the process.
+        expect([...fixture.manager.keys()]).toEqual(linux ? ["PATH", "OPENCODE_DB"] : ["PATH", "OPENCODE_DB", "QWEN_PIN"])
+        if (linux) expect(fixture.commands).toContainEqual(["systemctl", "--user", "unset-environment", "QWEN_PIN"])
         expect(fixture.commands.flat()).not.toContain("OPENCODE_DB")
       }),
     ),
@@ -396,7 +415,7 @@ describe("CredentialPurge", () => {
 
         const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [bailian], files: true }))
 
-        expect(result.swept[0]).toEqual({ kind: "auth", location: "~/data/auth.json", count: 0, error: "INVALID_JSON" })
+        expect(result.swept[0]).toEqual({ kind: "auth", location: home("data", "auth.json"), count: 0, error: "INVALID_JSON" })
         expect(yield* read(authFile)).toContain(QWEN)
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
@@ -432,8 +451,8 @@ describe("CredentialPurge", () => {
           ["database", "kv.value", 1],
           ["database", "purge_probe.body", 1],
           ["database", "purge_probe.note", 1],
-          ["tool-output", "~/data/tool-output", 1],
-          ["log", "~/data/log", 1],
+          ["tool-output", home("data", "tool-output"), 1],
+          ["log", home("data", "log"), 1],
         ])
         expect(result.remaining).toEqual([])
         expect(result.compact).toBeUndefined()
@@ -448,10 +467,10 @@ describe("CredentialPurge", () => {
         expect((yield* db.get<{ ok: number }>(sql`SELECT json_valid(value) AS ok FROM kv WHERE key = 'probe'`))?.ok).toBe(1)
         expect(yield* read(toolOutput)).toBe("head\n[redacted-key]\ntail\n")
         expect(yield* read(log)).toBe("a [redacted-key] b\nuntouched\n")
-        expect(yield* modeOf(log)).toBe(0o644)
+        expectMode(yield* modeOf(log), 0o644)
         expect(yield* secureDelete(db)).toBe(previous)
         expect(yield* rawCopies(fixture, QWEN)).toBe(0)
-        expect(fixture.commands).toEqual([["systemctl", "--user", "show-environment"]])
+        expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
     ),
@@ -477,7 +496,11 @@ describe("CredentialPurge", () => {
 
         expect(reported.compact).toBeUndefined()
         expect(reported.remaining).toEqual([
-          expect.objectContaining({ kind: "database", location: "~/data/purge.db (file)", count: expect.any(Number) }),
+          expect.objectContaining({
+            kind: "database",
+            location: `${home("data", "purge.db")} (file)`,
+            count: expect.any(Number),
+          }),
         ])
         expect(reported.remaining[0].count).toBeGreaterThan(0)
         expect(yield* rawCopies(fixture, QWEN)).toBeGreaterThan(0)
@@ -514,7 +537,7 @@ describe("CredentialPurge", () => {
         expect(
           yield* db.get<{ body: string; note: string }>(sql`SELECT body, note FROM purge_probe`),
         ).toEqual({ body: `{"n":${numeric}}`, note: "note [redacted-key]" })
-        expect(fixture.commands).toEqual([["systemctl", "--user", "show-environment"]])
+        expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
       }),
     ),
   )
@@ -542,7 +565,7 @@ describe("CredentialPurge", () => {
         expect(result.swept[1].error).not.toContain("fake-")
         expect((yield* db.get<{ value: string }>(sql`SELECT value FROM kv WHERE key = 'probe'`))?.value).toBe("[redacted-key]")
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
-        expect(fixture.commands).toEqual([["systemctl", "--user", "show-environment"]])
+        expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
       }),
     ),
   )

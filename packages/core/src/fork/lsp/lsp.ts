@@ -307,9 +307,12 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
           if (!unexpected || index === -1) return
           state.clients.splice(index, 1)
           fail(key, startedAt)
-          yield* Scope.close(clientScope, Exit.void)
+          // Publish and log the crash before releasing the client scope: closing it kills the server's
+          // process group (a taskkill spawn on Windows), and observers must not read a stale state in
+          // that window. The close is cleanup, not part of the state transition observers wait for.
           yield* Effect.logWarning("LSP server exited", { serverID: server.id, root })
           yield* bus.publish(LspEvent.Updated, {}, { location: ref })
+          yield* Scope.close(clientScope, Exit.void)
         }),
       ),
       Effect.forkIn(scope),

@@ -552,7 +552,10 @@ describe("ReadTool", () => {
       return yield* body(file).pipe(Effect.ensuring(Effect.promise(() => rm(directory, { recursive: true }))))
     })
 
-  const pdftotext = Bun.which("pdftotext") ? it.effect : it.effect.skip
+  // POSIX-only: the Windows runner carries no usable pdftotext (Git for Windows ships one that cannot
+  // read this fixture) and the fake extractors in the sibling test are extensionless shell scripts,
+  // which Windows cannot select through PATHEXT. Re-enable once a capability probe exists (PERSONAL.md).
+  const pdftotext = process.platform === "win32" || !Bun.which("pdftotext") ? it.effect.skip : it.effect
 
   pdftotext("returns PDF text instead of attaching the document", () =>
     withPdf((file) =>

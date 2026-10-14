@@ -58,7 +58,12 @@ const extract = (file: string) =>
   }).pipe(Effect.provide(spawner))
 
 describe("ForkPdfText.extract", () => {
-  const real = Bun.which("pdftotext") ? it.live : it.live.skip
+  // POSIX-only: `withFakes` writes extensionless `#!/bin/sh` scripts, which Windows cannot select
+  // through PATHEXT (which only probes .EXE/.CMD/.BAT/.COM for a name without a dot), and the
+  // Windows runner carries no usable pdftotext. Re-enable with a .cmd-shaped fake plus a real
+  // extractor capability probe (PERSONAL.md). `names the file in the message...` stays live: pure.
+  const live = process.platform === "win32" ? it.live.skip : it.live
+  const real = process.platform === "win32" || !Bun.which("pdftotext") ? it.live.skip : it.live
 
   real("extracts the text layer of a PDF", () =>
     Effect.gen(function* () {
@@ -71,31 +76,31 @@ describe("ForkPdfText.extract", () => {
     }),
   )
 
-  it.live("returns nothing for a file with no extractable text", () =>
+  live("returns nothing for a file with no extractable text", () =>
     withFakes({ pdftotext: "exit 1", python3: "exit 1" }, () =>
       extract("unused.pdf").pipe(Effect.map((text) => expect(text).toBeUndefined())),
     ),
   )
 
-  it.live("falls back to python when pdftotext fails normally", () =>
+  live("falls back to python when pdftotext fails normally", () =>
     withFakes({ pdftotext: "exit 2", python3: 'echo "fallback text"' }, () =>
       extract("unused.pdf").pipe(Effect.map((text) => expect(text).toBe("fallback text"))),
     ),
   )
 
-  it.live("uses the second python backend when the first yields nothing", () =>
+  live("uses the second python backend when the first yields nothing", () =>
     withFakes({ pdftotext: "exit 2", python3: 'case "$2" in *pypdf*) exit 1;; esac; echo "from fitz"' }, () =>
       extract("unused.pdf").pipe(Effect.map((text) => expect(text).toBe("from fitz"))),
     ),
   )
 
-  it.live("discards a failed extractor's partial output before trying the next backend", () =>
+  live("discards a failed extractor's partial output before trying the next backend", () =>
     withFakes({ pdftotext: 'echo "partial first page"; exit 2', python3: 'echo "complete text"' }, () =>
       extract("unused.pdf").pipe(Effect.map((text) => expect(text).toBe("complete text"))),
     ),
   )
 
-  it.live("caps the text at the character limit and marks the cut", () =>
+  live("caps the text at the character limit and marks the cut", () =>
     withFakes({ pdftotext: `head -c ${ForkPdfText.MAX_CHARS + 5000} /dev/zero | tr '\\0' x` }, () =>
       extract("unused.pdf").pipe(
         Effect.map((text) => expect(text).toBe(`${"x".repeat(ForkPdfText.MAX_CHARS)}\n\n[truncated]`)),
