@@ -36,7 +36,6 @@ const sections = {
   core: "Core",
   tui: "TUI",
   app: "Desktop",
-  tauri: "Desktop",
   sdk: "SDK",
   plugin: "SDK",
   "extensions/vscode": "Extensions",
@@ -120,7 +119,7 @@ async function commits(from: string, to: string) {
   }
 
   const log =
-    await $`git log ${base}..${head} --format=%H -- packages/opencode packages/plugin packages/desktop packages/app sdks/vscode packages/extensions github`.text()
+    await $`git log ${base}..${head} --format=%H -- packages/opencode packages/plugin packages/app sdks/vscode packages/extensions github`.text()
 
   const list: Commit[] = []
   for (const hash of log.split("\n").filter(Boolean)) {
@@ -134,8 +133,7 @@ async function commits(from: string, to: string) {
     for (const file of diff.split("\n").filter(Boolean)) {
       if (file.startsWith("packages/opencode/src/cli/cmd/")) areas.add("tui")
       else if (file.startsWith("packages/opencode/")) areas.add("core")
-      else if (file.startsWith("packages/desktop/src-tauri/")) areas.add("tauri")
-      else if (file.startsWith("packages/desktop/") || file.startsWith("packages/app/")) areas.add("app")
+      else if (file.startsWith("packages/app/")) areas.add("app")
       else if (file.startsWith("packages/plugin/")) areas.add("sdk")
       else if (file.startsWith("sdks/vscode/") || file.startsWith("github/")) areas.add("extensions/vscode")
     }

@@ -94,6 +94,8 @@ export async function assertSyncReady(directory: string, resume = false) {
 export const FORK_DELETED_FILES = [
   "packages/cli/src/commands/handlers/upgrade.ts",
   "packages/cli/src/commands/handlers/uninstall.ts",
+  // The desktop app was deleted on this fork; an upstream merge re-adds it file by file.
+  "packages/desktop",
 ]
 const CLI_ENTRY = "packages/cli/src/index.ts"
 const CLI_COMMANDS = "packages/cli/src/commands/commands.ts"
@@ -129,7 +131,7 @@ export async function assertForkInvariants(directory: string) {
   }
   if (problems.length === 0) return
   throw new Error(
-    "Upstream reintroduced self-update paths this fork deleted (they would overwrite the source-built binary):\n" +
+    "Upstream reintroduced paths this fork deleted (self-update, desktop app):\n" +
       problems.map((problem) => `  - ${problem}`).join("\n") +
       "\nRemove them again, commit, then run: bun run sync-upstream --continue",
   )

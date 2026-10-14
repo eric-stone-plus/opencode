@@ -39,8 +39,6 @@ jobs:
 
           SYSTEMS="x86_64-linux aarch64-linux aarch64-darwin"
           PACKAGES="opencode"
-          # TODO: move 'desktop' to PACKAGES when #11755 is fixed
-          OPTIONAL_PACKAGES="desktop"
 
           echo ""
           echo "=== Evaluating packages for all systems ==="

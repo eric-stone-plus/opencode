@@ -28,7 +28,7 @@ jobs:
       - name: Run checks
         run: bun run check
 
-      # Every GUI package file (app, desktop, gui-extensions, ui, session-ui) a pull request adds or edits must be free of
+      # Every GUI package file (app, gui-extensions, ui, session-ui) a pull request adds or edits must be free of
       # oxlint problems, warn-level rules (anti-slop) included. Other packages are not affected.
       - name: Lint changed files
         if: github.event_name == 'pull_request'

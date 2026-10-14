@@ -15,7 +15,7 @@ const base = await resolveBase(process.argv[2] ?? process.env.LINT_BASE)
 const tracked = (await $`git diff --name-only --diff-filter=ACMR ${base}`.text()).split("\n")
 const untracked = (await $`git ls-files --others --exclude-standard`.text()).split("\n")
 // The packages .oxlintrc.json applies the anti-slop rules to.
-const packages = ["packages/app/", "packages/desktop/", "packages/gui-extensions/", "packages/ui/", "packages/session-ui/"]
+const packages = ["packages/app/", "packages/gui-extensions/", "packages/ui/", "packages/session-ui/"]
 const files = [...new Set([...tracked, ...untracked])].filter(
   (file) =>
     /\.(ts|tsx)$/.test(file) && packages.some((prefix) => file.startsWith(prefix)) && Bun.file(file).size > 0,

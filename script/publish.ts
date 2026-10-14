@@ -48,8 +48,6 @@ if (Script.release && !Script.preview) {
 
 await prepareReleaseFiles()
 
-if (Script.release) await $`bun ./packages/desktop/scripts/publish.ts --dry-run`
-
 console.log("\n=== schema ===\n")
 await $`bun ./packages/schema/script/publish.ts`
 
@@ -110,9 +108,4 @@ if (Script.release && !Script.preview) {
     await $`git commit -am ${`sync release versions for ${tag} [skip ci]`}`
     await $`git push origin HEAD:dev --no-verify`
   }
-}
-
-if (Script.release) {
-  console.log("\n=== desktop ===\n")
-  await $`bun ./packages/desktop/scripts/publish.ts`
 }
