@@ -97,16 +97,26 @@ jobs:
       - name: Ensure ripgrep
         # The core search tests resolve a system `rg`. The runner images ship no
         # ripgrep, so without this the tests attempt a release download that the
-        # test harness blocks as a network request.
+        # test harness blocks as a network request. Chocolatey cannot be trusted
+        # here: `choco install ripgrep` reported "Unable to find package" and
+        # "installed 0/0 packages" yet exited 0 (run 38534288043), so the Windows
+        # path downloads the pinned release the tests would ask for and verifies
+        # it before the suite runs.
         run: |
           if command -v rg >/dev/null 2>&1 || command -v rg.exe >/dev/null 2>&1; then
             exit 0
           fi
           if [ "${{ runner.os }}" = "Windows" ]; then
-            choco install ripgrep -y --no-progress
+            mkdir -p "$RUNNER_TEMP/rg"
+            curl -fsSL -o "$RUNNER_TEMP/rg.zip" \
+              https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-pc-windows-msvc.zip
+            powershell -NoProfile -Command "Expand-Archive -Path '$RUNNER_TEMP/rg.zip' -DestinationPath '$RUNNER_TEMP/rg' -Force"
+            "$RUNNER_TEMP/rg/ripgrep-15.1.0-x86_64-pc-windows-msvc/rg.exe" --version
+            echo "$RUNNER_TEMP/rg/ripgrep-15.1.0-x86_64-pc-windows-msvc" >> "$GITHUB_PATH"
           else
             sudo apt-get update -qq
             sudo apt-get install -y ripgrep
+            rg --version
           fi
 
       - name: Cache Turbo
