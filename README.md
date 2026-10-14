@@ -27,7 +27,7 @@ A TUI-first working tree: the terminal UI is the supported surface.
 - The binary is built from this source tree and never self-upgrades: `opencode upgrade` and `opencode web` stay unregistered, and no package-manager install path is supported — `docs/adr/0001-source-built-binary-no-self-upgrade.md`.
 - Catch up with upstream through `bun run sync-upstream`, which is merge-only — `docs/adr/0002-merge-based-upstream-sync.md`.
 
-The CLI still serves its embedded web UI (`packages/app`); that is a build and runtime dependency of the CLI, not a separately distributed app.
+`packages/app` (the CLI's web UI) stays as a build dependency: the CLI build and CI exercise the embedding path, but the fork's own builds pass `--skip-web-ui`, which embeds an empty archive, so the installed binary serves no web shell.
 
 ### Build from source
 
@@ -49,11 +49,11 @@ cp packages/cli/dist/cli-<platform>-<arch>/bin/opencode ~/.opencode/bin/opencode
 chmod 755 ~/.opencode/bin/opencode
 ```
 
-The build bakes the channel in from the checked-out branch: build from `main`, or set `OPENCODE_CHANNEL=main`. A build from any other branch changes the database filename (`opencode-<channel>.db`).
+The build bakes the channel in from the checked-out branch (`OPENCODE_CHANNEL` wins; `OPENCODE_BUMP`/`OPENCODE_VERSION` force `latest`): build from `main`, or set `OPENCODE_CHANNEL=main`. Any channel outside `latest`/`dev`/`beta`/`next`/`prod` names the database `opencode-<channel>.db`; `OPENCODE_DB` overrides the filename.
 
 ### Modes
 
-Press `Tab` to cycle the primary agents; `opencode.jsonc` defines four:
+`opencode.jsonc` defines four primary agents, cycled with the agent-cycle key (`Tab` in this fork's `cli.json`):
 
 - **auto** — the default. Never asks: adopts the recommended option and runs to completion.
 - **goal** — every message steers one session goal; runs the adversarial subagent swarm playbook in `AGENTS.goal.md`.
