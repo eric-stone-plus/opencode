@@ -43,7 +43,6 @@ it.live("list reads saved inventory even when its checkout is missing, without b
       expect(legacy.status).toBe(400)
     })
   }),
-  30_000,
 )
 
 it.live("refresh discovers both clones while list alone never discovers external worktrees", () =>
@@ -88,7 +87,6 @@ it.live("refresh discovers both clones while list alone never discovers external
       expect(rows).toContainEqual({ directory: b, strategy: "git" })
     })
   }),
-  30_000,
 )
 
 it.live("remove loads canonical strategies and enforces project ownership", () =>
@@ -120,7 +118,6 @@ it.live("remove loads canonical strategies and enforces project ownership", () =
       expect(await api.worktree.list({ projectID: session.projectID })).toEqual([{ directory }])
     })
   }),
-  30_000,
 )
 
 it.live(
