@@ -1,6 +1,6 @@
 # GUI extensions
 
-Built-in features of the desktop and web app, each behind the SDK in `src/sdk/`. The window host lives in `packages/app/src/runtime/extension/`, the main-process host in `packages/desktop/src/main/extension/`. [README.md](README.md) is the author guide: it explains every rule below, with diagrams and source-checked code from the shipping extensions, and walks through `src/pairing/`. These are the rules.
+Built-in features of the web app, each behind the SDK in `src/sdk/`. The window host lives in `packages/app/src/runtime/extension/`; the main-process host it pairs with lived in the desktop app, which this fork deleted (ADR 0007), so only the renderer half runs here. [README.md](README.md) is the author guide: it explains every rule below, with diagrams and source-checked code from the shipping extensions, and walks through `src/pairing/`. These are the rules.
 
 ## Structure
 
@@ -12,7 +12,7 @@ Built-in features of the desktop and web app, each behind the SDK in `src/sdk/`.
 - A contract that returns components binds each with `bindExtension` in the provider's setup, so `useExtension` inside reads the provider's context, not the consumer's. Do not wrap data methods such as `Changes.diffs`.
 - SDK icon fields take an `IconName` from `@opencode/ui/icons/catalog`, the dependency-free icon catalog.
 - The APIs the host always provides are context properties (`ctx.layout`, `ctx.sessions`, `ctx.storage`, `ctx.desktop`, …; in main `ctx.storage`, `ctx.windows`, `ctx.serverEndpoints`, …). `useExtension<typeof definition>()` returns the same context in components. Registries and contracts stay tokens: `ctx.add(Registry, item)`, `ctx.provide(Contract, impl)`; main provides Ipcs with `ctx.provide(Ipc, impl)`.
-- Never import `@opencode/app`, `@opencode/desktop`, or `@/` paths. Import CSS with `?inline` and contribute it through `ctx.add(Style, css)`. No module-level state: keep state inside `setup`. `bun run lint` enforces these rules.
+- Never import `@opencode/app` or `@/` paths. Import CSS with `?inline` and contribute it through `ctx.add(Style, css)`. No module-level state: keep state inside `setup`. `bun run lint` enforces these rules.
 - `bun run lint:changed` must pass before you finish: every file you add or edit has no oxlint problem at all, including the warn-level anti-slop rules (`unknown` parameters and returns, unchecked type assertions, widened types, unsafe dictionaries, missing spacing). Touching a file means leaving the whole file clean, older warnings included. Fix the code; suppress only with a `SAFETY:` comment that states a real checked invariant.
 
 ## SDK docs
@@ -100,6 +100,6 @@ Read [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-a
 - Unit-test pure logic that carries a contract: path and security checks, storage migration, protocol parsing, archive validation.
 - UI behavior is proven by the app e2e keeper suites in `packages/app/e2e/regression/`. Do not add unit tests that repeat them.
 - Test a main-process entry through its `Ipc` contract with real inputs, not through Electron mocks.
-- The hosts own their contracts, so an extension does not test them again: main storage in `packages/desktop/src/main/extension/storage.test.ts`, the real window host in `packages/app/component-tests/extension-host.spec.ts`, and the built-in graph in `packages/app/component-tests/extension-graph.spec.ts`.
+- The hosts own their contracts, so an extension does not test them again: the real window host in `packages/app/component-tests/extension-host.spec.ts` and the built-in graph in `packages/app/component-tests/extension-graph.spec.ts` (main storage's tests left with the desktop app this fork deleted, ADR 0007).
 - For lifetime and ordering contracts, drive the race the user hits: a reload during async setup, a rejection that beats its event, a store that loads late (the e2e fixtures can hold desktop storage reads), an Ipc that goes away and returns.
 - The real window host runs only in the component tests (`packages/app/component-tests/extension-*.spec.ts`, with `extension-host.fixture.tsx`); they include the graph matrix, which boots every built-in with each optional provider disabled. Run them with `PLAYWRIGHT_STORYBOOK_PORT=3294 bunx playwright test --config playwright.components.config.ts extension-` from `packages/app`.

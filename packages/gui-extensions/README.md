@@ -1,6 +1,6 @@
 # GUI extensions
 
-Every feature of the desktop and web app that is not the core shell is an extension: the terminal, review, files, the browser, SSH, WSL, the updater and more. Each one builds only on the SDK in [`src/sdk`](src/sdk). The SDK is typed so that the common bugs fail to compile or fail the lint, and every declaration has TSDoc, so editor hovers answer most questions. This guide shows how the parts fit, with code from the extensions that ship. [Build your first extension](#build-your-first-extension) walks through [`src/pairing`](src/pairing), a small built-in that uses both processes. `bun run lint` checks every code block marked with its source against that source.
+Every feature of the web app that is not the core shell is an extension: the terminal, review, files, the browser, SSH, WSL, the updater and more. Each one builds only on the SDK in [`src/sdk`](src/sdk). The SDK is typed so that the common bugs fail to compile or fail the lint, and every declaration has TSDoc, so editor hovers answer most questions. This guide shows how the parts fit, with code from the extensions that ship. [Build your first extension](#build-your-first-extension) walks through [`src/pairing`](src/pairing), a small built-in that uses both processes. `bun run lint` checks every code block marked with its source against that source.
 
 - Window SDK: `@opencode/gui-extensions/sdk` ([`index.ts`](src/sdk/index.ts))
 - Main-process SDK: `@opencode/gui-extensions/sdk/main` ([`main.ts`](src/sdk/main.ts))
@@ -8,7 +8,7 @@ Every feature of the desktop and web app that is not the core shell is an extens
 
 ```mermaid
 flowchart LR
-  subgraph main["Electron main (desktop only)"]
+  subgraph main["Electron main (upstream desktop app; deleted in this fork)"]
     mh["main host<br/>packages/desktop/src/main/extension"] --> me["main.ts entries"]
   end
   subgraph window["Each window (desktop or web)"]
@@ -436,7 +436,7 @@ legacy: ["summary"],
 | Lint gate                  | `bun run lint` (oxlint, ast-grep, `script/sdk-docs.ts`); `bun run lint:changed`                                  | Raw effects, app imports, module state, undocumented SDK, a guide block that differs from its shipping source                               |
 
 - Test a main entry through its `Ipc` contract with real inputs, not Electron mocks.
-- The hosts own their contracts: main storage in `packages/desktop/src/main/extension/storage.test.ts`, the real window host in `packages/app/component-tests/extension-host.spec.ts`. An extension does not test them again.
+- The hosts own their contracts: the real window host in `packages/app/component-tests/extension-host.spec.ts`. An extension does not test them again. (Main storage's tests left with the desktop app this fork deleted, ADR 0007.)
 - Drive the race the user hits: a reload during async work, a store that loads late, an Ipc that goes away and returns.
 
 ## Build your first extension

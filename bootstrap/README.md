@@ -11,10 +11,10 @@ Source of truth on machine A:
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
-The binary is a fork build `0.0.0-main-<timestamp>` (verified live:
-`0.0.0-main-202609280832`). The channel is derived from `git branch
---show-current` (`packages/script/src/index.ts:27`) and is compiled in at build
-time (`OPENCODE_CHANNEL` define, `packages/opencode/script/build.ts:196-204`).
+The binary is a fork build `0.0.0-main-<timestamp>` (verified live 2026-10-14:
+`0.0.0-main-202610140120`). The channel is derived from `git branch
+--show-current` (`packages/script/src/index.ts:30`) and is compiled in at build
+time (`OPENCODE_CHANNEL` define, `packages/cli/script/build.ts:188-193`).
 
 ---
 
@@ -24,12 +24,12 @@ time (`OPENCODE_CHANNEL` define, `packages/opencode/script/build.ts:196-204`).
 
 | Dep | Why | Version note |
 | --- | --- | --- |
-| `bun` | build + `run-cases.ts` battery | **1.3.14** — `packageManager: bun@1.3.14` is enforced `^1.3.14` (`packages/script/src/index.ts:6-19`) |
+| `bun` | build + `run-cases.ts` battery | **1.4.2** — `packageManager: bun@1.4.2` is enforced `^1.4.2` (`packages/script/src/index.ts:6-18`) |
 | `jq` | kill-guard script + `run-cases.sh` | any |
 | `git` | clone + channel derivation at build | any |
 | `python3` | sqlite integrity checks, JSON hook wiring, `_oc_tty_flush_input` | any |
 | `curl` | egress probes in the bashrc wrapper | any |
-| `sqlite3` | optional, only for `opencode db query` interactive shell | any |
+| `sqlite3` | optional, direct DB inspection (`opencode debug paths db` prints the path) | any |
 
 ### Step 1 — clone repos
 
@@ -41,8 +41,8 @@ git checkout main                       # REQUIRED: see channel note below
 ```
 
 **Channel discipline (do not skip).** The build bakes the channel in from the
-branch name. A build from any channel outside `{latest,beta,prod}` makes the DB
-filename `opencode-<channel>.db` (`packages/core/src/database/database.ts:43-54`)
+branch name. A build from any channel outside `{latest,dev,beta,next,prod}` makes
+the DB filename `opencode-<channel>.db` (`packages/cli/src/database-path.ts:6-11`)
 — machine A already collected the scars (`opencode-local.db`, see §4). Build
 from `main`, or set `OPENCODE_CHANNEL=main`.
 
@@ -50,11 +50,12 @@ from `main`, or set `OPENCODE_CHANNEL=main`.
 
 ```sh
 cd ~/work/agent-design/projects/opencode
-bun install --frozen-lockfile           # applies the 10 patchedDependencies
-cd packages/opencode
+bun install --frozen-lockfile           # applies the 14 patchedDependencies
+cd packages/cli
 bun run script/build.ts --single --skip-install
-# ^ fetches https://models.dev/api.json at build time unless MODELS_DEV_API_JSON
-#   is set in the environment. Smoke test runs `--version` only (build.ts:209-217).
+# ^ embeds the committed model catalog (packages/core/src/models-dev/snapshot.txt);
+#   no registry fetch at build. Refresh it with
+#   `bun run packages/core/script/update-models-snapshot.ts` (https://models.opencode.ai).
 ```
 
 Then install the binary where the shim expects it (`~/.opencode/bin/opencode`).
@@ -186,26 +187,28 @@ seat-specific; template values only, re-seed from the same apinebula console.
 
 ## 4. Maintenance notes
 
-### The `opencode db` control surface ("dbctl")
+### DB maintenance surface
 
-`packages/opencode/src/cli/cmd/db.ts`:
+V2 has no top-level `db` command; `opencode debug paths [name]` prints the
+resolved paths, and `db` is one of its literals:
 
-* `opencode db path` — prints the resolved DB path. **CAUTION: it initializes
-  `Database.Service`, which CREATES and MIGRATES the database as a side effect.**
-  Only run it when the DB already exists (verify.sh guards this).
-* `opencode db [query]` — runs SQL, or spawns an interactive `sqlite3` shell on
-  the resolved path. This is the routine maintenance/query tool.
+* `opencode debug paths db` — prints the resolved DB path without opening the
+  database (the handler reads only the global paths, so it cannot create or
+  migrate anything).
+* Plain `sqlite3 <path>` is the routine maintenance/query tool now; the
+  binary's interactive shell left with the V1 CLI.
 * Read-only integrity checks without touching the binary: `python3` +
   `sqlite3.connect(f"file:{path}?mode=ro", uri=True)` + `PRAGMA integrity_check`
   (this is what verify.sh does).
 
 ### OPENCODE_DB pin rationale
 
-`packages/core/src/database/database.ts:43-54` resolves the DB as:
+`packages/cli/src/database-path.ts:6-11` resolves the DB as:
 
 1. `OPENCODE_DB` set → that name joined onto `Global.Path.data`
    (`~/.local/share/opencode`) when relative — **this wins**;
-2. else channel ∈ `{latest,beta,prod}` or `OPENCODE_DISABLE_CHANNEL_DB=1` →
+2. else channel ∈ `{latest,dev,beta,next,prod}` or
+   `OPENCODE_DISABLE_CHANNEL_DB` set to `1` or `true` →
    `opencode.db` (note: NOT the canonical name — do not use this switch here);
 3. else `opencode-<channel>.db`.
 
@@ -224,7 +227,7 @@ Machine A's `~/.local/share/opencode/` carries the scars of channel forking
 | --- | --- | --- |
 | `opencode.db` | 9.7 MB (retired ~Sep 16) | pre-fork / stable-channel era |
 | `opencode-local.db` | 258 KB (retired Sep 28) | one build landed with channel `local` → `opencode-local.db` forked |
-| `opencode-main.db` | ~1.7 GB (live) | canonical seat DB since consolidation |
+| `opencode-main.db` | ~3.5 GB (2026-10-14; ~1.7 GB at cut) | canonical seat DB since consolidation |
 
 Machine B starts clean: one `opencode-main.db`, created on first launch. If a
 fork DB ever appears on machine B, the pin was missing at process start —
@@ -282,8 +285,8 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 
 **Reproduced exactly**
 
-* Fork binary `0.0.0-main-<ts>` built from branch `main` with the 10
-  patchedDependencies, `bun@^1.3.14`, `models.dev` snapshot pinned at build.
+* Fork binary `0.0.0-main-<ts>` built from branch `main` with the 14
+  patchedDependencies, `bun@^1.4.2`, the committed `models.dev` snapshot.
 * DB consolidation: canonical `opencode-main.db` regardless of channel.
 * `opencode.jsonc` semantics (provider/model tracks, plan-agent edit allowlist —
   its plans path is rewritten from `--home` on install).
@@ -294,9 +297,9 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * Orphan skill `longrun-stability-audit`.
 * Goal-mode files `agent/goal.md`, `autonomy.md`,
   `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
-  command: goal mode seeds and owns its goal file. Goal reminders and the
-  footer segment are fork patches (`SessionReminders`), so a machine-B build
-  must come from this repo.
+  command: goal mode seeds and owns its goal file. Goal seeding/steering and
+  the mode cards are fork plugins (`packages/core/src/plugin/fork/modes.ts`),
+  so a machine-B build must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
   machine-A `~/.bashrc` verbatim **except** the egress probe set: 2026-09-30
   it was extended to the default xiaomi provider endpoint
@@ -307,10 +310,6 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 **Not reproduced (by design or by nature)**
 
 * **Secret values** — re-seed per §3.
-* **Glyph rendering** — status glyphs are plain Unicode (`▣` U+25A3, `⎇` U+2387),
-  not nerd-font codepoints. U+25A3 has broad coverage; **U+2387 coverage is
-  thin** (Adwaita Mono / Noto Sans Symbols). Without pinned fonts the *text
-  semantics* still reproduce; only rendering differs.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
 * **`plugin/mpskills-update.ts`** — V2 port (2026-10-12), self-contained: on the
@@ -359,7 +358,7 @@ bootstrap/
 ├── verify.sh                     post-install audit (--home for testing)
 ├── config/
 │   ├── opencode.jsonc            byte-copy of live ~/.config/opencode/opencode.jsonc
-│   ├── auth.json.template        4-provider skeleton, placeholder values
+│   ├── auth.json.template        2-provider skeleton, placeholder values (needs the §3 providers — open item)
 │   ├── env.template              2 var NAMES, empty values
 │   └── environment.d/
 │       ├── 10-opencode-db.conf   the DB pin (real value)
@@ -369,7 +368,8 @@ bootstrap/
 │   └── bashrc-opencode-block.sh  byte-exact ~/.bashrc extraction + install notes
 ├── agent-hooks/                  full guard battery (4 files)
 ├── skills-extra/
-│   └── longrun-stability-audit/  SKILL.md + references/
+│   ├── longrun-stability-audit/  SKILL.md + references/
+│   └── review-delegate/          SKILL.md + scripts/build-review-spec.ts
 ├── plugin/
 │   ├── block-unsafe-kill.ts      plugin port of the guard
 │   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
@@ -377,7 +377,6 @@ bootstrap/
 │   ├── skill-hints.ts            compaction/PDF nudges as system parts (V2 port, 2026-10-12)
 │   ├── mpskills-update.ts        vendored-skills refresh on skill calls (V2 port, 2026-10-12)
 │   └── open-code-review.ts       ocr tools + commands (V2 port, 2026-10-12)
-├── command/                      (empty — the /goal command was removed)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
 └── AGENTS.goal.md                goal-mode swarm playbook (instructions array)
@@ -388,9 +387,9 @@ bootstrap/
 ## 7. Provenance
 
 * `config/opencode.jsonc` is a byte-copy of machine A's live
-  `~/.config/opencode/opencode.jsonc` at cut time (refreshed 2026-10-08 to the
-  deepseek default track). The repo-root `opencode.jsonc` is refreshed from the
-  live file too — compare before trusting either:
+  `~/.config/opencode/opencode.jsonc` at cut time (refreshed 2026-10-14; the
+  deepseek default track landed 2026-10-08). The repo-root `opencode.jsonc` is
+  refreshed from the live file too — compare before trusting either:
   `diff ../../opencode.jsonc config/opencode.jsonc`. `bun run check-drift`
   flags the snapshot as drift when the live config moves past it.
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical

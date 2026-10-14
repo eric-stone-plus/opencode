@@ -25,7 +25,7 @@ Engineering assessment: the 256k working window, default pruning of old tool out
 
 ### Final runtime configuration
 
-Snapshot as of this audit (2026-09-19), not the current seat: the default model has since moved to `xiaomi-token-plan-cn/mimo-v2.6-pro` (see `bootstrap/config/opencode.jsonc` for the live provider set and limits). The Bailian figures below are what this audit validated.
+Snapshot as of this audit (2026-09-19), not the current seat: the default model has since moved to `deepseek/deepseek-flash` (see `bootstrap/config/opencode.jsonc` for the live provider set and limits). The Bailian figures below are what this audit validated.
 
 - Provider: `bailian-token-plan-personal`; model: `qwen3.8-max`.
 - Endpoint: `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1`.
@@ -60,7 +60,7 @@ Pre-installation backup: `~/Downloads/stability-20260919T105706Z/`, containing t
 - A stream failure after tool execution **preserves state and stops automatic replay**; the session requires continuation. This prioritizes stability but does not guarantee exactly-once execution for arbitrary external tools: completion of external operations before a power loss or SIGKILL may still need verification.
 - No multi-day production Bailian soak test was performed, and no reliable production throughput or p99 latency measurement is available. The short request only confirms that the current endpoint accepts the configuration and completes successfully. Local patches cannot eliminate provider rate limits, network failures, or external process termination.
 - The historical terminal-output and idle CPU freeze documented in `PERSONAL.md` was not reproduced under matching conditions. The lifecycle leaks fixed here cannot be claimed as its sole root cause.
-- Existing `/goal` state lives in a file in the current worktree; forking a session does not copy it, and goal reminders, the four-profile mode cards and `/goal` agent routing have not been ported to the V2 runner (V2 has no command operation; every first-party client uses V1). These semantics remain unchanged; set the goal again after forking or switching worktrees.
+- Goal state lives in a per-session file (`~/.local/share/opencode/goals/<sessionID>.md`, `packages/core/src/plugin/fork/files.ts`); forking a session does not copy it, so set the goal again after forking or switching worktrees. **V2 (2026-10-12):** goal seeding/steering, the four-profile mode cards and the plan-exit transition are ported as request system parts (`packages/core/src/plugin/fork/{modes,cards}.ts`), and the session persists its agent server-side.
 - Plain-text and reasoning stream retries preserve old partial content. Static review raises a question about missing end timestamps on old parts; this was not reproduced or claimed as fixed.
 - Pruning old tool output still has limited opportunities within a single very long user turn. Automatic compaction continues to bound the working window. This audit does not change history retention rules or introduce aggressive compression.
 

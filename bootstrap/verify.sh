@@ -71,7 +71,7 @@ else
   fail "missing toolchain commands:$missing"
 fi
 bunv=$(bun --version 2>/dev/null || true)
-[ -n "$bunv" ] && info "bun $bunv (fork build enforces bun@^1.3.14)"
+[ -n "$bunv" ] && info "bun $bunv (fork build enforces bun@^1.4.2)"
 
 # --- 2. opencode binary / shim ----------------------------------------------
 echo "-- binary"
@@ -102,7 +102,7 @@ if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" 
   if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
     pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
   else
-    warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: V2 refreshes the models.dev catalog at boot and every 5 minutes (re-run install.sh)"
+    warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: this fork fetches only with OPENCODE_ENABLE_MODELS_FETCH set, but upstream V2 refreshes the catalog at boot and every 5 minutes (re-run install.sh)"
   fi
   if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
     warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"

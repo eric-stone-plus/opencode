@@ -7,8 +7,10 @@
 // Usage:
 //   bun run check-drift [--home <path>] [--root <path>]
 //
-// Exit 1 on drift or a missing required file. `agent/goal.md` is a seed: it is
-// required to exist, but content differences are local tuning and not drift.
+// Exit 1 on drift or a missing required file. `agent/goal.md` and the live
+// `cli.json` are seeds: they are required to exist, but content differences are
+// local tuning and not drift.
+//
 // File modes and installer-managed extras outside the mappings below are out of
 // scope (verify.sh covers the executable bits it cares about).
 
@@ -35,7 +37,6 @@ type Mapping = {
 export const MANAGED_FILES: Mapping[] = [
   { source: "dotfiles/opencode/AGENTS.goal.md", destination: ".config/opencode/AGENTS.goal.md" },
   { source: "dotfiles/opencode/autonomy.md", destination: ".config/opencode/autonomy.md" },
-  { source: "cli.json", destination: ".config/opencode/cli.json" },
   { source: "bootstrap/agent-hooks/block-unsafe-kill.sh", destination: ".config/agent-hooks/block-unsafe-kill.sh", home: true },
   { source: "bootstrap/agent-hooks/cases.json", destination: ".config/agent-hooks/cases.json", home: true },
   { source: "bootstrap/agent-hooks/run-cases.sh", destination: ".config/agent-hooks/run-cases.sh", home: true },
@@ -63,8 +64,12 @@ export const MIRROR_FILES: Array<[string, string]> = [
   ["bootstrap/agent/goal.md", "dotfiles/opencode/agent/goal.md"],
 ]
 
-// Seed file: required to exist; content may differ (per-machine tuning).
+// Seed files: required to exist; content may differ (per-machine tuning). The
+// live `cli.json` is the CLI's own config: V2 migrates tui.json and kv.json into
+// it once and rewrites it as settings change, so the live file legitimately
+// carries client-written keys and byte equality is not a contract.
 export const SEED_FILES: Mapping[] = [
+  { source: "cli.json", destination: ".config/opencode/cli.json" },
   { source: "dotfiles/opencode/agent/goal.md", destination: ".config/opencode/agent/goal.md" },
 ]
 

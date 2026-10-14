@@ -1,7 +1,7 @@
 # Personal fork
 
 This is **eric-stone-plus/opencode**, not a stock clone. **Read `PERSONAL.md` first.**
-Only branch is `main`. Official OpenCode is `upstream` (`anomalyco/opencode`, branch `dev`).
+Our work lives on `main` only. Official OpenCode is `upstream` (`anomalyco/opencode`, branch `dev`).
 Catch-up command: `bun run sync-upstream`.
 
 - Write repository documentation, code comments, commit messages, and PR text in English. This applies to both private and public repositories.
@@ -45,7 +45,7 @@ Examples: `session-recovery`, `fix-scroll-state`, `regenerate-sdk`.
 
 Use conventional commit-style messages and PR titles: `type(scope): summary`.
 
-Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected package or area when helpful, e.g. `core`, `opencode`, `tui`, `app`, `desktop`, `sdk`, or `plugin`.
+Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected package or area when helpful, e.g. `core`, `opencode`, `tui`, `app`, `sdk`, or `plugin`.
 
 Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributing guide`, `chore(sdk): regenerate types`.
 

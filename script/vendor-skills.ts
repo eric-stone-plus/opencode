@@ -8,7 +8,8 @@
  * Rewrites `skills/` from scratch: every file under it is generated, so nothing
  * there should be hand-edited. `sync-upstream` installs the result into
  * `~/.config/opencode/skills/`, which is where the running binary discovers
- * skills (packages/opencode/src/skill/index.ts OPENCODE_SKILL_PATTERN).
+ * skills (V2 discovery: packages/core/src/config/plugin/skill.ts, which scans
+ * for SKILL.md files).
  */
 import { $ } from "bun"
 import path from "path"
@@ -26,7 +27,7 @@ const BUCKETS = ["engineering", "productivity"] as const
 
 // `agents/openai.yaml` is upstream's Codex-plugin manifest. opencode never
 // reads it, and the skill tool caps the resource list it shows the model
-// (packages/opencode/src/tool/skill.ts limit: 10), so shipping it would spend
+// (packages/core/src/skill.ts slices the list at 10), so shipping it would spend
 // a slot on a file that cannot be used. Bucket READMEs index upstream's own
 // docs site and describe skills we do not vendor.
 const EXCLUDED = new Set(["agents/openai.yaml", "README.md"])
@@ -70,7 +71,7 @@ if (vendored.length === 0) throw new Error(`no skills found under ${source}/skil
 // demonstrably load by name (protocol-named in AGENTS.goal.md or autonomy.md,
 // directed by orchestrator prompts, or situation-matchable per the router
 // table) must not be hidden behind upstream's user-only flag.
-// `disable-model-invocation` is honored by packages/opencode/src/skill/index.ts
+// `disable-model-invocation` is honored by packages/core/src/config/plugin/skill-file.ts
 // as of this fork; without this patch a re-vendor would silently error every
 // legitimate name+load of the skills below. Applied after the copy loop so the
 // patch survives every re-vendor and the 24h auto-refresh. Stays out (flag

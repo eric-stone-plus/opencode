@@ -154,7 +154,7 @@ function reviewPrompt(base: string, head: string) {
 
 The previous stable V2 release is ${base}. Inspect every relevant commit and actual diff in the exact range ${base}..${head}.
 Do not compare against dev, V1 release tags, or commits outside that range. Do not rely only on commit titles. Write a
-user-facing changelog with sections for Core, TUI, Desktop, SDK, and Extensions, omitting empty sections and changes that
+user-facing changelog with sections for Core, TUI, Web, SDK, and Extensions, omitting empty sections and changes that
 are entirely internal. Group bug fixes separately from improvements. Preserve community contributor attribution when it
 is available from merged pull requests, but never thank authors listed in .github/TEAM_MEMBERS.
 

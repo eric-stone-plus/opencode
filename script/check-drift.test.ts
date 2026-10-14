@@ -60,10 +60,22 @@ describe("collectDrift", () => {
 
   test("a managed file that differs is drift", async () => {
     const { root, home } = await mirror()
+    await write(path.join(home, ".config/opencode/autonomy.md"), "edited\n")
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "dotfiles/opencode/autonomy.md")).toEqual({
+      label: "dotfiles/opencode/autonomy.md",
+      status: "drift",
+      detail: "~/.config/opencode/autonomy.md differs",
+    })
+    expect(summarize(rows).drift).toBe(1)
+  })
+
+  test("a seed file that differs is seed, not drift", async () => {
+    const { root, home } = await mirror()
     await write(path.join(home, ".config/opencode/cli.json"), "edited\n")
     const rows = await collectDrift(root, home)
-    expect(row(rows, "cli.json")).toEqual({ label: "cli.json", status: "drift", detail: "~/.config/opencode/cli.json differs" })
-    expect(summarize(rows).drift).toBe(1)
+    expect(row(rows, "cli.json")).toEqual({ label: "cli.json", status: "seed", detail: "differs (seed keeps local tuning)" })
+    expect(summarize(rows)).toEqual({ ok: cleanTotals.ok - 1, drift: 0, missing: 0, seed: 1 })
   })
 
   test("a missing seat file is missing, not drift", async () => {
@@ -174,10 +186,12 @@ describe("collectDrift", () => {
   test("the script exits 0 on a mirrored seat and 1 on drift", async () => {
     const { root, home } = await mirror()
     const script = path.join(import.meta.dir, "check-drift.ts")
-    const clean = Bun.spawn([process.execPath, script, "--root", root, "--home", home], { stdout: "pipe", stderr: "pipe" })
-    expect(await clean.exited).toBe(0)
+    const run = () => Bun.spawn([process.execPath, script, "--root", root, "--home", home], { stdout: "pipe", stderr: "pipe" })
+    expect(await run().exited).toBe(0)
+    // A seed that kept local tuning is not drift, so the audit still passes.
     await write(path.join(home, ".config/opencode/cli.json"), "edited\n")
-    const drifted = Bun.spawn([process.execPath, script, "--root", root, "--home", home], { stdout: "pipe", stderr: "pipe" })
-    expect(await drifted.exited).toBe(1)
+    expect(await run().exited).toBe(0)
+    await write(path.join(home, ".config/opencode/autonomy.md"), "edited\n")
+    expect(await run().exited).toBe(1)
   })
 })

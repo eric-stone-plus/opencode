@@ -27,7 +27,7 @@ timeout/cancel signals. The user's permission policy remains authoritative.
 
 ## Planning and the existing goal
 
-`planning` does not create another goal owner. `/goal`, the existing session goal
+`planning` does not create another goal owner. The existing session goal
 file, goal reminders, and completion rules remain unchanged. The skill has the
 model initialize/read a selected workspace journal, record progress, and recover
 the journal plus the current git diff after compaction or restart. A different

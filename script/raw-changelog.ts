@@ -31,16 +31,16 @@ const team = [
     .then((x) => x.filter((x) => x && !x.startsWith("#")))),
   ...bot,
 ]
-const order = ["Core", "TUI", "Desktop", "SDK", "Extensions"] as const
+const order = ["Core", "TUI", "Web", "SDK", "Extensions"] as const
 const sections = {
   core: "Core",
   tui: "TUI",
-  app: "Desktop",
+  app: "Web",
   sdk: "SDK",
   plugin: "SDK",
   "extensions/vscode": "Extensions",
   github: "Extensions",
-} as const
+} as const satisfies Record<string, (typeof order)[number]>
 
 function ref(input: string) {
   if (input === "HEAD") return input
@@ -73,7 +73,7 @@ async function diff(base: string, head: string) {
 }
 
 function section(areas: Set<string>) {
-  const priority = ["core", "tui", "app", "tauri", "sdk", "plugin", "extensions/vscode", "github"]
+  const priority = ["core", "tui", "app", "sdk", "plugin", "extensions/vscode", "github"]
   for (const area of priority) {
     if (areas.has(area)) return sections[area as keyof typeof sections]
   }

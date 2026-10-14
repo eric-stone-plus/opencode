@@ -14,7 +14,7 @@ export function icons(channel: string): Plugin {
       "web-app-manifest-512x512.png": "icon.png",
     }).map(([name, source]) => ({
       fileName: `${prefix}/${name}`,
-      source: readFileSync(new URL(`../desktop/icons/${selected}/${source}`, import.meta.url)),
+      source: readFileSync(new URL(`./icons/${selected}/${source}`, import.meta.url)),
       type: name.endsWith(".ico") ? "image/x-icon" : "image/png",
     })),
     {

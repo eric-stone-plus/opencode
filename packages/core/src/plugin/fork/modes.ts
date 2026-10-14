@@ -100,7 +100,7 @@ export const Plugin = define({
       const objective = last?.type === "user" && last.metadata?.command === undefined ? last.text.trim() : ""
       if (objective !== "") yield* fs.writeWithDirs(file, `${objective}\n`)
       const text = (objective === "" ? read.value : objective)?.trim() ?? ""
-      // Clients render the goal from session metadata, so the file stays the source of truth and metadata its mirror.
+      // The file stays the source of truth; session metadata mirrors it so any client can read it.
       const mirror = text === "" ? undefined : { text, path: file }
       if (JSON.stringify(session.metadata?.goal) !== JSON.stringify(mirror)) {
         const rest = Object.entries(session.metadata ?? {}).filter(([key]) => key !== "goal")
