@@ -364,9 +364,9 @@ if [ -x "$OC_REAL" ]; then
         || note "service set env $pin failed (re-run after the binary works)"
     fi
   done
-  # `service set env` stops the service before it writes the config, so a client that re-ensures the service
-  # in that window spawns it with the previous pins. Restart once more so the running service matches the
-  # config that was just written (see PERSONAL.md, "Residual risk").
+  # `service set env` writes the config and then stops the service, so the client that re-ensures it
+  # spawns it with the pins just written. Restart once anyway so a service that is already running is
+  # recycled onto them instead of waiting for the next spawn (see PERSONAL.md, "Residual risk").
   if [ "$DRY_RUN" -eq 0 ]; then
     act "service restart (apply the pins written above)"
     HOME="$TARGET_HOME" OPENCODE_DB=opencode-main.db "$OC_REAL" service restart \
