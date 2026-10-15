@@ -1,4 +1,4 @@
-import { InputRenderable } from "@opentui/core"
+import { InputRenderable, RGBA } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { mkdir } from "node:fs/promises"
@@ -7,15 +7,47 @@ import type { Dialog } from "@opencode/plugin/tui/context"
 import { createSignal } from "solid-js"
 import { ConfigProvider } from "../src/config"
 import { Keymap } from "../src/context/keymap"
-import { ThemeProvider } from "../src/context/theme"
+import { ThemeProvider, type ThemeSource } from "../src/context/theme"
 import { createDialogApi } from "../src/plugin/api"
+import { getOpenCodeTheme } from "../src/theme"
 import { DialogProvider, useDialog } from "../src/ui/dialog"
 import { ToastProvider } from "../src/ui/toast"
 import { emptyThemeSource, tmpdir } from "./fixture/fixture"
 import { TestTuiContexts } from "./fixture/tui-environment"
 import { createTuiResolvedConfig } from "./fixture/tui-runtime"
 
-async function mount(root: string) {
+/**
+ * A theme whose `text.formfield.$disabled` and `text.muted` resolve to different colours. The built-in
+ * defaults resolve both to the same hue step, so a row-colour assertion against them cannot tell which
+ * token the component read - this source can.
+ */
+const DISABLED_ROW = "#ff0000"
+const MUTED_ROW = "#00ff00"
+function distinctTokenTheme(): { name: string; source: ThemeSource } {
+  const opencode = getOpenCodeTheme()
+  return {
+    name: "distinct-tokens",
+    source: {
+      discover: () =>
+        Promise.resolve({
+          "distinct-tokens": {
+            base: {
+              ...opencode.base,
+              text: {
+                ...opencode.base.text,
+                muted: MUTED_ROW,
+                formfield: { base: MUTED_ROW, $disabled: DISABLED_ROW },
+              },
+            },
+            dark: { hue: opencode.dark.hue },
+            light: { hue: opencode.light.hue },
+          },
+        }),
+    },
+  }
+}
+
+async function mount(root: string, theme: { name: string; source: ThemeSource } | undefined = undefined) {
   const state = path.join(root, "state")
   await mkdir(state, { recursive: true })
   const dialog = Promise.withResolvers<Dialog>()
@@ -28,9 +60,11 @@ async function mount(root: string) {
   const app = await testRender(
     () => (
       <TestTuiContexts directory={root} paths={{ home: root, state, worktree: root }}>
-        <ConfigProvider config={createTuiResolvedConfig()}>
+        <ConfigProvider
+          config={createTuiResolvedConfig(theme === undefined ? {} : { theme: { name: theme.name, mode: "dark" } })}
+        >
           <Keymap.Provider>
-            <ThemeProvider mode="dark" source={emptyThemeSource}>
+            <ThemeProvider mode="dark" source={theme?.source ?? emptyThemeSource}>
               <ToastProvider>
                 <DialogProvider>
                   <Fixture />
@@ -379,6 +413,29 @@ test("an action that opens a replacement dialog settles the select and keeps the
     expect(triggered).toEqual(["alpha"])
     expect(select.app.captureCharFrame()).toContain("Rename alpha")
     expect(select.app.captureCharFrame()).not.toContain("Projects")
+  } finally {
+    select.app.renderer.destroy()
+  }
+})
+
+// Anti-blindness for the disabled-row token: the built-in defaults resolve `text.muted` and
+// `text.formfield.$disabled` to the same hue step, so only a theme that separates them can prove
+// which one the row actually read.
+test("a disabled row greys through the formfield disabled token, not the muted one", async () => {
+  await using tmp = await tmpdir()
+  const select = await mount(tmp.path, distinctTokenTheme())
+  try {
+    void select.dialog.select({
+      title: "Blocked",
+      options: [{ title: "Locked", value: "locked", disabled: true, reason: "no access" }],
+    })
+    await opened(select.app, "Blocked")
+    const spans = select.app
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .filter((span) => span.text.includes("Locked"))
+    expect(spans.length).toBeGreaterThan(0)
+    for (const span of spans) expect(span.fg.equals(RGBA.fromHex(DISABLED_ROW))).toBe(true)
   } finally {
     select.app.renderer.destroy()
   }

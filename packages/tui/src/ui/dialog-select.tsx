@@ -919,7 +919,9 @@ function Option(props: {
 }) {
   const theme = useTheme().surface("dialog")
   const text = createMemo(() => {
-    if (props.disabled) return theme.text.muted
+    // A disabled row is form-control text, so it greys through the formfield token (theme tokens are
+    // chosen by semantic role, not by the colour that happens to look right).
+    if (props.disabled) return theme.text.formfield.disabled
     if (props.active && !props.muted) return props.activeColor ?? theme.text.action.primary.focused
     if (props.muted && (props.active || props.current)) return theme.text.muted
     if (props.current) return theme.text.formfield.selected

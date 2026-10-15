@@ -367,6 +367,8 @@ export interface DialogSelectOption<Value> {
   readonly footer?: string
   readonly category?: string
   readonly disabled?: boolean
+  /** Why the row cannot be selected. A disabled row that carries a reason stays visible (greyed) instead of disappearing. */
+  readonly reason?: string
 }
 
 export type DialogSelectAction<Value> = {
