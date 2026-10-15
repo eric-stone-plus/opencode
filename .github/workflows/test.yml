@@ -138,7 +138,13 @@ jobs:
             GITHUB_ACTIONS=false bun turbo test --concurrency=$TURBO_CONCURRENCY
             exit 0
           fi
-          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=$TURBO_CONCURRENCY
+          # A zero-task affected run exits 0 ("No tasks were executed"); the guard only accepts it
+          # when no changed workspace declares a test script, so a silent green cannot slip through.
+          log="$(mktemp)"
+          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=$TURBO_CONCURRENCY 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          [ "$status" -eq 0 ] || exit "$status"
+          bun run script/affected-guard.ts "$log"
         env:
           TURBO_CONCURRENCY: ${{ runner.os == 'Windows' && 2 || 3 }}
           OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
