@@ -74,12 +74,29 @@ const BANNED_TRANSPORTS = [
 const BANNED_PROVIDER_IDS = ["openai", "anthropic", "alibaba", "alibaba-coding-plan", "xiaomi-token-plan-cn", "mimo", "zai"]
 
 // Files ADR 0009 deleted. A clean upstream merge brings them back one by one, and re-added vendor code
-// is a wider support surface than a re-added registry row - the allowlist alone cannot see it.
+// is a wider support surface than a re-added registry row - the allowlist alone cannot see it. The
+// list names the paths a merge would resurrect, not only the files that happened to exist at deletion
+// time: upstream keeps growing this set (alibaba-responses landed after the 2026-10-15 sync, and a
+// brand-new upstream file is added cleanly rather than raised as a delete/modify conflict).
 const REMOVED_PATHS = [
   "packages/ai/src/providers/alibaba.ts",
   "packages/ai/src/providers/alibaba",
   "packages/ai/src/protocols/alibaba-chat.ts",
   "packages/ai/src/protocols/alibaba-messages.ts",
+  "packages/ai/src/protocols/alibaba-responses.ts",
+  "packages/ai/src/providers/zai.ts",
+  "packages/ai/src/providers/zai",
+  "packages/ai/src/providers/zai-coding-plan.ts",
+  "packages/ai/src/providers/zai-coding-plan",
+  "packages/ai/src/protocols/zai-chat.ts",
+  "packages/ai/src/protocols/zai-messages.ts",
+  // Cassettes are inert data: a merge restores a directory of them without breaking a build or a
+  // test, so nothing else notices. They are listed for the same reason the source files are.
+  "packages/ai/test/fixtures/recordings/alibaba-chat",
+  "packages/ai/test/fixtures/recordings/alibaba-messages",
+  "packages/ai/test/fixtures/recordings/alibaba-responses",
+  "packages/ai/test/fixtures/recordings/zai-chat",
+  "packages/ai/test/fixtures/recordings/zai-images",
 ]
 
 export async function checkProviderPolicy(root: string): Promise<string[]> {

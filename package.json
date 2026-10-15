@@ -26,6 +26,7 @@
     "check-drift": "bun run script/check-drift.ts",
     "check-single-loop": "bun run script/check-single-loop.ts",
     "check-provider-policy": "bun run script/check-provider-policy.ts",
+    "check-names-only": "bun run script/check-names-only.ts",
     "check-i18n": "bun run script/check-i18n.ts",
     "theme-contrast": "bun run script/theme-contrast.ts",
     "check-command-surfaces": "bun run script/check-command-surfaces.ts",
