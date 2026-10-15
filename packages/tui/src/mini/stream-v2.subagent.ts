@@ -36,6 +36,7 @@ import type {
 } from "./types"
 import { canonicalToolName, normalizeTool, toolOutputText, toolView } from "./tool"
 import { toolDisplayContent } from "../util/tool-display"
+import { sanitizeTerminalValue } from "../util/terminal-output"
 import { isRecord } from "../util/record"
 
 const CHILD_MESSAGE_LIMIT = 80
@@ -190,14 +191,16 @@ function childSessionID(metadata: Record<string, unknown> | undefined) {
 }
 
 function tab(child: ChildState): FooterSubagentTab {
-  return {
+  // The footer, the command menu, and the subagent list all render this projection, so it is where
+  // model-generated titles stop carrying control bytes.
+  return sanitizeTerminalValue({
     sessionID: child.sessionID,
     label: child.label,
     description: child.description || child.title || "",
     status: child.status,
     background: child.background ? true : undefined,
     title: child.title,
-  }
+  })
 }
 
 export function createSubagentTracker(input: SubagentTrackerInput): SubagentTracker {

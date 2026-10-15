@@ -184,11 +184,11 @@ export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
 
 function executeCode(input: SessionMessageAssistantTool["state"]["input"]) {
   if (typeof input === "string") return
-  return typeof input.code === "string" && input.code ? input.code : undefined
+  return typeof input.code === "string" && input.code ? sanitizeTerminalOutput(input.code) : undefined
 }
 
 function outputText(state: SessionMessageAssistantTool["state"]) {
-  if (state.status === "error") return state.error.message || undefined
+  if (state.status === "error") return sanitizeTerminalOutput(state.error.message) || undefined
   if (state.status !== "completed") return
   const text = sanitizeTerminalOutput(
     state.content

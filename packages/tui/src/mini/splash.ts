@@ -15,6 +15,7 @@ import {
 } from "@opentui/core"
 import { Locale } from "../util/locale"
 import { stringWidth } from "../util/string-width"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import { go } from "../logo"
 import { monoTruncate } from "./mono"
 import type { RunSplashTheme } from "./theme"
@@ -74,7 +75,7 @@ function title(text: string | undefined, mono = false): string {
 
   let value = ""
   let gap = false
-  for (const char of text.trim()) {
+  for (const char of sanitizeTerminalOutput(text).trim()) {
     if (char === " " || char === "\n" || char === "\r" || char === "\t") {
       gap = true
       continue

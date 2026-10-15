@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test"
+import type { SessionMessageAssistantTool } from "@opencode/client/promise"
 import {
   canonicalToolName,
+  executeCallSummary,
   finiteNumber,
   primitiveInputSummary,
+  toolDisplayContent,
   toolDisplayMetadata,
   webSearchProviderLabel,
 } from "../../src/util/tool-display"
+
+const CLEAR = "\u001b[2J"
+const OSC = "\u001b]52;c;QQ==\u0007"
 
 test("normalizes shared tool primitives", () => {
   expect(["bash", "task", "apply_patch", "plugin_tool"].map(canonicalToolName)).toEqual([
@@ -50,9 +56,11 @@ describe("toolDisplayMetadata", () => {
   test("returns tool metadata for non-pending states", () => {
     const metadata = { provider: "relay", numResults: 3 }
 
-    expect(toolDisplayMetadata({ status: "running", metadata })).toBe(metadata)
-    expect(toolDisplayMetadata({ status: "completed", metadata })).toBe(metadata)
-    expect(toolDisplayMetadata({ status: "error", metadata })).toBe(metadata)
+    // Sanitizing projects the metadata into a copy; callers read it by name, so identity is not part of
+    // the contract.
+    expect(toolDisplayMetadata({ status: "running", metadata })).toEqual(metadata)
+    expect(toolDisplayMetadata({ status: "completed", metadata })).toEqual(metadata)
+    expect(toolDisplayMetadata({ status: "error", metadata })).toEqual(metadata)
   })
 
   test("does not expose pending or malformed metadata", () => {
@@ -61,5 +69,31 @@ describe("toolDisplayMetadata", () => {
     expect(toolDisplayMetadata({ status: "completed", metadata: null })).toEqual({})
     expect(toolDisplayMetadata({ status: "completed", metadata: [] })).toEqual({})
     expect(toolDisplayMetadata(undefined)).toEqual({})
+  })
+})
+
+describe("sanitized projections", () => {
+  test("primitiveInputSummary drops control bytes from keys and values", () => {
+    expect(primitiveInputSummary({ [`a${CLEAR}b`]: `v${OSC}w`, keep: 1 })).toBe("[ab=vw, keep=1]")
+  })
+
+  test("executeCallSummary drops control bytes from the tool name", () => {
+    expect(executeCallSummary({ tool: `mcp${CLEAR}tool`, status: "completed", input: {} })).toBe("mcptool")
+  })
+
+  test("toolDisplayMetadata drops control bytes from nested metadata", () => {
+    const metadata = { path: `a${CLEAR}`, files: [{ patch: `x${OSC}y` }] }
+
+    expect(toolDisplayMetadata({ status: "completed", metadata })).toEqual({ path: "a", files: [{ patch: "xy" }] })
+  })
+
+  test("toolDisplayContent drops control bytes from text content", () => {
+    const state: SessionMessageAssistantTool["state"] = {
+      status: "completed",
+      input: {},
+      content: [{ type: "text", text: `out${CLEAR}put` }],
+    }
+
+    expect(toolDisplayContent(state)).toEqual([{ type: "text", text: "output" }])
   })
 })

@@ -80,7 +80,7 @@ import { appendPrompt } from "../../prompt/history"
 import { deduplicateVisibleImages } from "../../prompt/attachment"
 import { useEpilogue } from "../../context/epilogue"
 import { normalizePath } from "../../util/path"
-import { sanitizeTerminalOutput } from "../../util/terminal-output"
+import { sanitizeTerminalOutput, sanitizeTerminalValue } from "../../util/terminal-output"
 import { PermissionPrompt } from "./permission"
 import { FormPrompt } from "./form"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
@@ -1669,10 +1669,10 @@ function TurnTokenToolCalls(props: { tools: SessionMessageAssistantTool[] }) {
           {(tool) => (
             <box flexDirection="row">
               <text width={nameWidth()} flexShrink={0} fg={theme.text.muted} attributes={TextAttributes.BOLD}>
-                {tool.name}
+                {sanitizeTerminalOutput(tool.name)}
               </text>
               <text fg={theme.text.muted} attributes={TextAttributes.DIM} wrapMode="word" flexGrow={1} minWidth={0}>
-                {turnTokenToolSummary(tool)}
+                {sanitizeTerminalOutput(turnTokenToolSummary(tool))}
               </text>
             </box>
           )}
@@ -1767,7 +1767,7 @@ function ExecutionError(props: { error: NonNullable<Extract<SessionMessageInfo, 
   const theme = useTheme()
   return (
     <box paddingLeft={3}>
-      <text fg={theme.text.feedback.error.base}>Error: {errorMessage(props.error)}</text>
+      <text fg={theme.text.feedback.error.base}>Error: {sanitizeTerminalOutput(errorMessage(props.error))}</text>
     </box>
   )
 }
@@ -2342,7 +2342,7 @@ function ToolPart(props: { part: SessionMessageAssistantTool; images?: boolean }
       return toolDisplayMetadata(props.part.state)
     },
     get input() {
-      return typeof props.part.state.input === "string" ? {} : props.part.state.input
+      return typeof props.part.state.input === "string" ? {} : sanitizeTerminalValue(props.part.state.input)
     },
     get output() {
       if (props.part.state.status === "streaming") return undefined
@@ -2506,7 +2506,7 @@ function GenericTool(props: ToolProps) {
       <InlineTool
         icon={props.part.state.status === "error" ? "✗" : "✓"}
         complete={props.part.state.status === "completed"}
-        pending={props.tool}
+        pending={sanitizeTerminalOutput(props.tool)}
         spinner={loading()}
         part={props.part}
         onClick={expandable() ? () => setExpanded((value) => !value) : undefined}
@@ -2547,7 +2547,7 @@ function GenericTool(props: ToolProps) {
 
 export function genericToolSummary(tool: string, input: Record<string, unknown>) {
   const args = primitiveInputSummary(input).replace(/\s+/g, " ")
-  return `${tool}${args ? ` ${args}` : ""}`
+  return `${sanitizeTerminalOutput(tool)}${args ? ` ${args}` : ""}`
 }
 
 function useToolPermission(part: () => SessionMessageAssistantTool | undefined) {
@@ -2731,7 +2731,7 @@ function BlockTool(props: BlockToolProps) {
       </Show>
       {props.children}
       <Show when={error()}>
-        <text fg={props.errorColor ?? theme.text.feedback.error.base}>{error()}</text>
+        <text fg={props.errorColor ?? theme.text.feedback.error.base}>{sanitizeTerminalOutput(error() ?? "")}</text>
       </Show>
     </box>
   )
@@ -3549,7 +3549,7 @@ export function parseDiagnostics(value: unknown, filePath: string) {
       const character = finiteNumber(start?.character)
       const message = stringValue(diagnostic?.message)
       if (diagnostic?.severity !== 1 || line === undefined || character === undefined || !message) return []
-      return [{ range: { start: { line, character } }, message }]
+      return [{ range: { start: { line, character } }, message: sanitizeTerminalOutput(message) }]
     })
     .slice(0, 3)
 }

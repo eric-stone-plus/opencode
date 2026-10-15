@@ -1,4 +1,5 @@
 import { isRecord } from "./record"
+import { sanitizeTerminalOutput } from "./terminal-output"
 
 type ConfigIssue = { message: string; path: string[] }
 
@@ -119,6 +120,10 @@ export function errorFormat(error: unknown): string {
 }
 
 export function errorMessage(error: unknown): string {
+  return sanitizeTerminalOutput(errorText(error))
+}
+
+function errorText(error: unknown): string {
   if (error instanceof Error) {
     if (error.message) return error.message
     if (error.name) return error.name

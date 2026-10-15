@@ -35,6 +35,7 @@ import type { FormBodyState } from "./form.shared"
 import type { RunFooterTheme } from "./theme"
 import type { FormCancel, FormReply, MiniFormRequest } from "./types"
 import { stringWidth } from "../util/string-width"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export function RunFormBody(props: {
   request: MiniFormRequest
@@ -320,7 +321,7 @@ export function RunFormBody(props: {
           {props.mono ? "*" : "◆"}
         </text>
         <text fg={props.theme.text} wrapMode="none" truncate minWidth={0}>
-          {props.request.title}
+          {sanitizeTerminalOutput(props.request.title)}
         </text>
         <Show when={!unsupported() && !formSingle(props.request)}>
           <text fg={props.theme.muted} wrapMode="none" flexShrink={0}>

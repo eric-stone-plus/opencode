@@ -13,6 +13,7 @@ import { dialogWidth, useDialog } from "../ui/dialog"
 import { FilePath } from "../ui/file-path"
 import { useToast } from "../ui/toast"
 import { errorDetails } from "../util/error-details"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export function DialogErrorDetails(props: {
   title: string
@@ -107,7 +108,7 @@ export function DialogErrorDetails(props: {
           scrollAcceleration={getScrollAcceleration(config)}
         >
           <text fg={theme.text.base} wrapMode="word">
-            {props.error}
+            {sanitizeTerminalOutput(props.error)}
           </text>
         </scrollbox>
         <Show when={props.diagnosticRef}>

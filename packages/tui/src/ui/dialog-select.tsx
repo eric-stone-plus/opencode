@@ -12,6 +12,7 @@ import { Locale } from "../util/locale"
 import { getScrollAcceleration } from "../util/scroll"
 import { useConfig } from "../config"
 import { moveSelection, reconcileSelection } from "./select-controller"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -927,6 +928,12 @@ function Option(props: {
     if (props.current) return theme.text.formfield.selected
     return theme.text.base
   })
+  // Rows carry session titles, file paths, and plugin-provided text, so the row is where control bytes
+  // stop before they reach the terminal.
+  const title = createMemo(() => sanitizeTerminalOutput(props.title))
+  const description = createMemo(() => (props.description ? sanitizeTerminalOutput(props.description) : undefined))
+  const reason = createMemo(() => (props.reason ? sanitizeTerminalOutput(props.reason) : undefined))
+  const footer = createMemo(() => (typeof props.footer === "string" ? sanitizeTerminalOutput(props.footer) : props.footer))
 
   return (
     <>
@@ -950,20 +957,20 @@ function Option(props: {
       >
         {props.titleView ??
           (props.truncateTitle === false
-            ? props.title
+            ? title()
             : props.truncateTitle === "left"
-              ? Locale.truncateLeft(props.title, props.titleWidth ?? 61)
-              : Locale.truncate(props.title, props.titleWidth ?? 61))}
-        <Show when={props.description}>
+              ? Locale.truncateLeft(title(), props.titleWidth ?? 61)
+              : Locale.truncate(title(), props.titleWidth ?? 61))}
+        <Show when={description()}>
           <span style={{ fg: props.active && !props.muted ? text() : theme.text.muted }}>
-            {" " + props.description}
+            {" " + description()}
           </span>
         </Show>
-        <Show when={props.reason}>
-          <span style={{ fg: theme.text.muted }}>{" (" + props.reason + ")"}</span>
+        <Show when={reason()}>
+          <span style={{ fg: theme.text.muted }}>{" (" + reason() + ")"}</span>
         </Show>
       </text>
-      <Show when={props.footer}>
+      <Show when={footer()}>
         <box flexShrink={0}>
           <text
             fg={
@@ -974,7 +981,7 @@ function Option(props: {
                   : (props.footerColor ?? theme.text.muted)
             }
           >
-            {props.footer}
+            {footer()}
           </text>
         </box>
       </Show>

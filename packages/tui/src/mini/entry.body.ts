@@ -1,3 +1,4 @@
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import { toolEntryBody } from "./tool"
 import { monoPrefix, monoToolText } from "./mono"
 import type { RunEntryBody, ScrollbackOptions, StreamCommit } from "./types"
@@ -12,7 +13,7 @@ const RUN_ENTRY_NONE: RunEntryBody = {
 }
 
 function cleanRunText(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+  return sanitizeTerminalOutput(text)
 }
 
 function textBody(content: string): RunEntryBody {

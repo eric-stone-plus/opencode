@@ -1,3 +1,4 @@
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import {
   BoxRenderable,
   RGBA,
@@ -520,7 +521,7 @@ export function Prompt(props: PromptProps) {
         run: () => {
           if (auto()?.visible) return
           if (!input.focused) return
-          // TODO: this should be its own command
+          // Shell mode exits through its own escape/ctrl+c layer; this branch covers a direct dispatch.
           if (store.mode === "shell") {
             setStore("mode", "normal")
             return
@@ -1854,7 +1855,7 @@ export function Prompt(props: PromptProps) {
                 // Normalize line endings at the boundary
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
-                const normalizedText = decodePasteBytes(event.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const normalizedText = sanitizeTerminalOutput(decodePasteBytes(event.bytes)).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
 
                 // Windows Terminal <1.25 can surface image-only clipboard as an
                 // empty bracketed paste. Windows Terminal 1.25+ does not.

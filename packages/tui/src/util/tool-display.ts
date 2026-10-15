@@ -16,7 +16,7 @@ export function primitiveInputSummary(input: Record<string, unknown>, omit: read
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
   })
   if (entries.length === 0) return ""
-  return `[${entries.map(([key, value]) => `${key}=${String(value)}`).join(", ")}]`
+  return `[${entries.map(([key, value]) => `${sanitizeTerminalOutput(key)}=${sanitizeTerminalOutput(String(value))}`).join(", ")}]`
 }
 
 export type ExecuteCall = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
@@ -34,7 +34,7 @@ export function executeCalls(value: unknown): ExecuteCall[] {
 
 export function executeCallSummary(call: ExecuteCall) {
   const args = primitiveInputSummary(call.input ?? {}).replace(/\s+/g, " ")
-  return `${call.tool}${args ? ` ${args}` : ""}`
+  return `${sanitizeTerminalOutput(call.tool)}${args ? ` ${args}` : ""}`
 }
 
 export function webSearchProviderName(provider: unknown) {
@@ -53,12 +53,14 @@ export function toolDisplayMetadata(state: unknown): Record<string, unknown> {
   if (!("status" in state) || state.status === "streaming") return {}
   if (!("metadata" in state) || !state.metadata || typeof state.metadata !== "object") return {}
   if (Array.isArray(state.metadata)) return {}
-  return state.metadata as Record<string, unknown>
+  return sanitizeTerminalValue(state.metadata) as Record<string, unknown>
 }
 
 export function toolDisplayContent(state: SessionMessageAssistantTool["state"]) {
   if (state.status === "streaming" || state.status === "running") return []
-  return state.content ?? []
+  return (state.content ?? []).map((content) =>
+    content.type === "text" ? { ...content, text: sanitizeTerminalOutput(content.text) } : content,
+  )
 }
 
 export function nonEmptyToolContent<T>(content: ReadonlyArray<T> | undefined): [T, ...T[]] | undefined {
@@ -68,3 +70,4 @@ export function nonEmptyToolContent<T>(content: ReadonlyArray<T> | undefined): [
 }
 import type { SessionMessageAssistantTool } from "@opencode/client/promise"
 import { isRecord } from "./record"
+import { sanitizeTerminalOutput, sanitizeTerminalValue } from "./terminal-output"

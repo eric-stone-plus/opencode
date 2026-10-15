@@ -1,10 +1,11 @@
-import { createContext, createSignal, onCleanup, useContext, type ParentProps, Show } from "solid-js"
+import { createContext, createMemo, createSignal, onCleanup, useContext, type ParentProps, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../context/theme"
 import { useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { SplitBorder } from "./border"
 import { TextAttributes } from "@opentui/core"
 import { errorMessage } from "../util/error"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 export type ToastOptions = {
   title?: string
   message: string
@@ -27,6 +28,10 @@ function ToastSurface(props: {
   const dimensions = useTerminalDimensions()
   const renderer = useRenderer()
   const [hovered, setHovered] = createSignal(false)
+  // Toast text is assembled from server replies and external-process failures, so it is untrusted input
+  // to the terminal's parser; drop control bytes once here rather than at every toast.show call site.
+  const title = createMemo(() => (props.toast.title ? sanitizeTerminalOutput(props.toast.title) : undefined))
+  const message = createMemo(() => sanitizeTerminalOutput(props.toast.message))
   const hover = (value: boolean) => {
     setHovered(value)
     props.onHover?.(value)
@@ -70,11 +75,11 @@ function ToastSurface(props: {
         backgroundColor={theme.background.raised.high}
       >
         <Show
-          when={props.toast.title}
+          when={title()}
           fallback={
             <box flexDirection="row" width="100%">
               <text fg={theme.text.base} wrapMode="word" flexGrow={1}>
-                {props.toast.message}
+                {message()}
               </text>
               {affordance()}
             </box>
@@ -82,13 +87,13 @@ function ToastSurface(props: {
         >
           <box flexDirection="row" width="100%" marginBottom={1}>
             <text attributes={TextAttributes.BOLD} fg={theme.text.base}>
-              {props.toast.title}
+              {title()}
             </text>
             <box flexGrow={1} />
             {affordance()}
           </box>
           <text fg={theme.text.base} wrapMode="word" width="100%">
-            {props.toast.message}
+            {message()}
           </text>
         </Show>
         <Show when={props.pending}>

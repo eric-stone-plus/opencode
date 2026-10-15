@@ -5,11 +5,11 @@
 // It produces a PromptState that RunPromptBody renders as a slim single-line
 // composer while the footer view renders any active menus below it.
 /** @jsxImportSource @opentui/solid */
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import {
   StyledText,
   decodePasteBytes,
   fg,
-  stripAnsiSequences,
   type ColorInput,
   type KeyEvent,
   type PasteEvent,
@@ -878,7 +878,7 @@ export function createPromptState(input: PromptInput): PromptState {
           return
         }
         if (!image && content.mime !== "text/plain") return
-        const normalized = image ? content.data : stripAnsiSequences(content.data).replace(/\r\n?/g, "\n")
+        const normalized = image ? content.data : sanitizeTerminalOutput(content.data).replace(/\r\n?/g, "\n")
         const files = image
           ? [{ type: "file" as const, uri: `data:${content.mime};base64,${content.data}`, filename: "clipboard" }]
           : shell()

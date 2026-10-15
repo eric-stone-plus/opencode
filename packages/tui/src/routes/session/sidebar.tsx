@@ -8,6 +8,7 @@ import { TextAttributes } from "@opentui/core"
 import "../../component/title-shimmer"
 
 import { getScrollAcceleration } from "../../util/scroll"
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import { SESSION_SIDEBAR_WIDTH } from "../../ui/layout"
 
 export function Sidebar(props: { sessionID: string }) {
@@ -15,6 +16,11 @@ export function Sidebar(props: { sessionID: string }) {
   const theme = useTheme()
   const config = useConfig().data
   const session = createMemo(() => data.session.get(props.sessionID))
+  // Titles are model-generated, so the sidebar is a sink for untrusted text.
+  const title = createMemo(() => {
+    const current = session()
+    return current ? sanitizeTerminalOutput(withTimestampedFallback(current)) : ""
+  })
   const scrollAcceleration = createMemo(() => getScrollAcceleration(config))
 
   return (
@@ -34,7 +40,7 @@ export function Sidebar(props: { sessionID: string }) {
             fg={theme.text.base}
             rename={{
               pending: data.session.title.pending(props.sessionID),
-              title: withTimestampedFallback(session()),
+              title: title(),
             }}
             enabled={config.animations ?? true}
             backdrop={theme.background.raised.base}
@@ -44,7 +50,7 @@ export function Sidebar(props: { sessionID: string }) {
                 : TextAttributes.BOLD
             }
           >
-            {withTimestampedFallback(session())}
+            {title()}
           </title_shimmer>
         </box>
         <scrollbox

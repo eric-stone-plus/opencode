@@ -20,3 +20,19 @@ export function sanitizeTerminalOutput(raw: string): string {
     .replace(/\r\n?/g, "\n")
     .replace(CONTROL, "")
 }
+
+/**
+ * Same sanitizer over a JSON-shaped value: every string inside a tool input, metadata blob or state record
+ * is untrusted (a file path, a file's content, an MCP reply), and the renderers pick those fields out by
+ * name. Sanitizing the projection once keeps every view honest instead of relying on each field's sink.
+ */
+export function sanitizeTerminalValue<T>(value: T): T {
+  if (typeof value === "string") return sanitizeTerminalOutput(value) as T
+  if (Array.isArray(value)) return value.map((item) => sanitizeTerminalValue(item)) as T
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [sanitizeTerminalOutput(key), sanitizeTerminalValue(item)]),
+    ) as T
+  }
+  return value
+}

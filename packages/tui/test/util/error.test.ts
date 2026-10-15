@@ -33,4 +33,9 @@ describe("util.error", () => {
 
     expect(errorMessage(err)).toBe("ResolveMessage: Cannot resolve module")
   })
+
+  test("drops control bytes so error text cannot drive the terminal", () => {
+    expect(errorMessage(new Error("bad \u001b[2J news"))).toBe("bad  news")
+    expect(errorMessage({ message: "clip \u001b]52;c;QQ==\u0007 write" })).toBe("clip  write")
+  })
 })

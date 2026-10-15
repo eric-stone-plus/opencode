@@ -1,9 +1,9 @@
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import { createStore, unwrap } from "solid-js/store"
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { usePaste, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import {
   decodePasteBytes,
-  stripAnsiSequences,
   TextAttributes,
   type BoxRenderable,
   type ScrollBoxRenderable,
@@ -353,7 +353,7 @@ export function FormPrompt(props: { form: FormWithLocation }) {
 
   usePaste((event) => {
     if (!active()) return
-    const value = stripAnsiSequences(decodePasteBytes(event.bytes)).replace(/\r\n?/g, "\n")
+    const value = sanitizeTerminalOutput(decodePasteBytes(event.bytes)).replace(/\r\n?/g, "\n")
     if (store.editing && renderer.currentFocusedEditor === textarea) {
       textarea.insertText(value)
       event.preventDefault()
@@ -368,7 +368,7 @@ export function FormPrompt(props: { form: FormWithLocation }) {
       .read()
       .then((content) => {
         if (!active() || content?.mime !== "text/plain") return
-        const value = stripAnsiSequences(content.data).replace(/\r\n?/g, "\n")
+        const value = sanitizeTerminalOutput(content.data).replace(/\r\n?/g, "\n")
         if (store.editing || textual()) {
           textarea?.insertText(value)
           return

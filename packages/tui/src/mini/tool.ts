@@ -26,7 +26,7 @@ import {
 } from "../util/tool-display"
 import { formatPath } from "../util/path-format"
 import { isRecord } from "../util/record"
-import { sanitizeTerminalOutput } from "../util/terminal-output"
+import { sanitizeTerminalOutput, sanitizeTerminalValue } from "../util/terminal-output"
 import type { RunEntryBody, StreamCommit, ToolSnapshot } from "./types"
 
 export { canonicalToolName } from "../util/tool-display"
@@ -1115,14 +1115,14 @@ function toolFrame(commit: StreamCommit, raw: string): ToolFrame {
   const current = commit.part ? frame(commit.part, commit.directory) : undefined
   return {
     directory: commit.directory,
-    raw,
+    raw: sanitizeTerminalOutput(raw),
     name: canonicalToolName(commit.tool || current?.name || "tool"),
-    input: current?.input ?? {},
-    meta: current?.meta ?? {},
-    state: current?.state ?? {},
+    input: sanitizeTerminalValue(current?.input ?? {}),
+    meta: sanitizeTerminalValue(current?.meta ?? {}),
+    state: sanitizeTerminalValue(current?.state ?? {}),
     status: commit.toolState ?? current?.status ?? "",
-    error: (commit.toolError ?? current?.error ?? "").trim(),
-    output: current?.output ?? raw,
+    error: sanitizeTerminalOutput((commit.toolError ?? current?.error ?? "").trim()),
+    output: sanitizeTerminalOutput(current?.output ?? raw),
     time: current?.time ?? {},
   }
 }
@@ -1159,14 +1159,12 @@ export function toolInlineInfo(part: SessionMessageAssistantTool, directory?: st
   const ctx = frame(part, directory)
   const draw = rule(ctx.name)?.run
   try {
-    if (draw) {
-      return draw(props(ctx))
-    }
+    if (draw) return sanitizeTerminalValue(draw(props(ctx)))
   } catch {
-    return fallbackInline(ctx)
+    return sanitizeTerminalValue(fallbackInline(ctx))
   }
 
-  return fallbackInline(ctx)
+  return sanitizeTerminalValue(fallbackInline(ctx))
 }
 
 export function toolScroll(phase: ToolPhase, ctx: ToolFrame): string {

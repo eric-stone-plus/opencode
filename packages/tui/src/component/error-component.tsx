@@ -6,6 +6,7 @@ import { useClipboard } from "../context/clipboard"
 import { useExit } from "../context/exit"
 import { useTuiApp } from "../context/runtime"
 import { describeOS, describeTerminal } from "../util/system"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export function ErrorComponent(props: { error: Error; reset: () => void; mode?: "dark" | "light" }) {
   const term = useTerminalDimensions()
@@ -135,7 +136,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
           paddingLeft={2}
           paddingRight={2}
         >
-          <text fg={colors.text}>{message}</text>
+          <text fg={colors.text}>{sanitizeTerminalOutput(message)}</text>
         </box>
 
         {/* Actions */}
@@ -196,7 +197,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
             flexGrow={1}
             scrollAcceleration={getScrollAcceleration()}
           >
-            <text fg={colors.muted}>{stack}</text>
+            <text fg={colors.muted}>{sanitizeTerminalOutput(stack)}</text>
           </scrollbox>
         </box>
 

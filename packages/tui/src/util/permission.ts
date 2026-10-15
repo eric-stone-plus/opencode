@@ -1,5 +1,6 @@
 import { Locale } from "./locale"
 import { canonicalToolName, finiteNumber, webSearchProviderLabel } from "./tool-display"
+import { sanitizeTerminalValue } from "./terminal-output"
 
 type Dict = Record<string, unknown>
 
@@ -23,6 +24,15 @@ export type PermissionPresentationInput = {
 export function permissionPresentation(
   source: PermissionPresentationInput,
   formatPath: (value: string) => string = (value) => value,
+): PermissionPresentation {
+  // The dialog asks the user to approve exactly what they read, so the projection — not the renderer —
+  // strips bytes that could move the cursor or rewrite the line being judged.
+  return sanitizeTerminalValue(presentation(source, formatPath))
+}
+
+function presentation(
+  source: PermissionPresentationInput,
+  formatPath: (value: string) => string,
 ): PermissionPresentation {
   const action = canonicalToolName(source.action)
   const input = normalizeInput(action, source.input)

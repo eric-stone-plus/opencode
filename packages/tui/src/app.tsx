@@ -104,6 +104,7 @@ import { destroyRenderer } from "./util/renderer"
 import { applyRenderBudget, IDLE_FPS } from "./util/render-budget"
 import { animating } from "./ui/animation"
 import { cliErrorMessage, errorFormat } from "./util/error"
+import { sanitizeTerminalOutput } from "./util/terminal-output"
 import { AttentionProvider } from "./context/attention"
 import { StorageProvider, useStorage } from "./context/storage"
 import { SessionTerminalsProvider } from "./context/session-terminals"
@@ -428,7 +429,7 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
   )
   yield* Effect.sync(() => {
     if (result.reason !== undefined)
-      process.stderr.write((cliErrorMessage(result.reason) ?? errorFormat(result.reason)) + "\n")
+      process.stderr.write(sanitizeTerminalOutput(cliErrorMessage(result.reason) ?? errorFormat(result.reason)) + "\n")
     if (result.epilogue) process.stdout.write(result.epilogue + "\n")
   })
 })
@@ -589,7 +590,7 @@ function App() {
     }
 
     if (route.data.type === "plugin") {
-      renderer.setTerminalTitle(`OC | ${route.data.name}`)
+      renderer.setTerminalTitle(`OC | ${stripTerminalControl(route.data.name)}`)
     }
   })
 

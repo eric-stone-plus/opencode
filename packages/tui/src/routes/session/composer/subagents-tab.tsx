@@ -11,6 +11,7 @@ import { Locale } from "../../../util/locale"
 import { Keymap } from "../../../context/keymap"
 import { useComposerTab } from "./context"
 import { withTimestampedFallback } from "@opencode/util/session-title-fallback"
+import { sanitizeTerminalOutput } from "../../../util/terminal-output"
 import { sessionFamily } from "../../../util/session"
 
 interface SubagentEntry {
@@ -42,7 +43,7 @@ export function SubagentsTab(props: { sessionID: string }) {
 
     const result = sessionFamily<SessionInfo>(data.session.list(), current.id).map(
       ({ session, prefix }): SubagentEntry => {
-        const title = withTimestampedFallback(session)
+        const title = sanitizeTerminalOutput(withTimestampedFallback(session))
         const agentMatch = title.match(/@(\w+) subagent/)
         return {
           sessionID: session.id,
