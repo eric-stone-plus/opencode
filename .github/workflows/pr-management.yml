@@ -65,7 +65,10 @@ jobs:
         run: |
           COMMENT=$(bun script/duplicate-pr.ts -f pr_info.txt "Check the attached file for PR details and search for duplicates")
 
-          if [ "$COMMENT" != "No duplicate PRs found" ]; then
+          # script/duplicate-pr.ts is parked behind its V2 SDK migration TODO, so it exits silently.
+          # Require a non-empty reply before commenting: an empty one used to be posted as a blank
+          # "made by an LLM" comment.
+          if [ -n "$COMMENT" ] && [ "$COMMENT" != "No duplicate PRs found" ]; then
             gh pr comment "$PR_NUMBER" --body "_The following comment was made by an LLM, it may be inaccurate:_
 
           $COMMENT"

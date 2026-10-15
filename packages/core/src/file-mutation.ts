@@ -127,7 +127,6 @@ export const node = makeLocationNode({ service: Service, layer, deps: [Environme
  * Deferred until the corresponding integrations exist.
  */
 // TODO: Publish watcher/file-edit events after watcher integration exists.
-// TODO: Add snapshots / undo after snapshot design exists.
 // LSP notification and diagnostics are attached after the mutation by plugin/fork/lsp.ts (execute.after hook).
 // TODO: Design multi-file transactions / rollback if patch needs atomic edits.
 // Until then, edits are sequential and report partial application.

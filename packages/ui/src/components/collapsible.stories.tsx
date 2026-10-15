@@ -18,7 +18,7 @@ Compose \`Collapsible.Trigger\`, \`Collapsible.Content\`, and \`Collapsible.Arro
 - Trigger toggles the content visibility.
 
 ### Accessibility
-- TODO: confirm ARIA attributes provided by Kobalte.
+- Kobalte sets \`aria-expanded\` and \`aria-controls\` on the trigger.
 
 ### Theming/tokens
 - Uses \`data-component="collapsible"\` and slots for trigger/content/arrow.

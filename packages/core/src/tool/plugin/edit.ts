@@ -201,7 +201,6 @@ const countBefore = (positions: number[], offset: number) => {
 
 /** Deferred edit behavior and UX integrations remain visible at the model-facing seam. */
 // TODO: Publish watcher/file-edit events after watcher integration exists.
-// TODO: Add snapshots / undo after design exists.
 // LSP notification and diagnostics are attached after the edit by plugin/fork/lsp.ts (execute.after hook).
 
 export const Plugin = {
