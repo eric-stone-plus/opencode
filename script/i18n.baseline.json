@@ -1,0 +1,21 @@
+{
+  "packages/app/src/runtime/i18n/ar.ts": 16,
+  "packages/app/src/runtime/i18n/br.ts": 4,
+  "packages/app/src/runtime/i18n/bs.ts": 4,
+  "packages/app/src/runtime/i18n/ca.ts": 4,
+  "packages/app/src/runtime/i18n/cs.ts": 8,
+  "packages/app/src/runtime/i18n/es.ts": 4,
+  "packages/app/src/runtime/i18n/fr.ts": 4,
+  "packages/app/src/runtime/i18n/he.ts": 4,
+  "packages/app/src/runtime/i18n/hr.ts": 4,
+  "packages/app/src/runtime/i18n/it.ts": 4,
+  "packages/app/src/runtime/i18n/lt.ts": 8,
+  "packages/app/src/runtime/i18n/lv.ts": 4,
+  "packages/app/src/runtime/i18n/pl.ts": 8,
+  "packages/app/src/runtime/i18n/ro.ts": 4,
+  "packages/app/src/runtime/i18n/ru.ts": 8,
+  "packages/app/src/runtime/i18n/sk.ts": 8,
+  "packages/app/src/runtime/i18n/sl.ts": 8,
+  "packages/app/src/runtime/i18n/sr.ts": 4,
+  "packages/app/src/runtime/i18n/uk.ts": 8
+}

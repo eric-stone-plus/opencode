@@ -19,4 +19,6 @@ if (process.versions.bun !== expectedBunVersion) {
 '
 bun run check
 bun run check-single-loop
+bun run check-provider-policy
+bun run check-i18n
 bun run debt-ratchet
