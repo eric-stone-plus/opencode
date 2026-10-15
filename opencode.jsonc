@@ -16,12 +16,6 @@
   // (deepseek-v4-flash is a retired alias that now routes to the same
   // model).
   "model": "deepseek/deepseek-flash",
-  // Cost display (2026-10-10): flat-rate/subscription model rows (all-zero
-  // cost in the registry) are auto-matched to canonical PAYG list prices so
-  // /usage can show a labeled estimate ("not billed per token"). DeepSeek is
-  // true PAYG (declared rates). To pin literal $0 on a model block, declare
-  // `cost: { "input": 0, "output": 0 }` — config-declared costs win outright
-  // over the registry cascade.
   "provider": {
     // DeepSeek official API. npm + baseURL are the registry values, so
     // this block only overlays the flash model. Key is already in
@@ -79,8 +73,7 @@
           "options": {
             "reasoningEffort": "max",
             "top_p": 0.95,
-            "maxOutputTokens": 393216,
-            "workingContextCap": 606784
+            "maxOutputTokens": 393216
           }
         }
       }
