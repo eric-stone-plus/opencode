@@ -1,35 +1,57 @@
-// Provider-policy guard (ADR 0003 / ADR 0006). The seat runs harness-only against Alibaba, DeepSeek and
-// the one Xiaomi token plan in use: the models.dev registry is cut to those vendors wherever it is
-// loaded, config declarations are exhaustive, and only the transports the endpoints need survive in the
-// native mapping. Upstream touches provider code constantly, so this gate refuses a merge that silently
-// widens the set - the policy is cheap to assert and expensive to notice by reading diffs.
+// Provider-policy guard (ADR 0003 / ADR 0009). The seat runs harness-only against DeepSeek: the
+// models.dev registry is cut to that vendor wherever it is loaded, config declarations are exhaustive,
+// and only the transports the endpoints need survive in the native mapping. Upstream touches provider
+// code constantly, so this gate refuses a merge that silently widens the set - the policy is cheap to
+// assert and expensive to notice by reading diffs.
 //
 // Usage:
 //   bun run check-provider-policy
 //
-// Exit 1 when the vendor allowlist, the implicit-fetch default, the declared-only transform, or the
-// transport mapping stops matching the policy.
+// Exit 1 when the vendor allowlist, the implicit-fetch default, the declared-only transform, the
+// transport mapping, or the removal itself stops matching the policy.
 
+import { existsSync } from "node:fs"
 import path from "node:path"
 import { AISDKNative } from "../packages/core/src/aisdk-native"
 import { ModelsDev } from "../packages/schema/src/models-dev"
 
-// Vendors the fork keeps (ADR 0006 supersedes ADR 0005: Zhipu is gone, Xiaomi is cut to the token plan).
-const KEPT = ["alibaba", "alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn", "deepseek", "xiaomi-token-plan-cn"]
-const DROPPED = ["openai", "anthropic", "google", "google-vertex", "openrouter", "zhipu", "zai", "xiaomi", "mimo", "qwen", "mistral", "xai", "groq", "cohere"]
+// The vendor the fork keeps (ADR 0009 supersedes ADR 0005/0006: Alibaba, Zhipu and the Xiaomi plans are gone).
+const KEPT = ["deepseek"]
+// Every vendor this fork removed, plus the ids an upstream merge tends to bring back.
+const DROPPED = [
+  "alibaba",
+  "alibaba-coding-plan",
+  "alibaba-coding-plan-cn",
+  "alibaba-token-plan",
+  "alibaba-token-plan-cn",
+  "openai",
+  "anthropic",
+  "google",
+  "google-vertex",
+  "openrouter",
+  "zhipu",
+  "zai",
+  "xiaomi",
+  "xiaomi-token-plan-cn",
+  "mimo",
+  "qwen",
+  "mistral",
+  "xai",
+  "groq",
+  "cohere",
+]
 
-// npm transports the three endpoints need (ADR 0005): the Alibaba/DeepSeek protocols plus Anthropic
-// messages for the Bailian coding-plan endpoints.
+// npm transports the seat needs (ADR 0005): the DeepSeek protocol, plus Anthropic messages for the
+// config-declared Bailian endpoint the operator's config block names.
 const REQUIRED_TRANSPORTS: Array<[npm: string, providerID: string, expected: string]> = [
-  ["@ai-sdk/alibaba", "alibaba", "@opencode/ai/providers/alibaba/chat"],
-  ["@ai-sdk/openai-compatible", "alibaba", "@opencode/ai/providers/alibaba/chat"],
-  ["@ai-sdk/anthropic", "alibaba", "@opencode/ai/providers/alibaba/messages"],
   ["@ai-sdk/openai-compatible", "deepseek", "@opencode/ai/providers/deepseek"],
+  ["@ai-sdk/anthropic", "bailian-token-plan-personal", "@opencode/ai/providers/anthropic"],
 ]
 
 // Transports that must stay unmapped: any of these resolving to a protocol would mean a removed vendor
 // came back through the native mapping.
 const BANNED_TRANSPORTS = [
+  "@ai-sdk/alibaba",
   "@ai-sdk/openai",
   "@ai-sdk/google",
   "@ai-sdk/google-vertex",
@@ -45,6 +67,19 @@ const BANNED_TRANSPORTS = [
   "@ai-sdk/togetherai",
   "@ai-sdk/perplexity",
   "@openrouter/ai-sdk-provider",
+]
+
+// Provider ids the banned-transport loop probes with. Kept ids are deliberately absent: a removed
+// transport may never resolve for a removed vendor, and the kept vendor is covered above.
+const BANNED_PROVIDER_IDS = ["openai", "anthropic", "alibaba", "alibaba-coding-plan", "xiaomi-token-plan-cn", "mimo", "zai"]
+
+// Files ADR 0009 deleted. A clean upstream merge brings them back one by one, and re-added vendor code
+// is a wider support surface than a re-added registry row - the allowlist alone cannot see it.
+const REMOVED_PATHS = [
+  "packages/ai/src/providers/alibaba.ts",
+  "packages/ai/src/providers/alibaba",
+  "packages/ai/src/protocols/alibaba-chat.ts",
+  "packages/ai/src/protocols/alibaba-messages.ts",
 ]
 
 export async function checkProviderPolicy(root: string): Promise<string[]> {
@@ -67,13 +102,17 @@ export async function checkProviderPolicy(root: string): Promise<string[]> {
   if (declared.includes("providers.add("))
     problems.push("declared-providers plugin adds providers; ADR 0003 makes config declarations exhaustive")
 
+  for (const removed of REMOVED_PATHS) {
+    if (existsSync(path.join(root, removed))) problems.push(`${removed} exists again (ADR 0009 removed it)`)
+  }
+
   for (const [npm, providerID, expected] of REQUIRED_TRANSPORTS) {
     const mapped = AISDKNative.native(npm, { providerID })
     if (mapped !== expected)
       problems.push(`transport ${npm} + ${providerID} maps to ${mapped ?? "undefined"}, expected ${expected}`)
   }
   for (const npm of BANNED_TRANSPORTS)
-    for (const providerID of ["openai", "anthropic", "alibaba", "deepseek", "xiaomi-token-plan-cn"]) {
+    for (const providerID of BANNED_PROVIDER_IDS) {
       const mapped = AISDKNative.native(npm, { providerID })
       if (mapped !== undefined) problems.push(`transport ${npm} is mapped for ${providerID} -> ${mapped}`)
     }
@@ -87,11 +126,11 @@ if (import.meta.main) {
     console.error("provider policy failed:")
     for (const problem of problems) console.error(`  - ${problem}`)
     console.error(
-      "\nThe vendor set is Alibaba, DeepSeek and xiaomi-token-plan-cn (ADR 0003 / ADR 0006)." +
+      "\nThe vendor set is DeepSeek alone (ADR 0003 / ADR 0009)." +
         "\nWidening it is a deliberate decision: edit SUPPORTED in packages/schema/src/models-dev.ts," +
-        "\nrestore the vendor code from history, and update this gate in the same commit.",
+        "\npull the vendor code back from upstream, and update this gate in the same commit.",
     )
     process.exit(1)
   }
-  console.log(`provider policy: ok (${KEPT.length} allowed vendors; ${REQUIRED_TRANSPORTS.length} required transports)`)
+  console.log(`provider policy: ok (${KEPT.length} allowed vendor; ${REQUIRED_TRANSPORTS.length} required transports)`)
 }
