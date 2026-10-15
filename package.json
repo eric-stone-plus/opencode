@@ -27,6 +27,8 @@
     "check-single-loop": "bun run script/check-single-loop.ts",
     "check-provider-policy": "bun run script/check-provider-policy.ts",
     "check-i18n": "bun run script/check-i18n.ts",
+    "theme-contrast": "bun run script/theme-contrast.ts",
+    "check-command-surfaces": "bun run script/check-command-surfaces.ts",
     "debt-ratchet": "bun run script/debt-ratchet.ts",
     "vendor-skills": "bun run script/vendor-skills.ts",
     "cpu-probe": "bun run script/cpu-probe.ts",
