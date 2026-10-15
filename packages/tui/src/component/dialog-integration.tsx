@@ -65,6 +65,14 @@ export function integrationOptions(list: IntegrationInfo[]) {
   )
 }
 
+// `in` walks the prototype chain, so an integration whose id is `toString` (or any other
+// Object.prototype member) used to be labelled Popular and sorted with a NaN key.
+export function integrationCategory(integration: IntegrationInfo) {
+  if (integration.metadata?.source === "mcp") return "MCP"
+  if (Object.hasOwn(INTEGRATION_PRIORITY, integration.id)) return "Popular"
+  return "Services"
+}
+
 export function connectMethods(integration: IntegrationInfo): ConnectMethod[] {
   return integration.methods
     .filter((method): method is ConnectMethod => method.type !== "env")
@@ -116,9 +124,7 @@ export function DialogIntegration(
     return integrations().map((integration) => {
       const methods = connectMethods(integration)
       const credentials = credentialConnections(integration)
-      let category = "Services"
-      if (integration.id in INTEGRATION_PRIORITY) category = "Popular"
-      if (integration.metadata?.source === "mcp") category = "MCP"
+      const category = integrationCategory(integration)
       const status = integration.connections[0]?.status
       return {
         title: integration.name,

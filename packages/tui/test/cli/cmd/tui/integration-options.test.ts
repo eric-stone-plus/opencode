@@ -4,6 +4,7 @@ import {
   connectionSummary,
   connectMethods,
   credentialConnections,
+  integrationCategory,
   integrationOptions,
 } from "../../../../src/component/dialog-integration"
 
@@ -37,6 +38,18 @@ describe("integrationOptions", () => {
         integration({ id: "opencode-go", name: "OpenCode Go" }),
       ]).map((item) => item.id),
     ).toEqual(["github", "linear", "opencode-go", "opencode", "openai"])
+  })
+})
+
+describe("integrationCategory", () => {
+  test("does not label an integration popular through the prototype chain", () => {
+    expect(integrationCategory(integration({ id: "toString", name: "toString" }))).toBe("Services")
+    expect(integrationCategory(integration({ id: "constructor", name: "constructor" }))).toBe("Services")
+  })
+
+  test("labels a known popular id Popular, and MCP wins over it", () => {
+    expect(integrationCategory(integration({ id: "openai", name: "OpenAI" }))).toBe("Popular")
+    expect(integrationCategory(integration({ id: "openai", name: "OpenAI", metadata: { source: "mcp" } }))).toBe("MCP")
   })
 })
 
