@@ -2,11 +2,11 @@ import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/solid"
 import { isShellNotFoundError, type LocationRef, type ShellInfo } from "@opencode/client"
 import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js"
-import stripAnsi from "strip-ansi"
 import { useClient } from "../context/client"
 import { Keymap } from "../context/keymap"
 import { useTheme } from "../context/theme"
 import { useDialog } from "../ui/dialog"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 const PAGE_BYTES = 64 * 1024
 
@@ -19,7 +19,7 @@ export function DialogShellOutput(props: { shell: ShellInfo; location: LocationR
   const [output, setOutput] = createSignal<string>()
   const [omitted, setOmitted] = createSignal(false)
   const [error, setError] = createSignal("")
-  const text = createMemo(() => stripAnsi(output() ?? "").replace(/\r\n?/g, "\n"))
+  const text = createMemo(() => sanitizeTerminalOutput(output() ?? ""))
   const height = () => Math.max(3, Math.floor(dimensions().height * 0.6) - 6)
   let scroll: ScrollBoxRenderable | undefined
 
@@ -111,7 +111,7 @@ export function DialogShellOutput(props: { shell: ShellInfo; location: LocationR
         </text>
       </box>
       <text fg={theme.text.muted} maxHeight={3} wrapMode="word">
-        {props.shell.command}
+        {sanitizeTerminalOutput(props.shell.command)}
       </text>
       <Show when={omitted()}>
         <text fg={theme.text.muted}>Earlier output omitted · showing recent output</text>

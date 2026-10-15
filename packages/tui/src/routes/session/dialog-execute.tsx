@@ -3,7 +3,6 @@ import { useTerminalDimensions } from "@opentui/solid"
 import type { SessionMessageAssistantTool } from "@opencode/client/promise"
 import { Option, Schema } from "effect"
 import { createMemo, createSignal, onCleanup, Show } from "solid-js"
-import stripAnsi from "strip-ansi"
 import { useConfig } from "../../config"
 import { useClipboard } from "../../context/clipboard"
 import { Keymap } from "../../context/keymap"
@@ -11,6 +10,7 @@ import { useTheme, useThemes } from "../../context/theme"
 import { dialogWidth, useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { Locale } from "../../util/locale"
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import { getScrollAcceleration } from "../../util/scroll"
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
@@ -190,7 +190,7 @@ function executeCode(input: SessionMessageAssistantTool["state"]["input"]) {
 function outputText(state: SessionMessageAssistantTool["state"]) {
   if (state.status === "error") return state.error.message || undefined
   if (state.status !== "completed") return
-  const text = stripAnsi(
+  const text = sanitizeTerminalOutput(
     state.content
       .flatMap((item) => (item.type === "text" ? [item.text] : []))
       .join("\n")

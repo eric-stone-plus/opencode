@@ -13,7 +13,6 @@
 // Tools not in TOOL_RULES get fallback formatting.
 import os from "os"
 import path from "path"
-import stripAnsi from "strip-ansi"
 import type { SessionMessageAssistantTool } from "@opencode/client/promise"
 import { LANGUAGE_EXTENSIONS } from "../util/filetype"
 import { Locale } from "../util/locale"
@@ -27,6 +26,7 @@ import {
 } from "../util/tool-display"
 import { formatPath } from "../util/path-format"
 import { isRecord } from "../util/record"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import type { RunEntryBody, StreamCommit, ToolSnapshot } from "./types"
 
 export { canonicalToolName } from "../util/tool-display"
@@ -645,7 +645,7 @@ function scrollBashStart(p: ToolProps): string {
 }
 
 function scrollBashProgress(p: ToolProps): string {
-  const out = stripAnsi(p.frame.raw)
+  const out = sanitizeTerminalOutput(p.frame.raw)
   const cmd = (p.input.command ?? "").trim()
   const fmt = (text: string) => {
     const body = text.replace(/^\n+/, "").replace(/\n+$/, "")
@@ -1262,7 +1262,7 @@ function structuredFallback(value: ToolDict): RunEntryBody | undefined {
 }
 
 function shellOutput(command: string, raw: string): string | undefined {
-  const body = stripAnsi(raw).replace(/^\n+/, "").replace(/\n+$/, "")
+  const body = sanitizeTerminalOutput(raw).replace(/^\n+/, "").replace(/\n+$/, "")
   if (!body) {
     return undefined
   }

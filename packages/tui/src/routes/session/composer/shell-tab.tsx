@@ -8,6 +8,7 @@ import { Keymap } from "../../../context/keymap"
 import { useComposerTab } from "./context"
 import { useDialog } from "../../../ui/dialog"
 import { DialogShellOutput } from "../../../component/dialog-shell-output"
+import { sanitizeTerminalOutput } from "../../../util/terminal-output"
 
 export function ShellTab(props: { sessionID: string }) {
   const data = useData()
@@ -136,7 +137,7 @@ export function ShellTab(props: { sessionID: string }) {
                     attributes={active() ? TextAttributes.BOLD : undefined}
                     wrapMode="none"
                   >
-                    {shell.command.split("\n", 1)[0]}
+                    {sanitizeTerminalOutput(shell.command.split("\n", 1)[0])}
                   </text>
                 </box>
               )

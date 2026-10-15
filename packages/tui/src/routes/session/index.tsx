@@ -74,13 +74,13 @@ import { filetype } from "../../util/filetype"
 import parsers from "../../parsers-config"
 import { errorMessage } from "../../util/error"
 import { useToast } from "../../ui/toast"
-import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { projectedPromptInput } from "../../prompt/codec"
 import { appendPrompt } from "../../prompt/history"
 import { deduplicateVisibleImages } from "../../prompt/attachment"
 import { useEpilogue } from "../../context/epilogue"
 import { normalizePath } from "../../util/path"
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import { PermissionPrompt } from "./permission"
 import { FormPrompt } from "./form"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
@@ -2806,7 +2806,7 @@ function ShellDisplay(props: {
       if (!response) break
       if (response.data.output)
         setBackgroundOutput((output) => {
-          const next = stripAnsi(output + response.data.output)
+          const next = sanitizeTerminalOutput(output + response.data.output)
           if (next.length <= SHELL_DISPLAY_LIMIT) return next
           setOutputTruncated(true)
           return next.slice(-SHELL_DISPLAY_LIMIT)
@@ -2843,11 +2843,11 @@ function ShellDisplay(props: {
     if (props.status === "streaming") return ""
     if (props.shellID) {
       if (props.background && !expanded()) return ""
-      if (props.status === "completed" && props.output !== undefined) return stripAnsi(props.output.trim())
-      const text = stripAnsi((backgroundOutput() || props.output || "").trim())
+      if (props.status === "completed" && props.output !== undefined) return sanitizeTerminalOutput(props.output.trim())
+      const text = sanitizeTerminalOutput((backgroundOutput() || props.output || "").trim())
       return outputTruncated() ? `[earlier output omitted]\n${text}` : text
     }
-    return stripAnsi(props.output?.trim() ?? "")
+    return sanitizeTerminalOutput(props.output?.trim() ?? "")
   })
   const maxLines = 10
   const maxChars = createMemo(() => maxLines * Math.max(20, ctx.width - 6 - (isRunning() ? 2 : 0)))
@@ -3160,7 +3160,7 @@ function Execute(props: ToolProps) {
   const dialog = useDialog()
   const isLoading = createMemo(() => props.part.state.status === "streaming" || props.part.state.status === "running")
   const calls = createMemo(() => executeCalls(props.metadata.toolCalls))
-  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
+  const output = createMemo(() => sanitizeTerminalOutput(props.output?.trim() ?? ""))
   const hasRuntimeError = createMemo(() => props.metadata.error === true || props.part.state.status === "error")
   const outputPreview = createMemo(() => collapseToolOutput(output(), 4, 4 * Math.max(20, ctx.width - 6)).output)
   const showOutput = createMemo(() => output() && hasRuntimeError())
