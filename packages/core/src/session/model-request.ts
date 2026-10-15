@@ -32,6 +32,7 @@ import { PluginHooks } from "../plugin/hooks.js"
 import { QuestionTool } from "../tool/plugin/question.js"
 import { Tool } from "../tool.js"
 import { SessionAffinity } from "./affinity.js"
+import { ForkPrefixDrift } from "./fork/prefix-drift.js"
 import { SessionModelTransport } from "./model-transport.js"
 import { SessionProviderContext } from "./provider-context.js"
 import { SessionRunnerModel } from "./runner/model.js"
@@ -222,6 +223,8 @@ export const layer = Layer.effect(
     const hooks = yield* PluginHooks.Service
     const transport = yield* SessionModelTransport.Service
     const app = yield* App.Metadata
+    // Prefix drift attribution (C1): the provider cache only pays while these bytes stay identical.
+    const prefixes = new Map<SessionSchema.ID, ForkPrefixDrift.Prefix>()
     const prepare = Effect.fn("SessionModelRequest.prepare")(function* <
       S extends SessionRequest & { tools?: Definitions },
     >(kind: SessionRequestKind, input: Input, shape: (draft: SessionRequest, tools: Definitions) => Effect.Effect<S>) {
@@ -379,6 +382,23 @@ export const layer = Layer.effect(
               model.chunkTimeout,
             )
           : undefined
+
+      const prefix = ForkPrefixDrift.prefixOf(request)
+      const previous = prefixes.get(session.id)
+      const moved = previous === undefined ? undefined : ForkPrefixDrift.drift(previous, prefix)
+      if (moved && previous)
+        // Info rather than debug: a hook that rewrites the prefix every request is exactly the
+        // cache-killing bug this reports, and the default log level would hide a debug line.
+        yield* Effect.logInfo("session request prefix drifted; the provider cache will re-prefill", {
+          sessionID: session.id,
+          kind,
+          at: moved.at,
+          matched: moved.matched,
+          from: ForkPrefixDrift.fingerprint(previous),
+          to: ForkPrefixDrift.fingerprint(prefix),
+        })
+      if (prefixes.size >= ForkPrefixDrift.PREFIX_SESSIONS) prefixes.delete(prefixes.keys().next().value!)
+      prefixes.set(session.id, prefix)
 
       return {
         event: shaped,

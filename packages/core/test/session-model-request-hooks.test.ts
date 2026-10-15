@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { Message } from "@opencode/ai"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { Agent } from "@opencode/schema/agent"
 import { Money } from "@opencode/schema/money"
@@ -12,6 +13,7 @@ import { SessionModelRequest } from "@opencode/core/session/model-request"
 import { SessionModelTransport } from "@opencode/core/session/model-transport"
 import { SessionRunnerModel } from "@opencode/core/session/runner/model"
 import { DateTime, Effect, Stream } from "effect"
+import { TestConsole } from "effect/testing"
 import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { testEffect } from "./lib/effect"
 import { PluginTestLayer } from "./plugin/fixture"
@@ -77,6 +79,39 @@ describe("SessionModelRequest HTTP hooks", () => {
           { hook: "response", kind, agent: Agent.ID.make("build") },
         ]),
       )
+    }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
+  )
+
+  it.effect("names the prefix part that moved between two requests of one session", () =>
+    Effect.gen(function* () {
+      const hooks = yield* PluginHooks.Service
+      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
+      // A context hook that rewrites the first system part, the way an instruction or mode plugin can.
+      const text = ["first"]
+      yield* hooks.register("session", "context", (event) =>
+        Effect.sync(() => {
+          event.system = event.system.map((part, index) => (index === 0 ? { ...part, text: text[0]! } : part))
+        }),
+      )
+      const prepare = () =>
+        requests.primary({
+          session,
+          agent: Agent.ID.make("build"),
+          model,
+          system: [{ type: "text", text: "first" }],
+          messages: [Message.user([Message.text("hello")])],
+        })
+
+      yield* prepare()
+      // The first request pins the prefix and has nothing to compare against, so it stays quiet.
+      expect(JSON.stringify(yield* TestConsole.logLines)).not.toContain("prefix drifted")
+
+      text[0] = "second"
+      yield* prepare()
+      const captured = JSON.stringify(yield* TestConsole.logLines)
+      expect(captured).toContain("prefix drifted")
+      expect(captured).toContain("system[0]")
+      expect(captured).toContain("matched")
     }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
   )
 
