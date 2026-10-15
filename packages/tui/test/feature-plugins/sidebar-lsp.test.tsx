@@ -127,7 +127,12 @@ test("labels only an unhealthy state that has been stuck long enough", () => {
 })
 
 test("marks an unhealthy server as stale once its state is old", async () => {
-  const gopls = { id: "gopls", name: "gopls", root: "/workspace", status: "error" as const }
+  const gopls: { id: string; name: string; root: string; status: "connected" | "error" } = {
+    id: "gopls",
+    name: "gopls",
+    root: "/workspace",
+    status: "error",
+  }
   const [servers, setServers] = createSignal([gopls])
   const app = await testRender(() => <SidebarLsp context={context({ list: () => servers() })} sessionID="session" />, {
     width: 42,
