@@ -99,7 +99,7 @@ overwritten are listed in §5.
 ### Step 4 — secret entry (the only manual step)
 
 Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth.json`
-(two provider keys: `deepseek`, `xiaomi-token-plan-cn`) and the `environment.d` seed files per §3, then:
+(three provider keys: `deepseek`, `bailian-token-plan-personal`, `xiaomi-token-plan-cn`) and the `environment.d` seed files per §3, then:
 
 ```sh
 # install.sh created the skeleton if auth.json was absent:
@@ -158,17 +158,18 @@ better (live-edit). *Directory* symlinks for `skills/` and `command/` are
 
 ## 3. Secrets re-seed (values never vendored)
 
-`~/.local/share/opencode/auth.json` — two entries (V2 imports it once into the
+`~/.local/share/opencode/auth.json` — three entries (V2 imports it once into the
 `credential` table of an existing DB; a fresh DB needs `opencode auth import`), each
 `{ "type": "api", "key": … }`:
 
 | Provider id (auth.json / opencode.jsonc) | Endpoint | Where the key comes from |
 | --- | --- | --- |
 | `deepseek` | `api.deepseek.com` (DeepSeek, current default model track) | DeepSeek platform console |
+| `bailian-token-plan-personal` | `token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1` (Alibaba Cloud Model Studio, Anthropic face) | Alibaba token-plan console |
 | `xiaomi-token-plan-cn` | `token-plan-cn.xiaomimimo.com` (Xiaomi MiMo token plan) | Xiaomi token-plan console |
 
 `~/.config/opencode/env` is a seed file only (NOT read by the binary, NOT sourced by
-the shell wrapper): keep the two provider keys there for the auth.json re-seed.
+the shell wrapper): keep the three provider keys there for the auth.json re-seed.
 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` and the other V1 flags have no effect on V2.
 
 `~/.config/environment.d/` templates (names-only in `bootstrap/config/`):

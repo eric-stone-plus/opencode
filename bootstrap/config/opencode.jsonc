@@ -9,12 +9,19 @@
       "initialization": { "basedpyright": { "analysis": { "typeCheckingMode": "standard" } } }
     }
   },
-  // Default track (2026-10-07): temporary switch to DeepSeek-V4.1-Flash.
+  // Default track (2026-10-07): switch to DeepSeek-V4.1-Flash.
   // API id is deepseek-flash (deepseek-v4-flash is a retired alias that
   // now routes to the same model). Revert this line and the auto/goal
-  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back. Other
-  // provider blocks are unchanged.
+  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back: the xiaomi
+  // block below stays config-declared and self-contained, so it works
+  // without a registry row (ADR 0009). Other provider blocks are unchanged.
   "model": "deepseek/deepseek-flash",
+  // Cost display (2026-10-10): flat-rate/subscription model rows (all-zero
+  // cost in the registry) are auto-matched to canonical PAYG list prices so
+  // /usage can show a labeled estimate ("not billed per token"). DeepSeek is
+  // true PAYG (declared rates). To pin literal $0 on a model block, declare
+  // `cost: { "input": 0, "output": 0 }` — config-declared costs win outright
+  // over the registry cascade.
   "provider": {
     "bailian-token-plan-personal": {
       "npm": "@ai-sdk/anthropic",
@@ -37,7 +44,12 @@
           },
           "options": {
             "effort": "max",
-            "maxOutputTokens": 65536
+            "maxOutputTokens": 65536,
+            // Per-model compaction adaptation (2026-10-10): raise the
+            // conservative 256k WORKING_CONTEXT_CAP clamp (overflow.ts) to the
+            // hand-calibrated limit.input of this block. Same pattern pinned on
+            // the mimo/deepseek blocks.
+            "workingContextCap": 852544
           }
         }
       }
@@ -58,9 +70,10 @@
     //
     // Long-task tuning:
     // - limit.input is load-bearing (overflow.ts:29): with it the usable
-    //   window is WORKING_CONTEXT_CAP(256k) − 20k = 236k per compaction
-    //   cycle; without it the full maxOutputTokens is deducted and the
-    //   cycle lands at 190464. 917504 = context − output.
+    //   window is the workingContextCap pin below minus the 20k reserve
+    //   (917504 − 20k = 897504 per compaction cycle; the pre-2026-10-10
+    //   256k clamp yielded 236k). Without it the full maxOutputTokens is
+    //   deducted and the cycle lands at 190464. 917504 = context − output.
     // - maxOutputTokens is the FULL 131072 on purpose (bailian left at
     //   65536, endpoint untested):
     //   reasoning_tokens count against max_tokens (complex prompt at
@@ -100,7 +113,8 @@
             "output": ["text"]
           },
           "options": {
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 917504
           }
         },
         "mimo-v2.6-flash": {
@@ -116,7 +130,8 @@
             "output": ["text"]
           },
           "options": {
-            "maxOutputTokens": 131072
+            "maxOutputTokens": 131072,
+            "workingContextCap": 917504
           }
         }
       }
@@ -177,7 +192,8 @@
           "options": {
             "reasoningEffort": "max",
             "top_p": 0.95,
-            "maxOutputTokens": 393216
+            "maxOutputTokens": 393216,
+            "workingContextCap": 606784
           }
         }
       }

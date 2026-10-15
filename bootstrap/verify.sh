@@ -241,14 +241,14 @@ PYEOF
       ph=$(printf '%s\n' "$authout" | sed -n 's/^PLACEHOLDERS //p')
       info "providers: $names"
       ok=1
-      for want in deepseek xiaomi-token-plan-cn; do
+      for want in deepseek bailian-token-plan-personal xiaomi-token-plan-cn; do
         case ",$names," in
           *",$want,"*) : ;;
           *) fail "auth provider missing: $want"; ok=0 ;;
         esac
       done
       if [ "$ok" -eq 1 ]; then
-        pass "both provider entries present (deepseek, xiaomi-token-plan-cn)"
+        pass "all three provider entries present (deepseek, bailian-token-plan-personal, xiaomi-token-plan-cn)"
       fi
       if [ -n "$ph" ]; then
         warn "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"

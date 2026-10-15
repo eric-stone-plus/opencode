@@ -1,4 +1,8 @@
 {
+  "deepseek": {
+    "type": "api",
+    "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
+  },
   "bailian-token-plan-personal": {
     "type": "api",
     "key": "REPLACE_ME_SEE_README_RESEED_TABLE"
