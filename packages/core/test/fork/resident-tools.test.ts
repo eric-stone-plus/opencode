@@ -52,8 +52,10 @@ const DIRECT = [
 const VIA_CODE_MODE = ["browser", "opencode"] as const
 
 /**
- * Ceiling for the rendered surface: today's definitions plus catalog are ~79 KB, and the headroom is
- * for a tool to grow, not for a tool to appear - the list above is the exact pin for that.
+ * Ceiling for the rendered surface: measured at 79,275 bytes on 2026-10-15 (definitions plus the Code
+ * Mode catalog), so the headroom is ~21%. The list above is the exact pin against a tool *appearing*;
+ * this ceiling only guards against the surface running away, which is why it is deliberately loose
+ * enough that an upstream description edit does not force a decision on every sync.
  */
 const SURFACE_BUDGET = 96_000
 

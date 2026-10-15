@@ -193,12 +193,19 @@ describe("ForkRetryBudget.transient", () => {
 })
 
 describe("ForkRetryBudget.unattended", () => {
+  // The intent (borrow C31, design deferred): "unattended" is a property of the seat's walk-away
+  // profiles, not of the provider or the model. A role field on the agent definition would let a seat
+  // add a walk-away profile without editing this fork file; until that design lands, this set is the
+  // pin, so a new profile has to be added here deliberately.
   it.effect("covers the walk-away profiles and nothing else", () =>
     Effect.gen(function* () {
       expect(ForkRetryBudget.unattended(Agent.ID.make("auto"))).toBe(true)
       expect(ForkRetryBudget.unattended(Agent.ID.make("goal"))).toBe(true)
       expect(ForkRetryBudget.unattended(Agent.ID.make("build"))).toBe(false)
       expect(ForkRetryBudget.unattended(Agent.ID.make("plan"))).toBe(false)
+      // Exact match, not a prefix or a family: an agent named after a walk-away profile stays attended.
+      expect(ForkRetryBudget.unattended(Agent.ID.make("auto-2"))).toBe(false)
+      expect(ForkRetryBudget.unattended(Agent.ID.make("goals"))).toBe(false)
     }),
   )
 })
