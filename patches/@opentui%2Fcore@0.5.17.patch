@@ -54,7 +54,17 @@ index 4808e75d8fac63fbf1727f79d56f8045f2593c74..af8b0229554488314052b654887bdeba
        }
        if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
          const sourceRanges = this._onChunks ? [] : undefined;
-@@ -10112,7 +10128,9 @@ Captured external output:
+@@ -3534,7 +3550,9 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       if (snapshotId !== this._highlightSnapshotId) {
+         this.requestRender();
+         return;
+       }
++        if (this.isDestroyed)
++          return;
+       console.warn("Code highlighting failed, falling back to plain text:", error);
+       if (this.isDestroyed)
+         return;
+@@ -10112,7 +10130,9 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -65,7 +75,7 @@ index 4808e75d8fac63fbf1727f79d56f8045f2593c74..af8b0229554488314052b654887bdeba
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -10126,7 +10144,9 @@ Captured external output:
+@@ -10126,7 +10146,9 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -132,7 +142,17 @@ index 8a014caa43ae6edb6118dd803ab8553bc917a6e6..d4daa787050a0a1d5a3824c4bc2d9ca4
        }
        if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
          const sourceRanges = this._onChunks ? [] : undefined;
-@@ -10111,7 +10127,9 @@ Captured external output:
+@@ -3533,7 +3549,9 @@ class CodeRenderable2 extends TextBufferRenderable2 {
+       if (snapshotId !== this._highlightSnapshotId) {
+         this.requestRender();
+         return;
+       }
++        if (this.isDestroyed)
++          return;
+       console.warn("Code highlighting failed, falling back to plain text:", error);
+       if (this.isDestroyed)
+         return;
+@@ -10111,7 +10129,9 @@ Captured external output:
            }
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
@@ -143,7 +163,7 @@ index 8a014caa43ae6edb6118dd803ab8553bc917a6e6..d4daa787050a0a1d5a3824c4bc2d9ca4
              this.immediateRerenderRequested = false;
              this.renderTimeout = this.clock.setTimeout(() => {
                this.renderTimeout = null;
-@@ -10125,7 +10143,9 @@ Captured external output:
+@@ -10125,7 +10145,9 @@ Captured external output:
            const overallFrameTime = performance.now() - overallStart;
            if (this._isRunning || this.immediateRerenderRequested) {
              const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime;
