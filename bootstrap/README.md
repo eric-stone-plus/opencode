@@ -136,6 +136,7 @@ a *function*).
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
+| 4 | `environment.d/20-opencode-http.conf` | managed (converges; backup on overwrite) — Bun fetch fan-out for the swarm default |
 | 4 | `environment.d/90-fcitx5.conf` | **only if absent**; template carries names only |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
@@ -181,6 +182,7 @@ the shell wrapper): keep the provider key there for the auth.json re-seed.
 | File | Vars | Re-seed source |
 | --- | --- | --- |
 | `10-opencode-db.conf` | `OPENCODE_DB=opencode-main.db` | not secret — install.sh writes the real value |
+| `20-opencode-http.conf` | `BUN_CONFIG_MAX_HTTP_REQUESTS=1024` | not secret — install.sh writes it; Bun caps in-flight `fetch` at 256 per process by default, and the swarm default fans out past that (DeepSeek allows 2500 concurrent `deepseek-flash` requests per account). The service also pins it (`opencode service set env`), which is what a running service actually inherits |
 | `90-fcitx5.conf` | `QT_IM_MODULE` `XMODIFIERS` `SDL_IM_MODULE` `GLFW_IM_MODULE` | not secret: `fcitx` / `@im=fcitx` / `fcitx` / `ibus` (and `GTK_IM_MODULE` must stay **unset** — 2026-09-24 dual-channel fix) |
 
 Claude Code plumbing (`~/.claude/settings.json` `env` block: `ANTHROPIC_BASE_URL`
@@ -301,7 +303,10 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * Orphan skill `longrun-stability-audit`.
 * Goal-mode files `agent/goal.md`, `autonomy.md`,
   `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
-  command: goal mode seeds and owns its goal file. Goal seeding/steering and
+  command: goal mode seeds and owns its goal file. The swarm playbook is the
+  default for **both** primaries: goal's prompt body names it, and auto's
+  standing card carries the same mandate, so an auto session fans out instead
+  of working single-threaded. Goal seeding/steering and
   the mode cards are fork plugins (`packages/core/src/plugin/fork/modes.ts`),
   so a machine-B build must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
@@ -382,7 +387,7 @@ bootstrap/
 │   └── open-code-review.ts       ocr tools + commands (V2 port, 2026-10-12)
 ├── agent/                        goal.md (goal agent definition)
 ├── autonomy.md                   autonomous-execution policy (instructions array)
-└── AGENTS.goal.md                goal-mode swarm playbook (instructions array)
+└── AGENTS.goal.md                swarm playbook — default for auto and goal (instructions array)
 ```
 
 ---

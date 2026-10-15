@@ -14,8 +14,9 @@
 import path from "node:path"
 import { SECRET_PATTERNS } from "../packages/http-recorder/src/redaction/secrets"
 
-// Values that are legitimately not secret in a seed file: the DB pin and the input-method names.
-const ALLOWED_SEED_VALUES = new Set(["opencode-main.db", "fcitx", "@im=fcitx", "ibus"])
+// Values that are legitimately not secret in a seed file: the DB pin, the input-method names, and the
+// fetch-concurrency pin (a request-count ceiling, not a credential).
+const ALLOWED_SEED_VALUES = new Set(["opencode-main.db", "fcitx", "@im=fcitx", "ibus", "1024"])
 const SEED_FILES = ["auth.json.template", "env.template"]
 
 export async function checkNamesOnly(root: string): Promise<string[]> {

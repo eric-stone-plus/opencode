@@ -93,9 +93,11 @@ export const Plugin = define({
       Effect.gen(function* () {
         const session = yield* ctx.session.get({ sessionID: event.sessionID })
         const wanted: string[] = []
+        // The standing card keys on the session's agent, not on parentage: a child session that resolves to auto or
+        // goal keeps its profile framing, while a child running as general/explore gets none (no STANDING entry).
         const card = STANDING[event.agent]
         if (card !== undefined) wanted.push(card)
-        // Subagent sessions never carry the goal; it belongs to the top-level session that owns it.
+        // The goal, unlike the card, belongs to the top-level session that owns it, so child sessions never carry it.
         if (!session.parentID)
           wanted.push(...(yield* goal(session, event.agent).pipe(isolate("failed to resolve the session goal", []))))
         yield* cards.apply(event, wanted)

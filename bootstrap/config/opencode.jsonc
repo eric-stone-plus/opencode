@@ -54,7 +54,13 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "DeepSeek",
       "options": {
-        "baseURL": "https://api.deepseek.com"
+        "baseURL": "https://api.deepseek.com",
+        // DeepSeek queues instead of rejecting when an account hits its
+        // concurrency ceiling, and closes a request that has not started
+        // inference after 10 minutes. The 300 s default header timeout gives
+        // up before the provider does, so match the provider's own window
+        // (decided 2026-10-15 with the swarm fan-out change).
+        "headerTimeout": 600000
       },
       "models": {
         "deepseek-flash": {
@@ -87,6 +93,13 @@
     "preserve_recent_tokens": 40000
   },
   "permission": "allow",
+  // Swarm default (owner call 2026-10-15): primaries fan out subagents, and a
+  // subagent may fan out again. Upstream's default of 1 forbids nesting
+  // outright; the cap bounds a runaway tree, not fan-out width, which is
+  // uncapped (measured: 500 concurrent sessions on one server, zero errors).
+  "experimental": {
+    "subagent_depth": 3
+  },
   "default_agent": "auto",
   "instructions": ["~/.config/opencode/autonomy.md", "~/.config/opencode/AGENTS.goal.md"],
   "agent": {
@@ -136,11 +149,11 @@
     "plan": { "disable": true },
     // Subagents keep their own ruleset and never inherit the parent agent's,
     // so they need the question tool denied too or they can block mid-task.
-    // The global wildcard beats the native subagent deny the same way it beat
-    // plan's edit deny, so without task deny general can nest subagents.
+    // `task` is deliberately NOT denied (owner call 2026-10-15): a subagent
+    // may fan out its own swarm, bounded by experimental.subagent_depth. The
     // todowrite deny is likewise re-asserted after the global wildcard.
     "general": {
-      "permission": { "task": "deny", "question": "deny", "todowrite": "deny" }
+      "permission": { "question": "deny", "todowrite": "deny" }
     },
     // The global "permission": "allow" merges after explore's native
     // "*": "deny" and findLast() keeps the allow, so explore could edit files

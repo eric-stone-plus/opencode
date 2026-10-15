@@ -356,7 +356,7 @@ fi
 # whichever client or wrapper starts it. Writes service config only; never opens the DB.
 OC_REAL="$TARGET_HOME/.opencode/bin/opencode"
 if [ -x "$OC_REAL" ]; then
-  for pin in "OPENCODE_DB opencode-main.db" "OPENCODE_DISABLE_MODELS_FETCH 1"; do
+  for pin in "OPENCODE_DB opencode-main.db" "OPENCODE_DISABLE_MODELS_FETCH 1" "BUN_CONFIG_MAX_HTTP_REQUESTS 1024"; do
     act "service set env $pin"
     if [ "$DRY_RUN" -eq 0 ]; then
       # shellcheck disable=SC2086
@@ -364,6 +364,14 @@ if [ -x "$OC_REAL" ]; then
         || note "service set env $pin failed (re-run after the binary works)"
     fi
   done
+  # `service set env` stops the service before it writes the config, so a client that re-ensures the service
+  # in that window spawns it with the previous pins. Restart once more so the running service matches the
+  # config that was just written (see PERSONAL.md, "Residual risk").
+  if [ "$DRY_RUN" -eq 0 ]; then
+    act "service restart (apply the pins written above)"
+    HOME="$TARGET_HOME" OPENCODE_DB=opencode-main.db "$OC_REAL" service restart \
+      || note "service restart failed; the pins apply on the next service spawn"
+  fi
 else
   note "service env pins skipped: $OC_REAL is not built yet (re-run install.sh after the first sync-upstream)"
 fi
@@ -374,6 +382,8 @@ say "-- step 4: environment.d"
 STAGE_SED=""
 install_file "$BOOTSTRAP_DIR/config/environment.d/10-opencode-db.conf" \
              "$TARGET_HOME/.config/environment.d/10-opencode-db.conf"
+install_file "$BOOTSTRAP_DIR/config/environment.d/20-opencode-http.conf" \
+             "$TARGET_HOME/.config/environment.d/20-opencode-http.conf"
 # Seed-only: never overwrite existing ones (may carry live plumbing on machine A).
 for f in 90-fcitx5.conf; do
   dst="$TARGET_HOME/.config/environment.d/$f"

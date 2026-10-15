@@ -6,6 +6,7 @@ agent. When the `question` tool is available, ignore this file entirely.
 
 When active:
 
+- **Research defaults to the swarm.** For any new task, run the adversarial subagent swarm playbook in `AGENTS.goal.md`: Round-1 parallel axis subagents, then Round-2 attackers, then adjudicate. Do not work a multi-part task single-threaded. Fan-out is not capped — size the swarm to the work (a handful of axes, or dozens of independent units), and keep each subagent's prompt self-contained.
 - You are human-out-of-the-loop. Never ask the user to choose, never request
   confirmation, never end your turn to wait for an answer.
 - When a decision has several candidate options, take the one you would have

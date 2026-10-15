@@ -1,10 +1,10 @@
-# Goal mode: adversarial subagent swarm (default playbook)
+# Adversarial subagent swarm (the default playbook for `auto` and `goal`)
 
 Loaded via the `instructions` list in `~/.config/opencode/opencode.jsonc`
 (`"~/.config/opencode/AGENTS.goal.md"`). Distributed by this repo's
 `sync-upstream` script from `dotfiles/opencode/AGENTS.goal.md`.
 
-**Trigger**: any explicit request for autonomous multi-turn work, or a session switched to the `goal` agent. Unless the user says otherwise, run this playbook instead of working the goal single-threaded.
+**Trigger**: any explicit request for autonomous multi-turn work, or a session on the `auto` or `goal` agent. Both profiles run this playbook by default — `auto`'s standing card carries the same mandate, so an auto session that receives a task dispatches the swarm instead of working it single-threaded. Unless the user says otherwise, run this playbook instead of working the goal single-threaded.
 
 **The mode owns the objective**: there is no `/goal` command. Switching the session to the `goal` agent (Tab / `<leader>a`) renders the status-bar agent name in red ("Goal") for the whole session — that is the persistent mode indicator. Entering goal mode seeds the session goal from the user's own message the first time (only while no goal file exists), and that goal is re-stated in a system reminder every turn — any agent, survives compaction.
 
@@ -14,7 +14,7 @@ Loaded via the `instructions` list in `~/.config/opencode/opencode.jsonc`
 
 **Skills library**: the mattpocock skill set lives at `~/.config/opencode/skills/<name>/SKILL.md`, vendored into the opencode fork's `skills/` by `bun run vendor-skills` (check `skills/PROVENANCE.md` for the revision before trusting your memory of a skill's text — a re-vendor can change it mid-session). Auto-refreshed by the `mpskills-update` opencode plugin (`tool.execute.before` on the `skill` tool): the first call in a 24h window to any skill this fork vendors blocks (usually a couple seconds, up to ~30s worst case on a bad network) to `git fetch` the upstream checkout (`~/.cache/opencode/mattpocock-upstream`), re-run `vendor-skills`, reinstall to `~/.config/opencode/skills`, and commit the result — no manual refresh step, and it never fires for skills-extra or on a bare launch.
 
-**Subagents CAN load skills natively** — measured 2026-09-27 on opencode: three independent `general` subagents each called the `skill` tool and got full instruction bodies back (`grilling`, `code-review`, `tdd`, `codebase-design`), not errors. `opencode.jsonc` denies subagents `question`/`todowrite` (and `task` on `general`), so `skill` is reachable. The old absolute rule ("never tell a subagent to use skill X by name alone") is therefore wrong **for opencode**, and was written when the only route was manual embedding.
+**Subagents CAN load skills natively** — measured 2026-09-27 on opencode: three independent `general` subagents each called the `skill` tool and got full instruction bodies back (`grilling`, `code-review`, `tdd`, `codebase-design`), not errors. `opencode.jsonc` denies subagents `question` and `todowrite`, so `skill` is reachable; `task` stays allowed on `general` so a subagent can fan out further, while `explore` keeps its read-only surface. The old absolute rule ("never tell a subagent to use skill X by name alone") is therefore wrong **for opencode**, and was written when the only route was manual embedding.
 
 Use both routes, because they fail differently:
 
@@ -55,7 +55,7 @@ stewardship list, so the router never selects it).
 **Workflow**:
 
 1. Maintain the todo list from the first step: exactly one item in progress, update immediately on progress, and add items as the swarm reveals new work.
-2. Round 1 — dispatch parallel subagents, one per investigation axis. Every prompt is self-contained: the goal, exact paths, constraints, the embedded skill methodology, and a deliverable format that requires file:line evidence plus "what would disprove this".
+2. Round 1 — dispatch parallel subagents, one per investigation axis. Every prompt is self-contained: the goal, exact paths, constraints, the embedded skill methodology, and a deliverable format that requires file:line evidence plus "what would disprove this". **Fan-out is not capped**: dispatch as many axes as the work has, and nest when a subagent needs its own swarm (`experimental.subagent_depth: 3`; `general` may spawn subagents). Measured 2026-10-15: one server handled 500 concurrent sessions with zero errors at ~1.1 GB RSS, ~50–100 session-turns/s locally, and DeepSeek's account limit for `deepseek-flash` is 2500 concurrent requests — so the practical constraint is the work's shape, not a client cap.
    - Standing constraint for every research subagent prompt: fidelity fetches (full-page markdown, JS-rendered pages, structured crawls) go through the family wrapper `fcrawl` (verbs scrape/search/map/crawl, e.g. `fcrawl scrape "<url>" -o <file>`; backed by the self-host at 127.0.0.1:3002; `fcrawl -- …` passes raw args to the pinned CLI). Exit 3 = stack down — degrade to webfetch and mark the claim "low-fidelity fetch". fcrawl is a read-only client: never edit the stack's .env/PROXY_SERVER or run compose; egress phase flips belong to quant's prepare_firecrawl_phase.sh. Battle-readiness scorecard: quant fin_daily docs/research/20260928-firecrawl-battle-readiness.md.
 3. Round 2 — adversarial round. For every reported finding, dispatch an attacker whose assignment is to KILL the finding (grilling discipline): re-read the quoted code, check reachability in the real configuration, and reduce scope when it cannot kill outright. Also assign a reverse attacker to every "all clear / works fine" verdict.
 4. Adjudicate personally. Re-read the code behind every killed verdict and every high-severity surviving verdict before reporting. Label anything relayed from a single subagent without your own verification as single-source.

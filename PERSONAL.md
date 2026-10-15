@@ -133,7 +133,7 @@ Long-lived decisions are recorded as ADRs in `docs/adr/` (format and when-to-wri
 
 Copy from the live file when the two drift: `cp ~/.config/opencode/opencode.jsonc opencode.jsonc` in the repo root, then `diff` both. The 2026-10-08 audit found the root copy stale by a whole provider switch (mimo pins, no deepseek block) because the old wording only described the reverse direction; the live file is the source of truth for what is actually running. The 2026-10-15 removal ran the other way: all three copies lost the two blocks in the same pass, and `check-names-only` now fails the push if a seed template ever ships a value instead of a placeholder.
 
-The agent section is now identical in all three copies (two profiles: `auto` blue `#5c9cf5`, `goal` red `#e06c75`, `build`/`plan` `"disable": true`, `default_agent: "auto"`; the goal markdown keeps `#e06c75` in its frontmatter). **Resolved 2026-10-15:** the two removed blocks took their own pins with them, and the deepseek block's pin (606784, the same number as its `limit.input`) was dropped from the two snapshot copies, because the live config never carried it and `check-drift` requires the snapshot to match the running file. All three copies are now byte-identical (`bfe222f3cc8c`) and `check-drift` reports 0 drift; it still compares bootstrap -> live only.
+The agent section is now identical in all three copies (two profiles: `auto` blue `#5c9cf5`, `goal` red `#e06c75`, `build`/`plan` `"disable": true`, `default_agent: "auto"`; the goal markdown keeps `#e06c75` in its frontmatter). **Resolved 2026-10-15:** the two removed blocks took their own pins with them, and the deepseek block's pin (606784, the same number as its `limit.input`) was dropped from the two snapshot copies, because the live config never carried it and `check-drift` requires the snapshot to match the running file. All three copies are now byte-identical (`bfe222f3cc8c` → `67f23a81da50` after the swarm-default change below) and `check-drift` reports 0 drift; it still compares bootstrap -> live only.
 
 Data backend (2026-09-29 consolidation): the canonical SQLite DB is `~/.local/share/opencode/opencode-main.db`. The binary names the DB after its build channel (`packages/core/src/database/database.ts` `path()`), which forked history across `opencode.db` / `opencode-local.db` / `opencode-main.db`; the pin `OPENCODE_DB=opencode-main.db` in `~/.config/environment.d/10-opencode-db.conf` plus the `~/.local/bin/opencode` wrapper forces one file for every build flavor. The orphan DBs were merged in with `opencode-dbctl migrate` (INSERT OR IGNORE) and retired by rename under `~/.local/share/opencode/retired-20260929/` (kept, never deleted). Day-to-day management: `script/dbctl.py` (`opencode-dbctl`), machine-B reproduction bundle: `bootstrap/`.
 
@@ -469,6 +469,130 @@ Residual risks worth watching (unchanged this round, each with a trigger to revi
 4. The C5 pin covers today's set at 96 KB; a new upstream tool trips both the set pin and the budget, which is intended.
 5. A restored upstream provider brings its cassettes back with it — the sync's delete/modify automation only handles "we deleted, upstream did not".
 6. `debt-ratchet` counts text: a comment containing `: any`, `TODO`, `FIXME`, `XXX` or a `@ts-` prefix moves the metric, so new comments have to avoid those shapes.
+
+## 2026-10-15: archive absorption check (`cw-lsp-verify`, `opencode-upgrade-archive`)
+
+Both directories under `~/Documents/Development/archive/` were checked item by item, then moved to the
+freedesktop trash (`gio trash`, same filesystem, so the move is instant and reversible). Evidence:
+
+- **`opencode-upgrade-archive`** — 10 git worktrees of this repo (~35 GB) plus two handoff documents.
+  - Every work-package branch is merged: `sync-v2`, `wp-keys`, `wp-lsp-wip`, `wp-modes`, `wp-plugins`,
+    `wp-runtime`, `wp-tui`, `wp-update`, `wp-vendor` all report `ahead_of_main=0` and
+    `merge-base --is-ancestor <branch> main` = YES.
+  - No worktree held uncommitted work. The registrations were already gone (`.git/worktrees/` empty,
+    `git worktree list` shows only the main checkout), so each tree was compared against its branch with a
+    throwaway index (`GIT_INDEX_FILE=… git --git-dir=<repo>/.git --work-tree=<tree> add -A` then
+    `diff --cached --stat <branch>`). All ten diffs are the same five files, and all five exist on disk —
+    they are ignored paths (`.vscode`, `.opencode`) that a fresh index cannot see. No modified tracked file,
+    no non-ignored untracked file.
+  - The two handoff documents are the only non-reconstructible content; both are preserved byte-identical
+    in `docs/history/` (`opencode-v2-handoff-20261012.md` sha256 `d4ad5d80…`, briefing `3fae7bd6…`).
+  - `opencode-upstream/` was a detached checkout of `707de58326`; that commit is still reachable
+    (`git cat-file -t` = commit) and is an ancestor of `upstream/dev`, so the tree is reconstructible.
+  - Handoff §5 "not done" items re-audited: LSP tests now exist (`test/fork/lsp-client.test.ts` 377 lines,
+    `lsp-download.test.ts` 148, `lsp-service.test.ts` 607 incl. `OPENCODE_DISABLE_LSP_DOWNLOAD` cases,
+    `test/plugin/fork/lsp.test.ts` 327), `debug lsp` exists (`packages/cli/src/commands/commands.ts:112`),
+    plugin/tool ports and the runtime items landed in rounds 1–3, the "~47 deleted core cases" audit is
+    recorded at PERSONAL.md:113. Two items are superseded rather than missing: the `goal.updated` event
+    (the goal now mirrors into `session.metadata.goal`, `plugin/fork/modes.ts:79-87`) and the TUI
+    `⎇`/agent-follow footer (the status bar carries the active agent).
+  - Stale markers found and fixed in this commit: `tool/plugin/edit.ts`, `tool/plugin/write.ts` and
+    `file-mutation.ts` still said "TODO: … LSP notification and diagnostics after LSP runtime exists",
+    but that work is implemented in `plugin/fork/lsp.ts` (`execute.after` hook, 15 s budget,
+    `metadata.diagnostics`).
+- **`cw-lsp-verify`** — the 2026-10-12 probe harness for codewhale's runtime LSP API (`/v1/lsp`,
+  `/v1/diagnostics`). Absorbed: the python override it established (`basedpyright-langserver --stdio`)
+  is in the live `~/.codewhale/config.toml`; the `typeCheckingMode: "standard"` finding is in the live
+  opencode config (`lsp.pyright`) with its rationale; the LSP client handshake it captured
+  (`lsp_capture.jsonl`: `positionEncodings: ["utf-16"]`, `publishDiagnostics.versionSupport`,
+  `workspaceFolders`) is covered by this repo's `test/fork/lsp-client.test.ts` (workspaceFolders case) and
+  by codewhale's own `crates/tui/src/lsp/client.rs`. Nothing live referenced the directory
+  (no hit for `/home/eric/cw-lsp-verify` under `~/.config`, `~/.codewhale`, `~/.bashrc`).
+- Deliberately **kept**: `~/.local/share/oc-v2-scratch/` (3.3 GB drill playground with the real-DB copy,
+  `briefing/tripwire.sh`, `cleanup-keys.prototype.ts`) and `~/.local/share/opencode/backup-20260929/`.
+  Both are live tooling, not archive material.
+
+## 2026-10-15: swarm is the default for `auto` and `goal`; measured fan-out
+
+Owner call: new tasks default to swarm research, `auto` and `goal` both; no cap on the number of child
+processes (DeepSeek allows 500 concurrent per account for `deepseek-v4-pro`, 2500 for `deepseek-flash`);
+parameter optimization lands in the same commit.
+
+### What changed
+
+| Surface | Change | Why |
+| --- | --- | --- |
+| `packages/core/src/plugin/fork/mode/auto.txt` | standing card gains the swarm mandate | the card is the only per-agent injection point that reaches the wire (`modes.ts:92-103` → `cards.ts:14-16` → `model-request.ts:431-439,245-257,288`); the `instructions` files are session-wide and leak into subagents |
+| `dotfiles/opencode/AGENTS.goal.md:7` | trigger covers `auto` as well as `goal` | the playbook must describe itself the way the cards invoke it |
+| `dotfiles/opencode/autonomy.md:9` | "Research defaults to the swarm" bullet | auto's policy file, and the only part that needs no rebuild |
+| `opencode.jsonc` (3 copies, sha256 `67f23a81da50…`) | `experimental.subagent_depth: 3`; `agent.general.permission.task` dropped; `provider.deepseek.options.headerTimeout: 600000` | nesting is allowed for a swarm of swarms; `general` may fan out while `explore` keeps its read-only surface; DeepSeek queues instead of rejecting and only closes an unstarted request after 10 minutes, so the 300 s default header timeout would give up first |
+| `bootstrap/config/environment.d/20-opencode-http.conf` + install.sh pin | `BUN_CONFIG_MAX_HTTP_REQUESTS=1024` | Bun caps in-flight `fetch` at 256 per process, **globally and for the whole response body including SSE streams** (measured by an attacker: 256 with default, 64/600/1024 with the variable, identical in a compiled binary) |
+| `packages/core/src/plugin/fork/modes.ts:92-100` | comment corrected, behavior unchanged | the standing card keys on the session's agent and is **not** parentID-guarded; only the goal card is. A child session that resolves to `auto` (API `session.create` with `agent`, `switchAgent`, command subagents, or an omitted agent falling back to `default_agent`) keeps its profile framing |
+| `packages/core/src/{tool/plugin/edit.ts,tool/plugin/write.ts,file-mutation.ts}` | stale "after LSP runtime exists" TODOs replaced with the real location | that work exists in `plugin/fork/lsp.ts` (`execute.after`, 15 s budget, `metadata.diagnostics`); the three files now carry a one-line local diff each |
+
+The card is baked into the binary at compile time, so a seat picks the swarm default up only after
+`bun run sync-upstream` (or a manual rebuild) plus a restart; `autonomy.md` and the config take effect
+without a rebuild.
+
+### Measured (2026-10-15)
+
+Method: a dedicated `opencode serve` per run (its own `OPENCODE_DB` under `/tmp`, its own port and project
+directory), one session per stage prompted concurrently, RSS and `MemAvailable` guardrails per stage. The
+fan-out ladder used a mock provider behind `OPENCODE_CONFIG_CONTENT` with a configurable response delay;
+the real tier used the live DeepSeek provider with the credential row copied into the isolated DB
+(credentials live in the DB, not `auth.json`, so a fresh DB authenticates as nothing).
+
+| Stage | Sessions | Wall | Errors | Server RSS |
+| --- | --- | --- | --- | --- |
+| mock provider, 20 ms | 8 / 32 / 64 / 128 / 256 / 500 | 0.3 / 0.4 / 1.7 / 2.6 / 4.3 / 8.8 s | 0 / 0 / 0 / 0 / 0 / 0 | 240 / 350 / 450 / 700 / 1005 / 1116 MB |
+| real DeepSeek | 8 / 32 / 64 / 128 / 256 | 1.8 / 1.6 / 2.7 / 2.8 / 5.1 s | 0 / 0 / 0 / 0 / 0 | 256 / 341 / 409 / 675 / 791 MB |
+
+- 500 concurrent sessions are accepted and drained with zero errors and ~1.1 GB RSS; the marginal cost at
+  that size is ~0.34 MB per session.
+- 256 concurrent **real** DeepSeek prompts complete in 5.1 s with zero 429s or 401s. The bench server
+  authenticated from a copy of the live `credential` row (credentials live in the DB in V2, migrated once
+  from `auth.json` by `database/migration/20260805200742_import_legacy_credentials.ts:36-42`).
+- The LLM-layer in-flight count is bounded by the **local pipeline's issue rate** (~57 session-turns/s
+  measured with a 20 ms mock; in-flight = rate × provider latency), not by a client cap. The Bun 256 slots
+  therefore start to bind once turns take ≳ 4.5 s, which is why the pin above matters.
+- Attacker corrections adopted: the mock bench is a *light* workload (10 events per session, no tool calls,
+  no SSE subscribers) while live sessions average ~210 events; the DB path sustains 11k–35k events/s (not
+  the 5.7e5 quoted from a synthetic probe), and the real bottleneck is the single JS event loop plus long
+  exclusive transactions (`history.ts:124-133` holds the global SQLite permit for 11–64 ms per load).
+
+### Residual risk (recorded, not patched)
+
+`opencode service set env` stops the service **before** writing the config (`service-config.ts:284-290`,
+upstream-clean), so a client that re-ensures the service in that window spawns it with the old pins — the
+live service was observed without `BUN_CONFIG_MAX_HTTP_REQUESTS` right after the command. Workaround, now
+in install.sh: run `opencode service restart` after setting the pins. The file is byte-identical to
+`upstream/dev`, and the fork policy keeps upstream files clean, so the two-line reorder (write, then stop)
+is left as an upstream candidate instead of a local patch.
+
+## 2026-10-15: shell and tool output are sanitized before rendering
+
+`strip-ansi` removes *well-formed* escape sequences only. A byte-level probe against the real
+`DialogShellOutput` path (now `packages/tui/test/component/shell-output-sanitization.test.tsx`) fed 35
+payloads through it and 20 of them put a control byte into the rendered frame:
+
+| Payload | Why `strip-ansi` misses it | Terminal effect |
+| --- | --- | --- |
+| `\x1b\x00[31m` | the NUL sits inside the introducer, so the ANSI regex cannot match | the sequence survives *and* the gap keeps it live: clear screen, alt screen, OSC 52 clipboard write, OSC 8 link, title rewrite |
+| `\x00`, `\x08` | bare control bytes are not sequences at all | NUL/backspace reach the frame |
+| `\x9b31m`, `\x9d52;c;…\x9c` | C1 8-bit forms, not matched by the C0-based patterns | CSI/OSC in 8-bit form |
+| `\x1bPq…\x1b\\`, `\x1b\\` | DCS/ST pairs | device-control stream |
+| model-authored command line | echoed raw in the shell tab and the dialog header | same as above, but the model chooses the bytes |
+
+A shell command's output is untrusted by definition (any file it prints, any remote response), so this was
+a real terminal-injection surface, not a theoretical one.
+
+Fix: `packages/tui/src/util/terminal-output.ts` exports `sanitizeTerminalOutput` — `strip-ansi` first,
+then `\r\n?` → `\n`, then every remaining C0/C1 control byte except tab and newline is dropped. It follows
+the pattern `src/attention.ts` already used for titles. Every display sink now calls it instead of
+`strip-ansi` (`dialog-shell-output.tsx` output + command, `composer/shell-tab.tsx` command,
+`dialog-execute.tsx` tool output, `routes/session/index.tsx` shell/tool output, `mini/tool.ts`);
+`util/string-width.node.ts` keeps plain `strip-ansi` because it measures, it does not render.
+`attention.ts` was already correct and is unchanged. After the fix the probe suite is 36/36.
 
 ## Agent rules for this fork
 

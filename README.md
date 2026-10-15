@@ -55,12 +55,12 @@ The build bakes the channel in from the checked-out branch (`OPENCODE_CHANNEL` w
 
 `opencode.jsonc` defines two primary agents, cycled with the agent-cycle key (`Tab` in this fork's `cli.json`):
 
-- **auto** (blue) — the default. Never asks: adopts the recommended option and runs to completion.
+- **auto** (blue) — the default. Never asks: adopts the recommended option and runs to completion. Its standing card carries the swarm mandate too (`packages/core/src/plugin/fork/mode/auto.txt`), so a new task is worked by parallel subagents — Round-1 axes, then Round-2 attackers — instead of single-threaded.
 - **goal** (red) — every message steers one session goal; runs the adversarial subagent swarm playbook in `AGENTS.goal.md`.
 
 Upstream's `build` and `plan` primaries are removed (`"disable": true` in the seat config, so the cycle is exactly auto <-> goal).
 
-Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches.
+Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches. Fan-out is not capped — one server ran 500 concurrent sessions with zero errors (2026-10-15) — and `@general` may spawn its own subagents (`experimental.subagent_depth: 3`), while `explore` stays read-only and cannot.
 
 ### Documentation
 
