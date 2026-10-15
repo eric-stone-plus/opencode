@@ -45,8 +45,6 @@ export function effective(model: Model.Info, variant: Model.VariantID | undefine
 const EFFORTS = ["low", "medium", "high"]
 const ADAPTIVE_THINKING = { type: "adaptive", display: "summarized" }
 const ANTHROPIC_OUTPUT_TOKEN_MAX = 32_000
-// Alibaba thinking budget variants stay under 64k instead of reaching the model's whole output limit.
-const ALIBABA_THINKING_BUDGET_MAX = 64_000
 
 const variant = (id: string, overlay: Overlay): Variants[number] => ({ id: Model.VariantID.make(id), ...overlay })
 
@@ -110,32 +108,6 @@ const deepseekChat: Protocol = (_, support) => {
   }
 }
 
-const alibabaChat: Protocol = (model, support) => {
-  const id = modelID(model).toLowerCase()
-  const fixed =
-    id.includes("-thinking") || id.includes("qwq") || id.includes("deepseek-r1") || id.includes("minimax-m2")
-  switch (support.type) {
-    case "effort": {
-      if (fixed && support.values === undefined) return []
-      const hosted = id.includes("deepseek")
-      const values = support.values ?? (hosted ? ["high", "max"] : ["low", "medium", "xhigh"])
-      return efforts(values, (effort) => {
-        if (effort === "none") return { settings: { enableThinking: false } }
-        return { settings: { enableThinking: true, reasoningEffort: effort } }
-      })
-    }
-    case "toggle":
-      return toggle({ settings: { enableThinking: false } }, { settings: { enableThinking: true } })
-    case "budget_tokens":
-      return budgets(
-        model,
-        support,
-        (tokens) => ({ settings: { enableThinking: true, thinkingBudget: tokens } }),
-        ALIBABA_THINKING_BUDGET_MAX,
-      )
-  }
-}
-
 const anthropicMessages: Protocol = (model, support) => {
   const info = claudeInfo(model)
   const opus45 = info.family === "opus" && info.major === 4 && info.minor === 5
@@ -168,33 +140,8 @@ const anthropicMessages: Protocol = (model, support) => {
   }
 }
 
-const alibabaMessages: Protocol = (model, support) => {
-  const id = modelID(model).toLowerCase()
-  switch (support.type) {
-    case "effort": {
-      const hosted = id.includes("deepseek")
-      const values = support.values ?? (hosted ? ["high", "max"] : ["low", "medium", "xhigh"])
-      return efforts(values, (effort) => {
-        if (effort === "none") return { settings: { thinking: { type: "disabled" } } }
-        return { settings: { thinking: { type: "enabled" }, effort } }
-      })
-    }
-    case "toggle":
-      return toggle({ settings: { thinking: { type: "disabled" } } }, { settings: { thinking: { type: "enabled" } } })
-    case "budget_tokens":
-      return budgets(
-        model,
-        support,
-        (tokens) => ({ settings: { thinking: { type: "enabled", budgetTokens: tokens } } }),
-        ALIBABA_THINKING_BUDGET_MAX,
-      )
-  }
-}
-
 const PROTOCOLS: Readonly<Record<string, Protocol>> = {
   "@opencode/ai/providers/openai-compatible": openaiChat,
-  "@opencode/ai/providers/alibaba/chat": alibabaChat,
   "@opencode/ai/providers/deepseek": deepseekChat,
   "@opencode/ai/providers/anthropic": anthropicMessages,
-  "@opencode/ai/providers/alibaba/messages": alibabaMessages,
 }

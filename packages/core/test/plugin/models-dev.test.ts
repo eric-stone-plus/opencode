@@ -717,13 +717,13 @@ describe("ModelsDevPlugin", () => {
       )
       expect(yield* integrations.list()).toEqual([
         Integration.Info.make({
-          id: Integration.ID.make("xiaomi-token-plan-cn"),
-          name: "Xiaomi Token Plan (China)",
+          id: Integration.ID.make("deepseek"),
+          name: "DeepSeek",
           methods: [
             { type: "key" },
             {
               type: "env",
-              names: ["XIAOMI_API_KEY"],
+              names: ["DEEPSEEK_API_KEY"],
             },
           ],
           connections: [],
@@ -904,43 +904,6 @@ describe("ModelsDevPlugin", () => {
         body: { reasoning: { mode: "pro" } },
       })
 
-      const alibaba = Provider.ID.make("alibaba")
-      const toggle = yield* modelState.get(alibaba, Model.ID.make("toggle-only"))
-      expect(toggle?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
-        { id: Model.VariantID.make("thinking"), settings: { enableThinking: true } },
-      ])
-
-      const combined = yield* modelState.get(alibaba, Model.ID.make("toggle-budget"))
-      expect(combined?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
-        {
-          id: Model.VariantID.make("high"),
-          settings: { enableThinking: true, thinkingBudget: 8000 },
-        },
-        {
-          id: Model.VariantID.make("max"),
-          settings: { enableThinking: true, thinkingBudget: 16000 },
-        },
-      ])
-
-      const effort = yield* modelState.get(alibaba, Model.ID.make("qwen-effort"))
-      expect(effort?.variants).toEqual([
-        { id: Model.VariantID.make("none"), settings: { enableThinking: false } },
-        ...["low", "medium", "xhigh"].map((id) => ({
-          id: Model.VariantID.make(id),
-          settings: { enableThinking: true, reasoningEffort: id },
-        })),
-      ])
-
-      const messages = yield* modelState.get(alibaba, Model.ID.make("qwen-messages"))
-      expect(messages?.package).toBe("@opencode/ai/providers/alibaba/messages")
-      expect(messages?.variants).toEqual(
-        ["low", "medium", "xhigh"].map((id) => ({
-          id: Model.VariantID.make(id),
-          settings: { thinking: { type: "enabled" }, effort: id },
-        })),
-      )
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "fixtures", "models-dev-reasoning.json")))),
   )
 })
@@ -948,7 +911,7 @@ describe("ModelsDevPlugin", () => {
 // The fork's price cascade (fork/pricing.ts): zero-priced subscription rows resolve to the
 // flagship they alias, so plan usage is priced instead of silently reading $0.
 describe("fork pricing in the live catalog", () => {
-  it.effect("estimates zero-priced subscription rows during normalize", () =>
+  it.effect("keeps the declared prices of the shipped catalog, which is DeepSeek only", () =>
     Effect.gen(function* () {
       const service = yield* ModelsDev.Service
       const snapshot = yield* service.get()
@@ -956,10 +919,11 @@ describe("fork pricing in the live catalog", () => {
         snapshot
           .find((entry) => String(entry.info.id) === providerID)
           ?.models.find((model) => String(model.id) === modelID)
-      // canonical chain: alibaba-coding-plan/qwen3.7-plus -> alibaba/qwen3.7-plus
-      expect(row("alibaba-coding-plan", "qwen3.7-plus")?.cost[0]).toMatchObject({ input: 0.4, output: 1.6 })
       // declared prices stay untouched
       expect(row("deepseek", "deepseek-flash")?.cost[0]).toMatchObject({ input: 0.15, output: 0.6 })
+      // the removed vendors cannot come back through the snapshot (ADR 0009)
+      expect(row("alibaba-coding-plan", "qwen3.7-plus")).toBeUndefined()
+      expect(row("xiaomi-token-plan-cn", "mimo-v2.6-pro")).toBeUndefined()
     }).pipe(Effect.provide(models(path.join(import.meta.dir, "../../src/models-dev/snapshot.txt")))),
   )
 })

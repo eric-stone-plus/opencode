@@ -54,23 +54,11 @@ export function rewrite<ID extends string>(
 }
 
 const PACKAGES: Readonly<Record<string, string>> = {
-  "@ai-sdk/alibaba": "@opencode/ai/providers/alibaba/chat",
   "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
   "@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible",
 }
 
-const protocols = (name: string) => ({
-  "@ai-sdk/openai-compatible": `@opencode/ai/providers/${name}/chat`,
-  "@ai-sdk/anthropic": `@opencode/ai/providers/${name}/messages`,
-})
-
 const HOSTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  alibaba: protocols("alibaba"),
-  "alibaba-cn": protocols("alibaba"),
-  "alibaba-coding-plan": protocols("alibaba"),
-  "alibaba-coding-plan-cn": protocols("alibaba"),
-  "alibaba-token-plan": protocols("alibaba"),
-  "alibaba-token-plan-cn": protocols("alibaba"),
   deepseek: { "@ai-sdk/openai-compatible": "@opencode/ai/providers/deepseek" },
 }
 

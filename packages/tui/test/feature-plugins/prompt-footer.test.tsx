@@ -280,12 +280,12 @@ test("prompt footer reports the cache hit rate of the current model's receipts",
 })
 
 test("prompt footer reports the current model's cells after a model switch", async () => {
-  // A long MiMo run before the switch must not leak into any cell: the row describes DeepSeek,
+  // A long run on another plan before the switch must not leak into any cell: the row describes DeepSeek,
   // the model in use, as soon as one of its calls has settled.
-  const mimo = {
+  const previous = {
     ...settled,
-    id: "mimo",
-    model: { providerID: "mimo", id: "mimo" },
+    id: "plan",
+    model: { providerID: "deepseek-plan", id: "deepseek-plan-pro" },
     content: [{ type: "reasoning", text: "", time: { created: 5_500 } }],
     time: { created: 0, streamed: 60_000, completed: 61_000 },
     tokens: { input: 0, output: 10_000, reasoning: 0, cache: { read: 9_000, write: 0 } },
@@ -300,7 +300,7 @@ test("prompt footer reports the current model's cells after a model switch", asy
   const app = await testRender(
     () => (
       <ConfigProvider config={createTuiResolvedConfig()}>
-        <PromptFooter context={speedContext([mimo, deepseek])} sessionID="session" mode="normal" showDetails={true} />
+        <PromptFooter context={speedContext([previous, deepseek])} sessionID="session" mode="normal" showDetails={true} />
       </ConfigProvider>
     ),
     { width: 140, height: 1 },
@@ -308,7 +308,7 @@ test("prompt footer reports the current model's cells after a model switch", asy
   try {
     await app.renderOnce()
     // Context 1.5K of 10K, 700 ms to the first reasoning of the DeepSeek call, 500 tokens in 1 s,
-    // and 500 read / (500 read + 500 uncached) cached — MiMo's 10K tokens and 60 s excluded.
+    // and 500 read / (500 read + 500 uncached) cached — the plan's 10K tokens and 60 s excluded.
     expect(app.captureCharFrame()).toContain(
       "1.5K (15%) · $1.00 · TTFT avg 700ms · TPOT avg 2ms/tok · 500 tok/s · CACHE 50%",
     )

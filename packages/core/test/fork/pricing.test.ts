@@ -103,14 +103,16 @@ describe("ForkPricing.toModelCost", () => {
 })
 
 describe("ForkPricing against the bundled catalog", () => {
-  test("estimates subscription-plan models from their canonical flagship", () => {
-    const qwen = ForkPricing.estimate(catalog, "alibaba-coding-plan", "qwen3.7-plus")
-    expect(qwen?.[0]).toMatchObject({ input: 0.4, output: 1.6, cache: { read: 0.04, write: 0.5 } })
+  test("ships the DeepSeek catalog only, so no zero-priced subscription row is left to estimate", () => {
+    expect(Object.keys(catalog)).toEqual(["deepseek"])
+    // A zero-priced row would resolve through its canonical flagship; every shipped row
+    // declares its own rate, so `estimate` leaves the declared price to the caller.
+    expect(ForkPricing.estimate(catalog, "deepseek", "deepseek-flash")).toBeUndefined()
   })
 
   test("estimates a provider the catalog never carried by name", () => {
-    const qwen = ForkPricing.estimate(catalog, "bailian-token-plan-personal", "qwen3.8-max")
-    expect(qwen?.[0]).toMatchObject({ input: 2, output: 6, cache: { read: 0.25, write: 2.5 } })
+    const found = ForkPricing.estimate(catalog, "acme-token-plan", "deepseek-v4-flash")
+    expect(found?.[0]).toMatchObject({ input: 0.15, output: 0.6 })
   })
 
   test("leaves a model that declares its own price to the caller", () => {
@@ -122,14 +124,14 @@ describe("ForkPricing named table", () => {
   test("keeps the median across same-named rows and clones on read", () => {
     ForkPricing.publishNamed(
       new Map([
-        ["mimo-v2.6-pro", [[entry(1.1, 3.1)], [entry(1.4, 4.4)], [entry(1.5, 4.5)]]],
+        ["deepseek-plan-pro", [[entry(1.1, 3.1)], [entry(1.4, 4.4)], [entry(1.5, 4.5)]]],
       ]),
     )
-    const found = ForkPricing.namedCost("MIMO-V2.6-PRO")
+    const found = ForkPricing.namedCost("DEEPSEEK-PLAN-PRO")
     expect(found?.[0]).toMatchObject({ input: 1.4, output: 4.4 })
     expect(ForkPricing.namedCost("missing")).toBeUndefined()
     // The read must be a copy: a consumer that mutates it cannot corrupt the table.
-    const second = ForkPricing.namedCost("mimo-v2.6-pro")
+    const second = ForkPricing.namedCost("deepseek-plan-pro")
     expect(second).not.toBe(found)
     expect(second?.[0]).not.toBe(found?.[0])
   })

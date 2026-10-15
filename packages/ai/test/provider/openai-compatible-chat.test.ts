@@ -123,14 +123,14 @@ describe("OpenAI-compatible Chat route", () => {
       })
       expect(JSON.stringify(declared.body)).not.toContain('"ttl"')
 
-      const alibaba = yield* prepare("alibaba")
-      expect(alibaba.body).toMatchObject({
+      const dialect = yield* prepare("alibaba")
+      expect(dialect.body).toMatchObject({
         messages: [
           { role: "system", content: [{ type: "text", text: "You are concise.", cache_control: { type: "ephemeral" } }] },
           { role: "user", content: [{ type: "text", text: "Say hello.", cache_control: { type: "ephemeral" } }] },
         ],
       })
-      expect(alibaba.body.tools?.[0]?.cache_control).toBeUndefined()
+      expect(dialect.body.tools?.[0]?.cache_control).toBeUndefined()
 
       expect(JSON.stringify((yield* prepare(undefined)).body)).not.toContain("cache_control")
     }),

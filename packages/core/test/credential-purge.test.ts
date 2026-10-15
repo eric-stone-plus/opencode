@@ -18,11 +18,11 @@ import { it } from "./lib/effect"
 import { tmpdirScoped } from "./fixture/tmpdir"
 
 // Obviously fake values: long enough to be searched for, and nothing like a real key.
-const QWEN = "fake-qwen-key-aaaaaaaaaaaaaaaa"
-const MIMO = "fake-mimo-key-bbbbbbbbbbbbbbbb"
+const PLAN = "fake-plan-key-aaaaaaaaaaaaaaaa"
+const CODING = "fake-coding-key-bbbbbbbbbbbbbbbb"
 const DEEPSEEK = "fake-deepseek-key-cccccccccccc"
 const bailian = Integration.ID.make("bailian-token-plan-personal")
-const mimo = Integration.ID.make("mimo-coding-plan")
+const coding = Integration.ID.make("deepseek-coding")
 const deepseek = Integration.ID.make("deepseek")
 type Fixture = {
   readonly root: string
@@ -115,7 +115,7 @@ const linux = process.platform === "linux"
 const win32 = process.platform === "win32"
 const home = (...segments: string[]) => path.join("~", ...segments)
 // Only Linux has a user manager to sweep, so this row exists in expectations there and nowhere else.
-const systemdRow = { kind: "systemd" as const, location: "QWEN_PIN", count: 1 }
+const systemdRow = { kind: "systemd" as const, location: "PLAN_PIN", count: 1 }
 const expectMode = (actual: number, expected: number) => {
   if (!win32) expect(actual).toBe(expected)
 }
@@ -160,25 +160,25 @@ describe("CredentialPurge", () => {
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
-        fixture.manager.set("QWEN_PIN", QWEN)
-        yield* key(mimo, MIMO, "Work")
-        yield* key(mimo, QWEN, "Personal")
+        fixture.manager.set("PLAN_PIN", PLAN)
+        yield* key(coding, CODING, "Work")
+        yield* key(coding, PLAN, "Personal")
         const kept = yield* key(deepseek, DEEPSEEK, "default")
 
-        const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [mimo] }))
+        const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [coding] }))
 
         expect(result.dryRun).toBe(false)
         // The selected credential is removed last, so the integration switches once, to nothing.
         expect(result.credentials.map((item) => [item.integrationID, item.label, item.removed])).toEqual([
-          [mimo, "Work", true],
-          [mimo, "Personal", true],
+          [coding, "Work", true],
+          [coding, "Personal", true],
         ])
-        expect(yield* credentials.list(mimo)).toEqual([])
+        expect(yield* credentials.list(coding)).toEqual([])
         expect(yield* credentials.all()).toEqual([kept])
         expect(result.secrets).toEqual({ distinct: 2, shared: 0, short: 0 })
         expect(result.swept).toEqual([])
         // Places the run was not asked to clean are still looked at, so the report says what is left in them.
-        expect(result.remaining).toEqual(linux ? [{ kind: "systemd", location: "QWEN_PIN", count: 1 }] : [])
+        expect(result.remaining).toEqual(linux ? [{ kind: "systemd", location: "PLAN_PIN", count: 1 }] : [])
         expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
@@ -190,21 +190,21 @@ describe("CredentialPurge", () => {
     scenario((fixture) =>
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
-        fixture.manager.set("QWEN_PIN", QWEN)
-        yield* key(bailian, QWEN)
-        yield* key(mimo, MIMO)
+        fixture.manager.set("PLAN_PIN", PLAN)
+        yield* key(bailian, PLAN)
+        yield* key(coding, CODING)
         const authFile = file(fixture, "data", "auth.json")
         const envFile = file(fixture, ".config", "opencode", "env")
-        const confFile = file(fixture, ".config", "environment.d", "95-qwen-provider.conf")
+        const confFile = file(fixture, ".config", "environment.d", "95-plan-provider.conf")
         const otherConf = file(fixture, ".config", "environment.d", "90-fcitx5.conf")
         const settingsFile = file(fixture, ".config", "opencode", "service.json")
         yield* write(
           authFile,
           JSON.stringify(
             {
-              [bailian]: { type: "api", key: QWEN },
-              "renamed-alias": { type: "api", key: QWEN },
-              [mimo]: { type: "api", key: MIMO },
+              [bailian]: { type: "api", key: PLAN },
+              "renamed-alias": { type: "api", key: PLAN },
+              [coding]: { type: "api", key: CODING },
               [deepseek]: { type: "api", key: DEEPSEEK },
             },
             null,
@@ -215,21 +215,21 @@ describe("CredentialPurge", () => {
           envFile,
           [
             "# seed",
-            `export QIANWEN_TP_PERSONAL_KEY=${QWEN}`,
-            `export QUOTED="${QWEN}"`,
+            `export QIANWEN_TP_PERSONAL_KEY=${PLAN}`,
+            `export QUOTED="${PLAN}"`,
             "export OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=65536",
             "",
           ].join("\n"),
         )
         yield* write(
           confFile,
-          [`QIANWEN_TP_PERSONAL_KEY=${QWEN}`, "QIANWEN_TP_PERSONAL_BASE_URL=https://example.invalid/v1", ""].join("\n"),
+          [`QIANWEN_TP_PERSONAL_KEY=${PLAN}`, "QIANWEN_TP_PERSONAL_BASE_URL=https://example.invalid/v1", ""].join("\n"),
           0o644,
         )
         yield* write(otherConf, "QT_IM_MODULE=fcitx\n", 0o644)
         yield* write(
           settingsFile,
-          JSON.stringify({ password: "service-password-fake", env: { QWEN_PIN: QWEN, KEEP: "yes" } }, null, 2) + "\n",
+          JSON.stringify({ password: "service-password-fake", env: { PLAN_PIN: PLAN, KEEP: "yes" } }, null, 2) + "\n",
         )
 
         const { value: result, entries } = yield* recorded(
@@ -237,7 +237,7 @@ describe("CredentialPurge", () => {
         )
 
         expect(JSON.parse(yield* read(authFile))).toEqual({
-          [mimo]: { type: "api", key: MIMO },
+          [coding]: { type: "api", key: CODING },
           [deepseek]: { type: "api", key: DEEPSEEK },
         })
         expect((yield* read(authFile)).endsWith("}\n")).toBe(true)
@@ -252,7 +252,7 @@ describe("CredentialPurge", () => {
         expect(result.swept).toEqual([
           { kind: "auth", location: home("data", "auth.json"), count: 2 },
           { kind: "env", location: home(".config", "opencode", "env"), count: 2 },
-          { kind: "environment.d", location: home(".config", "environment.d", "95-qwen-provider.conf"), count: 1 },
+          { kind: "environment.d", location: home(".config", "environment.d", "95-plan-provider.conf"), count: 1 },
           { kind: "service", location: home(".config", "opencode", "service.json"), count: 1 },
           ...(linux ? [systemdRow] : []),
         ])
@@ -261,7 +261,7 @@ describe("CredentialPurge", () => {
           linux
             ? [
                 ["systemctl", "--user", "show-environment"],
-                ["systemctl", "--user", "unset-environment", "QWEN_PIN"],
+                ["systemctl", "--user", "unset-environment", "PLAN_PIN"],
                 ["systemctl", "--user", "show-environment"],
               ]
             : [],
@@ -276,10 +276,10 @@ describe("CredentialPurge", () => {
     scenario((fixture) =>
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         const real = file(fixture, "dotfiles", "env")
         const link = file(fixture, ".config", "opencode", "env")
-        yield* write(real, `export QIANWEN_TP_PERSONAL_KEY=${QWEN}\nexport KEEP=1\n`)
+        yield* write(real, `export QIANWEN_TP_PERSONAL_KEY=${PLAN}\nexport KEEP=1\n`)
         yield* Effect.promise(async () => {
           await fs.mkdir(path.dirname(link), { recursive: true })
           await fs.symlink(real, link)
@@ -300,17 +300,17 @@ describe("CredentialPurge", () => {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
         const db = (yield* Database.Service).db
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         const authFile = file(fixture, "data", "auth.json")
         const envFile = file(fixture, ".config", "opencode", "env")
         const log = file(fixture, "data", "log", "opencode.log")
-        yield* write(authFile, JSON.stringify({ [bailian]: { type: "api", key: QWEN } }, null, 2) + "\n")
-        yield* write(envFile, `export QIANWEN_TP_PERSONAL_KEY=${QWEN}\n`)
-        yield* write(log, `line with ${QWEN}\n`)
-        yield* db.run(sql`INSERT INTO kv (key, value, time_created, time_updated) VALUES ('probe', ${`{"k":"${QWEN}"}`}, 1, 1)`)
+        yield* write(authFile, JSON.stringify({ [bailian]: { type: "api", key: PLAN } }, null, 2) + "\n")
+        yield* write(envFile, `export QIANWEN_TP_PERSONAL_KEY=${PLAN}\n`)
+        yield* write(log, `line with ${PLAN}\n`)
+        yield* db.run(sql`INSERT INTO kv (key, value, time_created, time_updated) VALUES ('probe', ${`{"k":"${PLAN}"}`}, 1, 1)`)
         const before = [yield* read(authFile), yield* read(envFile), yield* read(log)]
         const previous = yield* secureDelete(db)
-        process.env.PURGE_TEST_PREVIEW = QWEN
+        process.env.PURGE_TEST_PREVIEW = PLAN
 
         const result = yield* purge.run({ all: true, files: true, history: true, compact: true, dryRun: true }).pipe(
           Effect.ensuring(Effect.sync(() => delete process.env.PURGE_TEST_PREVIEW)),
@@ -333,7 +333,7 @@ describe("CredentialPurge", () => {
         expect([yield* read(authFile), yield* read(envFile), yield* read(log)]).toEqual(before)
         expect(
           (yield* db.get<{ value: string }>(sql`SELECT value FROM kv WHERE key = 'probe'`))?.value,
-        ).toContain(QWEN)
+        ).toContain(PLAN)
         expect(yield* secureDelete(db)).toBe(previous)
         expect(fixture.commands.some((command) => command.includes("unset-environment"))).toBe(false)
       }),
@@ -346,16 +346,16 @@ describe("CredentialPurge", () => {
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
-        yield* key(bailian, QWEN)
-        yield* key(mimo, QWEN)
-        yield* key(mimo, "short")
+        yield* key(bailian, PLAN)
+        yield* key(coding, PLAN)
+        yield* key(coding, "short")
         const envFile = file(fixture, ".config", "opencode", "env")
-        yield* write(envFile, [`export SHARED=${QWEN}`, "export TINY=short", ""].join("\n"))
+        yield* write(envFile, [`export SHARED=${PLAN}`, "export TINY=short", ""].join("\n"))
 
-        const result = yield* purge.run({ integrationIDs: [mimo], files: true })
+        const result = yield* purge.run({ integrationIDs: [coding], files: true })
 
         expect(result.secrets).toEqual({ distinct: 0, shared: 1, short: 1 })
-        expect(yield* read(envFile)).toBe([`export SHARED=${QWEN}`, "export TINY=short", ""].join("\n"))
+        expect(yield* read(envFile)).toBe([`export SHARED=${PLAN}`, "export TINY=short", ""].join("\n"))
         expect((yield* credentials.all()).map((item) => item.integrationID)).toEqual([bailian])
       }),
     ),
@@ -366,13 +366,13 @@ describe("CredentialPurge", () => {
     scenario((fixture) =>
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
-        fixture.manager.set("QWEN_PIN", QWEN)
-        yield* key(bailian, QWEN)
+        fixture.manager.set("PLAN_PIN", PLAN)
+        yield* key(bailian, PLAN)
 
         const { result, exact, embedded } = yield* Effect.acquireUseRelease(
           Effect.sync(() => {
-            process.env.PURGE_TEST_EXACT = QWEN
-            process.env.PURGE_TEST_EMBEDDED = `Bearer ${QWEN}`
+            process.env.PURGE_TEST_EXACT = PLAN
+            process.env.PURGE_TEST_EMBEDDED = `Bearer ${PLAN}`
           }),
           () =>
             purge.run({ integrationIDs: [bailian], files: true }).pipe(
@@ -390,15 +390,15 @@ describe("CredentialPurge", () => {
         )
 
         expect(exact).toBeUndefined()
-        expect(embedded).toBe(`Bearer ${QWEN}`)
+        expect(embedded).toBe(`Bearer ${PLAN}`)
         expect(result.swept.filter((item) => item.kind === "process" || item.kind === "systemd")).toEqual([
           ...(linux ? [systemdRow] : []),
           { kind: "process", location: "PURGE_TEST_EXACT", count: 1 },
         ])
-        // systemd is the user manager: on Linux the sweep unsets QWEN_PIN there and the fake drops the
+        // systemd is the user manager: on Linux the sweep unsets PLAN_PIN there and the fake drops the
         // key; elsewhere the variable is left in place because nothing can carry it out of the process.
-        expect([...fixture.manager.keys()]).toEqual(linux ? ["PATH", "OPENCODE_DB"] : ["PATH", "OPENCODE_DB", "QWEN_PIN"])
-        if (linux) expect(fixture.commands).toContainEqual(["systemctl", "--user", "unset-environment", "QWEN_PIN"])
+        expect([...fixture.manager.keys()]).toEqual(linux ? ["PATH", "OPENCODE_DB"] : ["PATH", "OPENCODE_DB", "PLAN_PIN"])
+        if (linux) expect(fixture.commands).toContainEqual(["systemctl", "--user", "unset-environment", "PLAN_PIN"])
         expect(fixture.commands.flat()).not.toContain("OPENCODE_DB")
       }),
     ),
@@ -409,14 +409,14 @@ describe("CredentialPurge", () => {
     scenario((fixture) =>
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         const authFile = file(fixture, "data", "auth.json")
-        yield* write(authFile, `{"${bailian}": {"key": "${QWEN}"`)
+        yield* write(authFile, `{"${bailian}": {"key": "${PLAN}"`)
 
         const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [bailian], files: true }))
 
         expect(result.swept[0]).toEqual({ kind: "auth", location: home("data", "auth.json"), count: 0, error: "INVALID_JSON" })
-        expect(yield* read(authFile)).toContain(QWEN)
+        expect(yield* read(authFile)).toContain(PLAN)
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
     ),
@@ -428,10 +428,10 @@ describe("CredentialPurge", () => {
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
         const db = (yield* Database.Service).db
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         yield* db.run(sql`CREATE TABLE purge_probe (id INTEGER PRIMARY KEY, body TEXT, note TEXT, size INTEGER)`)
-        const json = JSON.stringify({ output: `printed ${QWEN} here`, other: "untouched" })
-        yield* db.run(sql`INSERT INTO purge_probe (body, note, size) VALUES (${json}, ${`plain ${QWEN}`}, 1)`)
+        const json = JSON.stringify({ output: `printed ${PLAN} here`, other: "untouched" })
+        yield* db.run(sql`INSERT INTO purge_probe (body, note, size) VALUES (${json}, ${`plain ${PLAN}`}, 1)`)
         yield* db.run(sql`INSERT INTO purge_probe (body, note, size) VALUES (${'{"clean":true}'}, 'clean', 2)`)
         yield* db.run(sql`INSERT INTO kv (key, value, time_created, time_updated) VALUES ('probe', ${json}, 1, 1)`)
         yield* db.run(sql`INSERT INTO event_sequence (aggregate_id, seq) VALUES ('agg', 1)`)
@@ -440,8 +440,8 @@ describe("CredentialPurge", () => {
         )
         const toolOutput = file(fixture, "data", "tool-output", "tool_000000000001")
         const log = file(fixture, "data", "log", "opencode.log")
-        yield* write(toolOutput, `head\n${QWEN}\ntail\n`)
-        yield* write(log, `a ${QWEN} b\nuntouched\n`, 0o644)
+        yield* write(toolOutput, `head\n${PLAN}\ntail\n`)
+        yield* write(log, `a ${PLAN} b\nuntouched\n`, 0o644)
         const previous = yield* secureDelete(db)
 
         const { value: result, entries } = yield* recorded(purge.run({ integrationIDs: [bailian], history: true }))
@@ -460,7 +460,7 @@ describe("CredentialPurge", () => {
           sql`SELECT body, note, size FROM purge_probe ORDER BY id`,
         ))
         expect(body).toEqual([
-          { body: json.replace(QWEN, "[redacted-key]"), note: "plain [redacted-key]", size: 1 },
+          { body: json.replace(PLAN, "[redacted-key]"), note: "plain [redacted-key]", size: 1 },
           { body: '{"clean":true}', note: "clean", size: 2 },
         ])
         expect(JSON.parse(body[0].body).other).toBe("untouched")
@@ -469,7 +469,7 @@ describe("CredentialPurge", () => {
         expect(yield* read(log)).toBe("a [redacted-key] b\nuntouched\n")
         expectMode(yield* modeOf(log), 0o644)
         expect(yield* secureDelete(db)).toBe(previous)
-        expect(yield* rawCopies(fixture, QWEN)).toBe(0)
+        expect(yield* rawCopies(fixture, PLAN)).toBe(0)
         expect(fixture.commands).toEqual(linux ? [["systemctl", "--user", "show-environment"]] : [])
         expect(JSON.stringify({ result, entries })).not.toContain("fake-")
       }),
@@ -485,12 +485,12 @@ describe("CredentialPurge", () => {
         yield* db.run(sql`PRAGMA secure_delete = OFF`)
         yield* db.run(sql`CREATE TABLE purge_probe (id INTEGER PRIMARY KEY, body TEXT)`)
         // Several pages of text, so the value sits in overflow pages that deleting the row frees without zeroing.
-        const large = `${"x".repeat(30_000)}${QWEN}${"y".repeat(30_000)}`
+        const large = `${"x".repeat(30_000)}${PLAN}${"y".repeat(30_000)}`
         yield* db.run(sql`INSERT INTO purge_probe (id, body) VALUES (1, ${large})`)
         yield* db.run(sql`DELETE FROM purge_probe WHERE id = 1`)
         yield* db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
-        yield* key(bailian, QWEN)
-        expect(yield* rawCopies(fixture, QWEN)).toBeGreaterThan(0)
+        yield* key(bailian, PLAN)
+        expect(yield* rawCopies(fixture, PLAN)).toBeGreaterThan(0)
 
         const reported = yield* purge.run({ integrationIDs: [bailian], history: true })
 
@@ -503,14 +503,14 @@ describe("CredentialPurge", () => {
           }),
         ])
         expect(reported.remaining[0].count).toBeGreaterThan(0)
-        expect(yield* rawCopies(fixture, QWEN)).toBeGreaterThan(0)
+        expect(yield* rawCopies(fixture, PLAN)).toBeGreaterThan(0)
 
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         const compacted = yield* purge.run({ integrationIDs: [bailian], compact: true })
 
         expect(compacted.compact).toEqual({ status: "done" })
         expect(compacted.remaining).toEqual([])
-        expect(yield* rawCopies(fixture, QWEN)).toBe(0)
+        expect(yield* rawCopies(fixture, PLAN)).toBe(0)
         expect((yield* db.all<{ ok: string }>(sql`PRAGMA quick_check`)).map((row) => Object.values(row)[0])).toEqual(["ok"])
       }),
     ),
@@ -548,10 +548,10 @@ describe("CredentialPurge", () => {
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
         const db = (yield* Database.Service).db
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         yield* db.run(sql`CREATE TABLE purge_probe (id INTEGER PRIMARY KEY, body TEXT)`)
-        yield* db.run(sql`INSERT INTO purge_probe (body) VALUES (${`printed ${QWEN}`})`)
-        yield* db.run(sql`INSERT INTO kv (key, value, time_created, time_updated) VALUES ('probe', ${QWEN}, 1, 1)`)
+        yield* db.run(sql`INSERT INTO purge_probe (body) VALUES (${`printed ${PLAN}`})`)
+        yield* db.run(sql`INSERT INTO kv (key, value, time_created, time_updated) VALUES ('probe', ${PLAN}, 1, 1)`)
         yield* db.run(
           sql`CREATE TRIGGER purge_probe_block BEFORE UPDATE ON purge_probe BEGIN SELECT RAISE(ABORT, 'blocked'); END`,
         )
@@ -576,10 +576,10 @@ describe("CredentialPurge", () => {
       Effect.gen(function* () {
         const purge = yield* CredentialPurge.Service
         const credentials = yield* Credential.Service
-        yield* key(bailian, QWEN)
+        yield* key(bailian, PLAN)
         yield* key(deepseek, DEEPSEEK)
         const authFile = file(fixture, "data", "auth.json")
-        yield* write(authFile, JSON.stringify({ [bailian]: { type: "api", key: QWEN }, [deepseek]: { type: "api", key: DEEPSEEK } }, null, 2) + "\n")
+        yield* write(authFile, JSON.stringify({ [bailian]: { type: "api", key: PLAN }, [deepseek]: { type: "api", key: DEEPSEEK } }, null, 2) + "\n")
 
         const result = yield* purge.run({ all: true, files: true })
 

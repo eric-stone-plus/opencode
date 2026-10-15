@@ -21,7 +21,6 @@ import {
 import { Route, Protocol, RequestExecutor, WebSocketTransport } from "@opencode/ai/route"
 import { Provider as ProviderSubpath } from "@opencode/ai/provider"
 import {
-  Alibaba,
   Anthropic,
   AnthropicCompatible,
   DeepSeek,
@@ -96,11 +95,10 @@ describe("public exports", () => {
   })
 
   test("provider barrels expose user-facing facades", () => {
-    for (const provider of [Alibaba, Anthropic, AnthropicCompatible, DeepSeek, OpenAICompatible]) {
+    for (const provider of [Anthropic, AnthropicCompatible, DeepSeek, OpenAICompatible]) {
       expect(provider.configure).toBeFunction()
       expect(provider.model).toBeFunction()
     }
-    expect(Alibaba.configure({ region: "ap-southeast-1", apiKey: "fixture" }).messages).toBeFunction()
     expect(DeepSeek.configure({ apiKey: "fixture" }).model("deepseek-chat").route.id).toBe("deepseek-chat")
     expect(OpenAICompatible.configure({ baseURL: "https://compatible.test/v1" }).model("fixture").route.id).toBe(
       "openai-compatible-chat",
@@ -109,7 +107,6 @@ describe("public exports", () => {
 
   test("only the supported vendors ship a provider facade", async () => {
     expect(Object.keys(await import("@opencode/ai/providers")).toSorted()).toEqual([
-      "Alibaba",
       "Anthropic",
       "AnthropicCompatible",
       "DeepSeek",

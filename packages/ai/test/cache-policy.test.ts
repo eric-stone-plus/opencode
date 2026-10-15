@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { CacheHint, LLM, Message } from "../src/index.js"
 import { Auth } from "../src/route.js"
 import { compileRequest } from "../src/route/client.js"
-import { Alibaba, AnthropicCompatible } from "../src/providers.js"
+import { AnthropicCompatible } from "../src/providers.js"
 import * as AnthropicMessages from "../src/protocols/anthropic-messages.js"
 import * as OpenAIChat from "../src/protocols/openai-chat.js"
 import { applyCachePolicy } from "../src/cache-policy.js"
@@ -16,6 +16,12 @@ const anthropicModel = AnthropicMessages.route
 const openaiModel = OpenAIChat.route
   .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
   .model({ id: "gpt-4o-mini" })
+
+// The `alibaba` cache format is a dialect, not a vendor: it names the `cache_control`
+// marker set that skips tool definitions, and a config-declared provider can select it.
+const alibabaDialectModel = OpenAIChat.route
+  .with({ endpoint: { baseURL: "https://token-plan.test/v1/" }, auth: Auth.bearer("test") })
+  .model({ id: "qwen3.8-max", compatibility: { cacheFormat: "alibaba" } })
 
 describe("applyCachePolicy", () => {
   it.effect("undefined cache resolves to 'auto' (the recommended default)", () =>
@@ -74,36 +80,28 @@ describe("applyCachePolicy", () => {
     }),
   )
 
-  it.effect("Alibaba chat caches the system and conversation tail without marking tools", () =>
+  it.effect("the alibaba cache dialect marks the system and conversation tail but never tools", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
         LLM.request({
-          model: Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" }).chat("qwen3.8-max"),
+          model: alibabaDialectModel,
           system: "You are concise.",
           tools: [{ name: "lookup", description: "Look up a value", inputSchema: { type: "object", properties: {} } }],
           prompt: "hi",
         }),
       )
 
-      expect(prepared.body).toMatchObject({
-        tools: [{ type: "function", function: { name: "lookup" } }],
-        messages: [
-          {
-            role: "system",
-            content: [{ text: "You are concise.", cache_control: { type: "ephemeral" } }],
-          },
-          { role: "user", content: [{ text: "hi", cache_control: { type: "ephemeral" } }] },
-        ],
-      })
       expect(prepared.body.tools?.[0]?.cache_control).toBeUndefined()
+      // One breakpoint on the system prompt and one on the conversation tail.
+      expect(JSON.stringify(prepared.body.messages).match(/cache_control/g)?.length).toBe(2)
     }),
   )
 
-  it.effect("Alibaba chat omits automatic cache markers when cache is none", () =>
+  it.effect("the alibaba cache dialect omits automatic markers when cache is none", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
         LLM.request({
-          model: Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" }).chat("qwen3.8-max"),
+          model: alibabaDialectModel,
           system: "You are concise.",
           prompt: "hi",
           cache: "none",
@@ -111,19 +109,6 @@ describe("applyCachePolicy", () => {
       )
 
       expect(JSON.stringify(prepared.body)).not.toContain("cache_control")
-    }),
-  )
-
-  it.effect("Alibaba chat does not assume non-Qwen models support cache markers", () =>
-    Effect.gen(function* () {
-      const alibaba = Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" })
-      for (const modelID of ["kimi-k3", "qvq-max", "deepseek-v4-flash-0731", "MiniMax-M2.5"]) {
-        const prepared = yield* compileRequest(
-          LLM.request({ model: alibaba.chat(modelID), system: "You are concise.", prompt: "hi" }),
-        )
-
-        expect(JSON.stringify(prepared.body)).not.toContain("cache_control")
-      }
     }),
   )
 
@@ -145,24 +130,6 @@ describe("applyCachePolicy", () => {
         messages: [{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }],
       })
     }),
-  )
-
-  const messagesModels = [
-    ["alibaba-messages", Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" }).messages("qwen3.8-max")],
-  ] as const
-
-  messagesModels.forEach(([route, model]) =>
-    it.effect(`'auto' emits cache markers on ${route}`, () =>
-      Effect.gen(function* () {
-        const prepared = yield* compileRequest(LLM.request({ model, system: "Sys", prompt: "hi" }))
-
-        expect(prepared.route).toBe(route)
-        expect(prepared.body).toMatchObject({
-          system: [{ type: "text", text: "Sys", cache_control: { type: "ephemeral" } }],
-          messages: [{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }],
-        })
-      }),
-    ),
   )
 
   it.effect("'auto' is a no-op on OpenAI (implicit caching protocol)", () =>

@@ -49,7 +49,7 @@ test("usage dialog reports sections, notes, and copies the report", async () => 
                 cost: 0.42,
               },
               {
-                model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn" },
+                model: { id: "deepseek-plan-pro", providerID: "deepseek-plan" },
                 steps: 2,
                 compactions: 1,
                 tokens: { input: 2_000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },

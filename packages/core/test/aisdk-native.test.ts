@@ -67,31 +67,30 @@ describe("AISDKNative", () => {
     })
   })
 
-  test("routes each supported vendor to its dedicated package by provider id", () => {
-    const openaiCompatible = "@ai-sdk/openai-compatible"
-    const anthropic = "@ai-sdk/anthropic"
-    for (const [providerID, npm, expected] of [
-      ["deepseek", openaiCompatible, "@opencode/ai/providers/deepseek"],
-      ["alibaba", openaiCompatible, "@opencode/ai/providers/alibaba/chat"],
-      ["alibaba-cn", anthropic, "@opencode/ai/providers/alibaba/messages"],
-      ["alibaba-coding-plan-cn", openaiCompatible, "@opencode/ai/providers/alibaba/chat"],
-      ["alibaba-token-plan", anthropic, "@opencode/ai/providers/alibaba/messages"],
-    ] as const)
-      expect(AISDKNative.native(npm, { providerID })).toBe(expected)
+  test("routes the supported vendor to its dedicated package by provider id", () => {
+    expect(AISDKNative.native("@ai-sdk/openai-compatible", { providerID: "deepseek" })).toBe(
+      "@opencode/ai/providers/deepseek",
+    )
+    // The same npm on a provider with no host row falls back to the generic facade.
+    expect(AISDKNative.native("@ai-sdk/openai-compatible", { providerID: "deepseek-labs" })).toBe(
+      "@opencode/ai/providers/openai-compatible",
+    )
   })
 
   test("sends declared Anthropic-protocol providers to the Anthropic package", () => {
     expect(AISDKNative.native("@ai-sdk/anthropic", { providerID: "bailian-token-plan-personal" })).toBe(
       "@opencode/ai/providers/anthropic",
     )
-    expect(AISDKNative.native("@ai-sdk/anthropic", { providerID: "mimo-coding-plan" })).toBe(
-      "@opencode/ai/providers/anthropic",
-    )
-    expect(AISDKNative.native("@ai-sdk/alibaba", { providerID: "alibaba" })).toBe("@opencode/ai/providers/alibaba/chat")
   })
 
   test("leaves packages of unsupported vendors to the generic AI SDK bridge", () => {
-    for (const npm of ["@ai-sdk/openai", "@ai-sdk/google", "@ai-sdk/amazon-bedrock", "@openrouter/ai-sdk-provider"]) {
+    for (const npm of [
+      "@ai-sdk/openai",
+      "@ai-sdk/google",
+      "@ai-sdk/amazon-bedrock",
+      "@ai-sdk/alibaba",
+      "@openrouter/ai-sdk-provider",
+    ]) {
       expect(AISDKNative.native(npm, { providerID: "anything" })).toBeUndefined()
       expect(map(npm, { apiKey: "secret" })).toBeUndefined()
     }

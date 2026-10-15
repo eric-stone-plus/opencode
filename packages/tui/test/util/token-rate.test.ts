@@ -304,11 +304,11 @@ describe("util.token-rate", () => {
   })
 
   describe("model switch window", () => {
-    // A long MiMo run followed by a switch to DeepSeek: the cells must describe the model in
+    // A long run on another plan followed by a switch to DeepSeek: the cells must describe the model in
     // use, not blend the previous model's saturated history into the average.
-    const mimo = { providerID: "mimo", id: "mimo" }
+    const plan = { providerID: "deepseek-plan", id: "deepseek-plan-pro" }
     const deepseek = { providerID: "deepseek", id: "flash" }
-    const previous = step({ created: 0, streamed: 60_000, output: 10_000, model: mimo })
+    const previous = step({ created: 0, streamed: 60_000, output: 10_000, model: plan })
     const current = step({ created: 70_000, streamed: 71_000, output: 400, model: deepseek })
 
     test("tokensPerSecond and timePerOutputToken ignore the previous model's settled steps", () => {
@@ -318,7 +318,7 @@ describe("util.token-rate", () => {
 
     test("timeToFirstToken samples only the current model's calls", () => {
       const messages = [
-        step({ created: 0, completed: 60_000, content: [reasoning(5_500)], model: mimo }),
+        step({ created: 0, completed: 60_000, content: [reasoning(5_500)], model: plan }),
         step({ created: 70_000, completed: 72_000, content: [reasoning(70_700)], model: deepseek }),
       ]
       expect(timeToFirstToken(messages)).toBe(700)
@@ -332,8 +332,8 @@ describe("util.token-rate", () => {
     })
 
     test("the same model before an intermediate switch is not carried over", () => {
-      const backToMimo = step({ created: 80_000, streamed: 81_000, output: 100, model: mimo })
-      expect(tokensPerSecond([previous, current, backToMimo])).toBe(100)
+      const backToPlan = step({ created: 80_000, streamed: 81_000, output: 100, model: plan })
+      expect(tokensPerSecond([previous, current, backToPlan])).toBe(100)
     })
   })
 
@@ -349,10 +349,10 @@ describe("util.token-rate", () => {
     })
 
     test("is scoped to the current model window like the speed cells", () => {
-      const mimo = step({ created: 0, output: 0, input: 1_000, cache: { read: 9_000, write: 0 }, model: { providerID: "mimo", id: "mimo" } })
+      const plan = step({ created: 0, output: 0, input: 1_000, cache: { read: 9_000, write: 0 }, model: { providerID: "deepseek-plan", id: "deepseek-plan-pro" } })
       const deepseek = step({ created: 70_000, output: 0, input: 5_000, cache: { read: 5_000, write: 0 }, model: { providerID: "deepseek", id: "flash" } })
-      expect(cacheHitRate([mimo, deepseek])).toBe(50)
-      expect(cacheHitRate([mimo])).toBe(90)
+      expect(cacheHitRate([plan, deepseek])).toBe(50)
+      expect(cacheHitRate([plan])).toBe(90)
     })
 
     test("is undefined until receipts arrive", () => {

@@ -48,21 +48,21 @@ const declare = (providerID: string, modelID: string) =>
 describe("fork pricing plugin", () => {
   it.effect("prices a config-created model from the catalog name table", () =>
     Effect.gen(function* () {
-      ForkPricing.publishNamed(new Map([["mimo-v2.6-pro", [[entry(1.4, 4.4)]]], ["flag", [[entry(7, 8)]]]]))
-      yield* declare("mimo-coding-plan", "mimo-v2.6-pro")
-      yield* declare("mimo-coding-plan", "flag")
-      // `flag` is priced by a catalog row of its own name, `mimo-v2.6-pro` never had a row here.
-      yield* declare("mimo-coding-plan", "untouched")
+      ForkPricing.publishNamed(new Map([["deepseek-plan-pro", [[entry(1.4, 4.4)]]], ["flag", [[entry(7, 8)]]]]))
+      yield* declare("deepseek-coding", "deepseek-plan-pro")
+      yield* declare("deepseek-coding", "flag")
+      // `flag` is priced by a catalog row of its own name, `deepseek-plan-pro` never had a row here.
+      yield* declare("deepseek-coding", "untouched")
       const models = yield* Model.Service
       yield* models.transform((editor) =>
-        editor.update(Provider.ID.make("mimo-coding-plan"), Model.ID.make("untouched"), (model) => {
+        editor.update(Provider.ID.make("deepseek-coding"), Model.ID.make("untouched"), (model) => {
           model.cost = [entry(9, 9)]
         }),
       )
       yield* ForkPricingPlugin.Plugin.effect(host({ model: modelHost(yield* Model.Service) })).pipe(Effect.orDie)
-      const priced = yield* models.get(Provider.ID.make("mimo-coding-plan"), Model.ID.make("mimo-v2.6-pro"))
+      const priced = yield* models.get(Provider.ID.make("deepseek-coding"), Model.ID.make("deepseek-plan-pro"))
       expect(priced?.cost[0]).toMatchObject({ input: 1.4, output: 4.4 })
-      const kept = yield* models.get(Provider.ID.make("mimo-coding-plan"), Model.ID.make("untouched"))
+      const kept = yield* models.get(Provider.ID.make("deepseek-coding"), Model.ID.make("untouched"))
       expect(kept?.cost[0]).toMatchObject({ input: 9, output: 9 })
     }),
   )
@@ -70,10 +70,10 @@ describe("fork pricing plugin", () => {
   it.effect("leaves a model with no matching name alone", () =>
     Effect.gen(function* () {
       ForkPricing.publishNamed(new Map())
-      yield* declare("mimo-coding-plan", "unknown-model")
+      yield* declare("deepseek-coding", "unknown-model")
       yield* ForkPricingPlugin.Plugin.effect(host({ model: modelHost(yield* Model.Service) })).pipe(Effect.orDie)
       const models = yield* Model.Service
-      const found = yield* models.get(Provider.ID.make("mimo-coding-plan"), Model.ID.make("unknown-model"))
+      const found = yield* models.get(Provider.ID.make("deepseek-coding"), Model.ID.make("unknown-model"))
       expect(ForkPricing.pricedModel(found?.cost ?? [])).toBe(false)
     }),
   )

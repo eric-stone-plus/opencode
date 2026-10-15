@@ -38,8 +38,6 @@ const resolve = (policy: CachePolicy | undefined): CachePolicyObject => {
 // prefix caching, Gemini's implicit + out-of-band CachedContent). Skip the
 // whole policy pass for these — emitting hints would be harmless but pointless.
 const RESPECTS_INLINE_HINTS = new Set([
-  "alibaba-chat",
-  "alibaba-messages",
   "anthropic-messages",
   "anthropic-compatible-messages",
   "bedrock-mantle-messages",
@@ -193,6 +191,5 @@ const selectPolicy = (request: LLMRequest): CachePolicyObject => {
   if (!RESPECTS_INLINE_HINTS.has(route)) return NONE
   if (!auto) return resolve(request.cache)
   if (route === "openrouter" || route === "vercel-ai-gateway-messages") return gatewayPolicy(request.model.id)
-  if (route === "alibaba-chat") return request.model.id.toLowerCase().startsWith("qwen") ? QWEN : NONE
   return AUTO
 }

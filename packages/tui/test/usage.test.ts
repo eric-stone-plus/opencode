@@ -132,7 +132,7 @@ describe("per-model usage", () => {
       stats({
         models: [
           {
-            model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn", variant: "high" },
+            model: { id: "deepseek-plan-pro", providerID: "deepseek-plan", variant: "high" },
             steps: 2,
             compactions: 0,
             tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -149,7 +149,7 @@ describe("per-model usage", () => {
       }),
     )
     expect(rows.map((row) => row.label)).toEqual([
-      "xiaomi-token-plan-cn/mimo-v2.6-pro#high",
+      "deepseek-plan/deepseek-plan-pro#high",
       "deepseek/deepseek-v4-pro",
     ])
     expect(rows[0]?.value).toBe("$0.10 · 2 steps · 15 tokens")
@@ -161,7 +161,7 @@ describe("per-model usage", () => {
       stats({
         models: [
           {
-            model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn" },
+            model: { id: "deepseek-plan-pro", providerID: "deepseek-plan" },
             steps: 4,
             compactions: 0,
             tokens: { input: 20, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -177,14 +177,14 @@ describe("per-model usage", () => {
         ],
       }),
     )
-    expect(flagged.map((entry) => modelLabel(entry.model))).toEqual(["xiaomi-token-plan-cn/mimo-v2.6-pro"])
+    expect(flagged.map((entry) => modelLabel(entry.model))).toEqual(["deepseek-plan/deepseek-plan-pro"])
   })
 
   test("explains zero-cost models, and stays silent when every model has a price", () => {
     const value = stats({
       models: [
         {
-          model: { id: "mimo-v2.6-pro", providerID: "xiaomi-token-plan-cn" },
+          model: { id: "deepseek-plan-pro", providerID: "deepseek-plan" },
           steps: 4,
           compactions: 0,
           tokens: { input: 20, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -193,7 +193,7 @@ describe("per-model usage", () => {
       ],
     })
     expect(zeroCostNote(value)).toBe(
-      "Subscription plans have no per-token prices, so xiaomi-token-plan-cn/mimo-v2.6-pro record $0 — not a measurement of what was actually billed.",
+      "Subscription plans have no per-token prices, so deepseek-plan/deepseek-plan-pro record $0 — not a measurement of what was actually billed.",
     )
     expect(zeroCostNote(stats())).toBeUndefined()
   })

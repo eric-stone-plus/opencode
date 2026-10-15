@@ -27,10 +27,8 @@ const seed = Effect.fn(function* () {
   const providers = yield* Provider.Service
   yield* providers.transform((editor) => {
     for (const [providerID, models] of [
-      ["alibaba", ["qwen-plus"]],
       ["deepseek", ["deepseek-flash", "deepseek-pro"]],
-      ["alibaba-coding-plan", ["qwen3.8-max", "qwen3.7-plus"]],
-      ["xiaomi-token-plan-cn", ["mimo-v2.6-pro", "mimo-v2-flash"]],
+      ["deepseek-coding", ["deepseek-plan-pro", "deepseek-plan-flash"]],
     ] as const) {
       editor.update(Provider.ID.make(providerID), () => {})
       for (const modelID of models) editor.models.update(Provider.ID.make(providerID), Model.ID.make(modelID), () => {})
@@ -51,11 +49,11 @@ describe("DeclaredProvidersPlugin", () => {
     Effect.gen(function* () {
       const providers = yield* seed()
       yield* addPlugins([
-        document({ "alibaba-coding-plan": { models: { "qwen3.8-max": {} } }, "xiaomi-token-plan-cn": {} }),
+        document({ "deepseek-coding": { models: { "deepseek-plan-pro": {} } }, deepseek: {} }),
       ])
       expect((yield* providers.all()).map((item) => String(item.id)).toSorted()).toEqual([
-        "alibaba-coding-plan",
-        "xiaomi-token-plan-cn",
+        "deepseek",
+        "deepseek-coding",
       ])
     }),
   )
@@ -64,12 +62,12 @@ describe("DeclaredProvidersPlugin", () => {
     Effect.gen(function* () {
       const providers = yield* seed()
       yield* addPlugins([
-        document({ "alibaba-coding-plan": { models: { "qwen3.8-max": {} } }, "xiaomi-token-plan-cn": {} }),
+        document({ "deepseek-coding": { models: { "deepseek-plan-pro": {} } }, deepseek: {} }),
       ])
       expect(yield* catalog(providers)).toEqual([
-        "alibaba-coding-plan/qwen3.8-max",
-        "xiaomi-token-plan-cn/mimo-v2-flash",
-        "xiaomi-token-plan-cn/mimo-v2.6-pro",
+        "deepseek-coding/deepseek-plan-pro",
+        "deepseek/deepseek-flash",
+        "deepseek/deepseek-pro",
       ])
     }),
   )

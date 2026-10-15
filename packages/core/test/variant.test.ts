@@ -38,25 +38,6 @@ test("recognizes Claude version spellings and future models", () => {
   ])
 })
 
-test("caps Alibaba thinking budget variants at 64k", () => {
-  const supports: Variant.Support[] = [{ type: "toggle" }, { type: "budget_tokens" }]
-  expect(resolve(model("@opencode/ai/providers/alibaba/chat", "kimi-k2.6", 262_144), supports)).toEqual([
-    { id: "none", settings: { enableThinking: false } },
-    { id: "high", settings: { enableThinking: true, thinkingBudget: 32_000 } },
-    { id: "max", settings: { enableThinking: true, thinkingBudget: 63_999 } },
-  ])
-  expect(resolve(model("@opencode/ai/providers/alibaba/messages", "kimi-k2.6", 262_144), supports)).toEqual([
-    { id: "none", settings: { thinking: { type: "disabled" } } },
-    { id: "high", settings: { thinking: { type: "enabled", budgetTokens: 32_000 } } },
-    { id: "max", settings: { thinking: { type: "enabled", budgetTokens: 63_999 } } },
-  ])
-  expect(resolve(model("@opencode/ai/providers/alibaba/chat", "kimi-k2.5", 32_768), supports)).toEqual([
-    { id: "none", settings: { enableThinking: false } },
-    { id: "high", settings: { enableThinking: true, thinkingBudget: 16_384 } },
-    { id: "max", settings: { enableThinking: true, thinkingBudget: 32_767 } },
-  ])
-})
-
 test("effective defaults to the ladder top and honors explicit picks", () => {
   const ladder = (ids: string[]) =>
     ids.map((id) => ({ id: Model.VariantID.make(id), settings: {}, headers: {}, body: {} }))

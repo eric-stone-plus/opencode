@@ -23,15 +23,17 @@ test("normalizes permissive interleaved values to compatibility", () => {
   expect(Model.compatibility(false)).toBeUndefined()
 })
 
+// A synthetic provider that passes ModelsDev.restrict but has no native host row: it keeps
+// the generic AI SDK package fallback (and the per-model npm override) under test.
 const vendor = {
-  id: "xiaomi-token-plan-cn",
-  name: "Xiaomi",
-  env: ["XIAOMI_API_KEY"],
+  id: "deepseek-labs",
+  name: "DeepSeek Labs",
+  env: ["DEEPSEEK_LABS_API_KEY"],
   npm: "@ai-sdk/openai-compatible",
   models: {
-      "mimo-1": {
-        id: "mimo-1",
-        name: "MiMo One",
+      "labs-1": {
+        id: "labs-1",
+        name: "Labs One",
         release_date: "2026-01-01",
         attachment: false,
         reasoning: false,
@@ -43,26 +45,26 @@ const vendor = {
     },
 }
 
-const fixture = { "xiaomi-token-plan-cn": vendor }
+const fixture = { "deepseek-labs": vendor }
 
 const fixtureSnapshot = [
   {
     info: {
-      id: Provider.ID.make("xiaomi-token-plan-cn"),
-      name: "Xiaomi",
+      id: Provider.ID.make("deepseek-labs"),
+      name: "DeepSeek Labs",
       activation: "auto",
       package: "@opencode/ai/providers/openai-compatible",
     },
     models: [
       {
-        id: Model.ID.make("mimo-1"),
-        modelID: Model.ID.make("mimo-1"),
-        providerID: Provider.ID.make("xiaomi-token-plan-cn"),
-        name: "MiMo One",
+        id: Model.ID.make("labs-1"),
+        modelID: Model.ID.make("labs-1"),
+        providerID: Provider.ID.make("deepseek-labs"),
+        name: "Labs One",
         compatibility: { reasoningField: "vendor_reasoning" },
         family: undefined,
         package: undefined,
-        settings: { provider: "xiaomi-token-plan-cn" },
+        settings: { provider: "deepseek-labs" },
         capabilities: { tools: true, input: [], output: [] },
         variants: [],
         time: { released: Date.parse("2026-01-01") },
@@ -83,20 +85,20 @@ const fixtureSnapshot = [
         body: undefined,
       },
     ],
-    environment: ["XIAOMI_API_KEY"],
+    environment: ["DEEPSEEK_LABS_API_KEY"],
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
 const fixture2 = {
-  "xiaomi-token-plan-cn": {
-    id: "xiaomi-token-plan-cn",
-    name: "Xiaomi Token Plan CN",
-    env: ["XIAOMI_API_KEY"],
+  "deepseek-labs": {
+    id: "deepseek-labs",
+    name: "DeepSeek Labs CN",
+    env: ["DEEPSEEK_LABS_API_KEY"],
     npm: "@ai-sdk/openai-compatible",
     models: {
-      "mimo-2": {
-        id: "mimo-2",
-        name: "MiMo Two",
+      "labs-2": {
+        id: "labs-2",
+        name: "Labs Two",
         release_date: "2026-02-01",
         attachment: false,
         reasoning: true,
@@ -111,20 +113,20 @@ const fixture2 = {
 const fixture2Snapshot = [
   {
     info: {
-      id: Provider.ID.make("xiaomi-token-plan-cn"),
-      name: "Xiaomi Token Plan CN",
+      id: Provider.ID.make("deepseek-labs"),
+      name: "DeepSeek Labs CN",
       activation: "auto",
       package: "@opencode/ai/providers/openai-compatible",
     },
     models: [
       {
-        id: Model.ID.make("mimo-2"),
-        modelID: Model.ID.make("mimo-2"),
-        providerID: Provider.ID.make("xiaomi-token-plan-cn"),
-        name: "MiMo Two",
+        id: Model.ID.make("labs-2"),
+        modelID: Model.ID.make("labs-2"),
+        providerID: Provider.ID.make("deepseek-labs"),
+        name: "Labs Two",
         family: undefined,
         package: undefined,
-        settings: { provider: "xiaomi-token-plan-cn" },
+        settings: { provider: "deepseek-labs" },
         capabilities: { tools: false, input: [], output: [] },
         variants: [],
         time: { released: Date.parse("2026-02-01") },
@@ -145,7 +147,7 @@ const fixture2Snapshot = [
         body: undefined,
       },
     ],
-    environment: ["XIAOMI_API_KEY"],
+    environment: ["DEEPSEEK_LABS_API_KEY"],
   },
 ] satisfies readonly ModelsDev.Snapshot[]
 
@@ -239,28 +241,21 @@ describe("ModelsDev Service", () => {
   it.live("maps models.dev npm packages onto native packages", () =>
     Effect.gen(function* () {
       const cache = makeCache()
-      const model = { ...vendor.models["mimo-1"] }
+      const model = { ...vendor.models["labs-1"] }
       writeCache(cache, {
-        "xiaomi-token-plan-cn": {
+        "deepseek-labs": {
           ...vendor,
-          models: { "mimo-1": { ...model, provider: { npm: "@ai-sdk/anthropic" } } },
-        },
-        alibaba: {
-          id: "alibaba",
-          name: "Alibaba",
-          env: ["DASHSCOPE_API_KEY"],
-          npm: "@ai-sdk/openai-compatible",
-          models: {
-            "qwen3.8-max": { ...model, id: "qwen3.8-max" },
-            "qwen3.8-max-messages": { ...model, id: "qwen3.8-max-messages", provider: { npm: "@ai-sdk/anthropic" } },
-          },
+          models: { "labs-1": { ...model, provider: { npm: "@ai-sdk/anthropic" } } },
         },
         deepseek: {
           id: "deepseek",
           name: "DeepSeek",
           env: ["DEEPSEEK_API_KEY"],
           npm: "@ai-sdk/openai-compatible",
-          models: {},
+          models: {
+            "deepseek-chat": { ...model, id: "deepseek-chat" },
+            "deepseek-chat-messages": { ...model, id: "deepseek-chat-messages", provider: { npm: "@ai-sdk/anthropic" } },
+          },
         },
       })
       const state = yield* Ref.make(initialState)
@@ -271,12 +266,11 @@ describe("ModelsDev Service", () => {
       )
       expect(result[0]?.info.package).toBe("@opencode/ai/providers/openai-compatible")
       expect(result[0]?.models[0]?.package).toBe("@opencode/ai/providers/anthropic")
-      expect(result[1]?.info.package).toBe("@opencode/ai/providers/alibaba/chat")
-      expect(result[1]?.models.find((model) => model.id === "qwen3.8-max")?.package).toBeUndefined()
-      expect(result[1]?.models.find((model) => model.id === "qwen3.8-max-messages")?.package).toBe(
-        "@opencode/ai/providers/alibaba/messages",
+      expect(result[1]?.info.package).toBe("@opencode/ai/providers/deepseek")
+      expect(result[1]?.models.find((model) => model.id === "deepseek-chat")?.package).toBeUndefined()
+      expect(result[1]?.models.find((model) => model.id === "deepseek-chat-messages")?.package).toBe(
+        "@opencode/ai/providers/anthropic",
       )
-      expect(result[2]?.info.package).toBe("@opencode/ai/providers/deepseek")
     }),
   )
 
@@ -302,8 +296,8 @@ describe("ModelsDev Service", () => {
         makeCache(),
         ModelsDev.Service.use((service) => service.get()),
       )
-      expect(ids(fromFile)).toEqual(["xiaomi-token-plan-cn"])
-      expect(ids(fromFetch)).toEqual(["xiaomi-token-plan-cn"])
+      expect(ids(fromFile)).toEqual(["deepseek-labs"])
+      expect(ids(fromFetch)).toEqual(["deepseek-labs"])
       expect(ids(fromSnapshot)).toContain("deepseek")
       expect(ids(fromSnapshot)).not.toContain("openai")
       expect(ids(fromSnapshot)).not.toContain("opencode")
@@ -324,7 +318,7 @@ describe("ModelsDev Service", () => {
       const ids = result.map((snapshot) => String(snapshot.info.id))
       expect(ids).toContain("deepseek")
       expect(ids).not.toContain("openai")
-      expect(result.flatMap((snapshot) => snapshot.models.map((model) => String(model.id)))).not.toContain("mimo-1")
+      expect(result.flatMap((snapshot) => snapshot.models.map((model) => String(model.id)))).not.toContain("labs-1")
       expect(cache.values.has(cacheKey)).toBe(false)
       expect((yield* Ref.get(state)).calls).toEqual([])
     }),
@@ -487,7 +481,7 @@ describe("ModelsDev Service", () => {
   it.live("refresh(true) caches only the supported vendors", () =>
     Effect.gen(function* () {
       const cache = makeCache()
-      const registry = { ...fixture2, openai: { ...fixture2["xiaomi-token-plan-cn"], id: "openai" } }
+      const registry = { ...fixture2, openai: { ...fixture2["deepseek-labs"], id: "openai" } }
       const state = yield* Ref.make({ ...initialState, body: JSON.stringify(registry) })
       const result = yield* provided(
         state,

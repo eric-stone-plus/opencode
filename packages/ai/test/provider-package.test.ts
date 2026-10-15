@@ -6,32 +6,6 @@ const configuration = (provider: string, message: string) =>
   expect.objectContaining({ _tag: "ProviderConfiguration", provider, message })
 
 describe("provider package entrypoints", () => {
-  test("maps Alibaba API entrypoints onto explicit regional routes", async () => {
-    const modules = await Promise.all([
-      import("@opencode/ai/providers/alibaba"),
-      import("@opencode/ai/providers/alibaba/chat"),
-      import("@opencode/ai/providers/alibaba/messages"),
-    ])
-    const settings = {
-      region: "eu-central-1",
-      workspaceID: "llm-fixture",
-      apiKey: "fixture",
-      headers: { "x-test": "fixture" },
-      body: { extension: true },
-    }
-    const routes = ["alibaba-chat", "alibaba-chat", "alibaba-messages"]
-    modules.forEach((module, index) => {
-      const model = module.model("qwen3.8-max", settings)
-      expect(model.provider).toBe("alibaba")
-      expect(model.route.id).toBe(routes[index])
-      expect(model.route.endpoint.baseURL).toBe(
-        `https://llm-fixture.eu-central-1.maas.aliyuncs.com/${index === 2 ? "apps/anthropic/v1" : "compatible-mode/v1"}`,
-      )
-      expect(model.route.defaults.headers).toEqual(settings.headers)
-      expect(model.route.defaults.http?.body).toEqual(settings.body)
-    })
-  })
-
   test("maps package settings onto the executable model", async () => {
     const OpenAICompatible = await import("@opencode/ai/providers/openai-compatible")
     const selected = OpenAICompatible.model("deepseek-chat", {

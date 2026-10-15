@@ -811,7 +811,6 @@ const requireThinkingSignature = (request: LLMRequest) => {
     baseURL.includes("api.moonshot.cn/anthropic")
   )
     return false
-  if (provider.includes("xiaomi") || model.includes("mimo") || baseURL.includes("xiaomimimo.com")) return false
   return true
 }
 

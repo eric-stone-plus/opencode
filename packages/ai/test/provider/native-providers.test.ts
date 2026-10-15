@@ -3,7 +3,6 @@ import { ConfigProvider, Effect } from "effect"
 import { HttpClientRequest } from "effect/http"
 import { LLM, ToolDefinition } from "../../src/index.js"
 import {
-  Alibaba,
   Anthropic,
   AnthropicCompatible,
   DeepSeek,
@@ -17,8 +16,6 @@ import { sseEvents } from "../lib/sse.js"
 describe("native providers", () => {
   test("assigns provider-owned metadata namespaces across native routes", () => {
     const providers = [
-      [Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" }).chat("model"), "alibaba"],
-      [Alibaba.configure({ region: "ap-southeast-1", apiKey: "test" }).messages("model"), "alibaba"],
       [Anthropic.configure({ apiKey: "test" }).model("model"), "anthropic"],
       [
         AnthropicCompatible.configure({ baseURL: "https://example.test/v1", provider: "bailian" }).model("model"),
