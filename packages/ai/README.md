@@ -1,7 +1,7 @@
 # @opencode/ai
 
-Schema-first APIs for text, built with Effect. This fork bundles providers for Alibaba, DeepSeek and the Xiaomi
-token plan (through the Alibaba, DeepSeek, `Anthropic*` and `OpenAICompatible` facades) and nothing else.
+Schema-first APIs for text, built with Effect. This fork bundles the DeepSeek provider (through the `DeepSeek`,
+`Anthropic*` and `OpenAICompatible` facades) and nothing else.
 
 ```ts
 import { Effect } from "effect"
@@ -53,71 +53,6 @@ for await (const event of ai.llm.stream(ai.llm.request(input))) {
 }
 await ai.dispose()
 ```
-
-## Alibaba Cloud Model Studio
-
-`Alibaba` provides standard Model Studio inference. Configure a region explicitly, then select
-Chat Completions (`.model` or `.chat`) or Anthropic-compatible Messages (`.messages`). These routes use HTTP/SSE.
-
-```ts
-import { LLM } from "@opencode/ai"
-import { Alibaba } from "@opencode/ai/providers"
-
-const alibaba = Alibaba.configure({
-  region: "ap-southeast-1", // Singapore
-  apiKey: process.env.DASHSCOPE_API_KEY,
-  // workspaceID: "llm-your-workspace", // use a workspace-dedicated endpoint
-})
-
-const request = LLM.request({
-  model: alibaba.model("qwen3.8-max"),
-  prompt: "Explain this design.",
-  providerOptions: { reasoningEffort: "medium" },
-})
-```
-
-### Regions and credentials
-
-| Region              | `region`         | Shared host when `workspaceID` is omitted |
-| ------------------- | ---------------- | ----------------------------------------- |
-| Singapore           | `ap-southeast-1` | `dashscope-intl.aliyuncs.com`             |
-| China (Beijing)     | `cn-beijing`     | `dashscope.aliyuncs.com`                  |
-| China (Hong Kong)   | `cn-hongkong`    | `cn-hongkong.dashscope.aliyuncs.com`      |
-| US (Virginia)       | `us-east-1`      | `dashscope-us.aliyuncs.com`               |
-| Germany (Frankfurt) | `eu-central-1`   | Supply `workspaceID` or `baseURL`         |
-| Japan (Tokyo)       | `ap-northeast-1` | Supply `workspaceID` or `baseURL`         |
-
-With `workspaceID`, the host is `{workspaceID}.{region}.maas.aliyuncs.com`. A complete `baseURL`
-overrides regional setup, including the API prefix: `/compatible-mode/v1` for Chat,
-or `/apps/anthropic/v1` for Messages. The selector appends its operation path.
-
-Keys and model availability are region-specific. Auth resolves from explicit `auth` or `apiKey`,
-then `DASHSCOPE_API_KEY`, then `ALIBABA_API_KEY`.
-
-The access region and inference scope differ: Virginia's `-us` model IDs request US-only inference;
-some regions select scope through their workspace. Model IDs pass through unchanged.
-Alibaba's [regional guide](https://www.alibabacloud.com/help/en/model-studio/regions) and
-[base URL table](https://www.alibabacloud.com/help/en/model-studio/base-url) disagree about Virginia's
-shared host; the entry above follows the base URL table. Dedicated hosts can be copied from the console.
-
-### Native options
-
-- **Chat:** `reasoningEffort` → `reasoning_effort`, `enableThinking` → `enable_thinking`,
-  `thinkingBudget` → `thinking_budget`, and `preserveThinking` → `preserve_thinking`.
-  Replay complete `response.message` values to retain `reasoning_content` separately from answer text.
-  Qwen 3.8 defaults to preserving thinking; older models have different defaults.
-  Additional options include `toolStream`, `parallelToolCalls`, `repetitionPenalty`, `responseFormat`,
-  `enableSearch`, and native `searchOptions`. `generation.topK` lowers to `top_k`.
-  `clearThinking` is a hosted GLM control, and `thinking.type` is available for hosted MiniMax models.
-- **Messages:** `effort` → `output_config.effort`. `thinking.type` accepts enabled/disabled with an
-  optional `budgetTokens` (or native `budget_tokens`). `outputConfig.format` accepts a JSON schema.
-  Model Studio's empty thinking signatures are accepted; supplied signatures are replayed unchanged.
-
-Omitted options preserve provider defaults. Effort values pass through unchanged and accept future
-strings. Qwen 3.8 Chat rejects requests combining a thinking budget with effort.
-
-Package entrypoints are `@opencode/ai/providers/alibaba`, `alibaba/chat`, and `alibaba/messages`. Live
-recordings cover both APIs in Singapore; regional URL construction is unit-tested for all six regions.
 
 ## DeepSeek
 
@@ -324,8 +259,8 @@ LLM.request({
 
 | Protocol                                  | `cache: "auto"`                                                   |
 | ----------------------------------------- | ----------------------------------------------------------------- |
-| Anthropic Messages (and Alibaba)          | emits up to 4 `cache_control` markers (4-breakpoint cap enforced) |
-| Alibaba Chat                              | emits `cache_control` markers on Qwen models                      |
+| Anthropic Messages                        | emits up to 4 `cache_control` markers (4-breakpoint cap enforced) |
+| Alibaba cache dialect                     | emits `cache_control` markers on Qwen-family model ids            |
 | OpenAI Chat (DeepSeek, OpenAI-compatible) | no-op (implicit server-side caching)                              |
 
 Normalized cache usage is read back into `response.usage.cacheReadInputTokens` and `cacheWriteInputTokens` across every provider.
@@ -334,25 +269,23 @@ Normalized cache usage is read back into `response.usage.cacheReadInputTokens` a
 
 Provider facades configure endpoint/auth/deployment details first, then expose model selectors that take only a model or deployment id. The selected model carries the executable route value used at runtime.
 
-This fork ships the following providers and nothing else: `Alibaba`, `Anthropic`, `AnthropicCompatible`, `DeepSeek`, and `OpenAICompatible` (the Xiaomi token plan composes `OpenAICompatible`). Each owns its module, endpoint, authentication, and route setup, and providers with the same wire format compose the shared protocol directly. Two protocols carry all of them: OpenAI-style Chat Completions (`OpenAIChat`, `OpenAICompatibleChat`, plus the Alibaba variant) and Anthropic Messages.
+This fork ships the following providers and nothing else: `Anthropic`, `AnthropicCompatible`, `DeepSeek`, and `OpenAICompatible`. Each owns its module, endpoint, authentication, and route setup, and providers with the same wire format compose the shared protocol directly. Two protocols carry all of them: OpenAI-style Chat Completions (`OpenAIChat`, `OpenAICompatibleChat`) and Anthropic Messages.
 
 ### Provider entrypoints
 
 Provider modules are available through dedicated exports from `@opencode/ai`. Each LLM entrypoint exports `model(modelID, settings)`, where `settings` contains provider configuration plus common `headers` and `body` overlays.
 
 ```ts
-import { model } from "@opencode/ai/providers/alibaba/messages"
+import { model } from "@opencode/ai/providers/deepseek"
 
-const selected = model("qwen3.8-max", {
-  region: "ap-southeast-1",
-  apiKey: process.env.DASHSCOPE_API_KEY,
+const selected = model("deepseek-flash", {
+  apiKey: process.env.DEEPSEEK_API_KEY,
   headers: { "x-application": "example" },
 })
 ```
 
 APIs have separate entrypoints:
 
-- `@opencode/ai/providers/alibaba` (also `alibaba/chat` and `alibaba/messages`)
 - `@opencode/ai/providers/anthropic`
 - `@opencode/ai/providers/anthropic-compatible`
 - `@opencode/ai/providers/deepseek`
@@ -364,7 +297,7 @@ Request options in order of stability:
 
 1. **`generation`** — portable knobs (`maxTokens`, `temperature`, `topP`, `topK`, penalties, seed, stop).
 2. **`promptCacheKey`** — stable cache affinity lowered by every protocol that supports it.
-3. **`providerOptions: { ... }`** — flat options inferred from the selected model (`reasoningEffort`, Anthropic `thinking`, Alibaba `enableThinking`).
+3. **`providerOptions: { ... }`** — flat options inferred from the selected model (`reasoningEffort`, Anthropic `thinking`).
 4. **`http: { body, headers, query }`** — last-resort serializable overlays merged into the final HTTP request. Reach for this only when a stable typed path doesn't yet exist.
 
 Route/provider defaults are overridden by request-level values for each axis.

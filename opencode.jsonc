@@ -9,11 +9,12 @@
       "initialization": { "basedpyright": { "analysis": { "typeCheckingMode": "standard" } } }
     }
   },
-  // Default track (2026-10-07): temporary switch to DeepSeek-V4.1-Flash.
+  // Default track (2026-10-07): switch to DeepSeek-V4.1-Flash.
   // API id is deepseek-flash (deepseek-v4-flash is a retired alias that
   // now routes to the same model). Revert this line and the auto/goal
-  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back. Other
-  // provider blocks are unchanged.
+  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back: the xiaomi
+  // block below stays config-declared and self-contained, so it works
+  // without a registry row (ADR 0009). Other provider blocks are unchanged.
   "model": "deepseek/deepseek-flash",
   // Cost display (2026-10-10): flat-rate/subscription model rows (all-zero
   // cost in the registry) are auto-matched to canonical PAYG list prices so
