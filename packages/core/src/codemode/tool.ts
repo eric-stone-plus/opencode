@@ -68,9 +68,27 @@ const description = [
   "Await every call whose completion matters; pending calls are interrupted when execution ends. Run independent calls concurrently with `Promise.allSettled`.",
 ].join("\n")
 
+/**
+ * Defaults for the execute tool's runtime (borrow C28). The interpreter enforces each limit
+ * independently, and all three are absent unless a host passes them, so a program that loops, calls
+ * tools without end, or returns a huge value used to run until the session was interrupted by hand.
+ *
+ * Total-memory accounting is deliberately not set: the interpreter has none, and a limit nothing
+ * enforces would read as protection this seat does not have.
+ */
+export const LIMITS: CodeMode.ExecutionLimits = {
+  /** A program still running after half an hour is stuck rather than slow. */
+  timeoutMs: 30 * 60_000,
+  /** A broad refactor fans out; a thousand calls is a runaway, not a workflow. */
+  maxToolCalls: 1_000,
+  /** Result and logs are bounded separately, and the result reports its own truncation. */
+  maxOutputBytes: 1024 * 1024,
+}
+
 export const create = (
   inventory: Inventory,
   executeTool: (name: string, tool: Info, input: unknown, context: Context) => Effect.Effect<Result, Error>,
+  limits: CodeMode.ExecutionLimits = LIMITS,
 ) => {
   return {
     name: "execute",
@@ -105,6 +123,7 @@ export const create = (
               return text === "" ? null : text
             }),
           progressHooks(record),
+          limits,
         ).execute(code)
         const toolCalls = yield* Ref.get(calls)
         const collected = (yield* Ref.get(files))
@@ -222,6 +241,7 @@ function runtime(
   inventory: Inventory,
   executeTool: (name: string, tool: Info, input: unknown) => Effect.Effect<unknown, unknown>,
   hooks?: CodeMode.Hooks,
+  limits?: CodeMode.ExecutionLimits,
 ) {
   // A path may carry namespace metadata, a callable tool, child tools, or all three.
   const root: ToolNode = { children: new Map() }
@@ -236,7 +256,7 @@ function runtime(
     })
   }
   const tools = renderTools(root)
-  return CodeMode.make<typeof tools>({ tools, extensions: [CodeModeWeb.extension], hooks })
+  return CodeMode.make<typeof tools>({ tools, extensions: [CodeModeWeb.extension], hooks, limits })
 }
 
 function getNode<T>(root: Node<T>, path: string) {
