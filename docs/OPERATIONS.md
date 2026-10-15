@@ -51,9 +51,9 @@ Snapshot as of this audit (2026-09-19), not the current seat: the default model 
 
 Deduplicated test total: **1,150 passed, 2 skipped, 0 failed**. The history pagination measurement counts database queries and loaded messages; it does not demonstrate a 21-fold model inference speedup. The 40-tool test covers multiple turns and process restart, not continuous operation over several days.
 
-Local evidence: `/tmp/opencode-audit-final-suite.log`, `/tmp/opencode-cli-final.log`, `/tmp/opencode-audit-script.log`, `/tmp/opencode-audit-typecheck.log`, `/tmp/opencode-audit-build.log`, `/tmp/opencode-binary-soak.log`, and `/tmp/opencode-qwen-live-smoke.log`. These temporary logs are not tracked in git.
+Local evidence: `/tmp/opencode-audit-final-suite.log`, `/tmp/opencode-cli-final.log`, `/tmp/opencode-audit-script.log`, `/tmp/opencode-audit-typecheck.log`, `/tmp/opencode-audit-build.log`, `/tmp/opencode-binary-soak.log`, and `/tmp/opencode-qwen-live-smoke.log`. These temporary logs are not tracked in git and no longer exist on disk (checked 2026-10-15) — the numbers above are a 2026-09-19 snapshot, not a live claim.
 
-Pre-installation backup: `~/Downloads/stability-20260919T105706Z/`, containing the previous `opencode`, `opencode.jsonc`, and `tui.json`. All file hashes, sizes, and permissions were verified after relocation. Configuration and binary replacement used atomic renames; credentials were not added to the repository or this report.
+Pre-installation backup: `~/Downloads/stability-20260919T105706Z/`, containing the previous `opencode`, `opencode.jsonc`, and `tui.json` (that directory is gone from disk as of 2026-10-15). All file hashes, sizes, and permissions were verified after relocation. Configuration and binary replacement used atomic renames; credentials were not added to the repository or this report.
 
 ### Remaining limitations
 

@@ -1,5 +1,9 @@
 # DeepSeek is the only supported vendor
 
+**Superseded in part (2026-10-15).** The carve-out for the operator's own config blocks below was
+withdrawn by ADR 0010: `bailian-token-plan-personal` and `xiaomi-token-plan-cn` are gone from all three
+config copies and their credentials are purged, so the seat runs DeepSeek only.
+
 The operator's model track moved to DeepSeek-V4.1-Flash on 2026-10-07, and neither Alibaba nor the Xiaomi MiMo token plan has been used since. This ADR finishes the convergence ADR 0005 and ADR 0006 started: the supported registry set is DeepSeek alone, and every Alibaba/Xiaomi code path is deleted rather than disabled. `ModelsDev.restrict` is `^deepseek(-|$)`.
 
 Deleted, not disabled — the same policy, and the same consequence, as ADR 0005/0006 (every `sync-upstream` conflicts on the deleted files; resolve with `git rm`, which the sync's DU step now does automatically — ADR 0002):

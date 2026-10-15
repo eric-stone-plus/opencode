@@ -11,10 +11,12 @@ Source of truth on machine A:
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
-The binary is a fork build `0.0.0-main-<timestamp>` (verified live 2026-10-14:
-`0.0.0-main-202610140120`). The channel is derived from `git branch
---show-current` (`packages/script/src/index.ts:30`) and is compiled in at build
-time (`OPENCODE_CHANNEL` define, `packages/cli/script/build.ts:188-193`).
+The binary is a fork build `0.0.0-main-<timestamp>`, where the timestamp is the
+build time — read it back with `opencode --version` rather than trusting a value
+written down here (it changes on every `bun run sync-upstream`). The channel is
+derived from `git branch --show-current` (`packages/script/src/index.ts:30`) and
+is compiled in at build time (`OPENCODE_CHANNEL` define,
+`packages/cli/script/build.ts:188-193`).
 
 ---
 
@@ -71,9 +73,10 @@ chmod 755 ~/.opencode/bin/opencode
 ```
 
 `script/sync-upstream.ts` additionally installs `~/.config/opencode/cli.json`
-(`installTuiConfig`: V2 migrates `tui.json` once and ignores later edits, so the
-repo's `dotfiles/opencode/cli.json` is deployed when present and the repo-root
-`tui.json` only as the fallback), the vendored `skills/` (`installSkills`, rm+cp), and
+(`installTuiConfig`: V2 migrates `tui.json` once and ignores later edits, so it
+reads the repo-root `cli.json` and seeds the seat copy only when that file is
+absent — the seat keeps its own tuning and `check-drift` reports it as a seed,
+not drift), the vendored `skills/` (`installSkills`, rm+cp), and
 `AGENTS.goal.md` + `autonomy.md` (`installGoalConfig`, rm+copyFile), and seeds
 `agent/goal.md`. It does NOT touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, or
 any other `command/*.md` / `agent/*.md`. Run it if you want its pieces.
@@ -138,6 +141,7 @@ a *function*).
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
 | 4 | `environment.d/20-opencode-http.conf` | managed (converges; backup on overwrite) — Bun fetch fan-out for the swarm default |
 | 4 | `environment.d/90-fcitx5.conf` | **only if absent**; template carries names only |
+| 4 | service config pins (`OPENCODE_DB`, `OPENCODE_DISABLE_MODELS_FETCH`, `BUN_CONFIG_MAX_HTTP_REQUESTS`) | `opencode service set env` for each, then one `service restart`: the service keeps the env of whichever client spawned it, so the pins are persisted in its own config and read at every spawn (writes service config only; never opens the DB) |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
@@ -233,6 +237,9 @@ Machine A's `~/.local/share/opencode/` carries the scars of channel forking
 | --- | --- | --- |
 | `opencode.db` | 9.7 MB (retired ~Sep 16) | pre-fork / stable-channel era |
 | `opencode-local.db` | 258 KB (retired Sep 28) | one build landed with channel `local` → `opencode-local.db` forked |
+
+Both retired files live under `~/.local/share/opencode/retired-20260929/`, not in
+the data directory root.
 | `opencode-main.db` | ~3.5 GB (2026-10-14; ~1.7 GB at cut) | canonical seat DB since consolidation |
 
 Machine B starts clean: one `opencode-main.db`, created on first launch. If a
@@ -346,15 +353,19 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 
 **First-launch silent failure to watch for**
 
-Background `@opencode-ai/plugin` npm install failures are **logged only**. After
-first launch check:
+A plugin that fails to load or reload is **logged only**. After first launch check:
 
 ```sh
-grep -E 'level=ERROR.*message="plugin config hook failed"|level=WARN.*message="background dependency install failed"' \
+grep -E 'level=(WARN|ERROR).*message="(failed to load plugin|failed to reload plugins|configured plugin watch failed)"' \
   ~/.local/share/opencode/log/opencode.log
 ```
 
-verify.sh runs this sweep every time (WARN level).
+verify.sh runs this sweep every time (WARN level). The V1 pair this used to watch
+(`plugin config hook failed`, `background dependency install failed`) has no
+producer left in the V2 tree — the plugin supervisor warns on a load failure
+(`packages/core/src/plugin/supervisor.ts:63`), errors on a reload failure
+(`:239`), and the config loader errors on a failed plugin watch
+(`packages/core/src/config/plugin/source.ts:67`).
 
 ---
 
@@ -367,10 +378,11 @@ bootstrap/
 ├── verify.sh                     post-install audit (--home for testing)
 ├── config/
 │   ├── opencode.jsonc            byte-copy of live ~/.config/opencode/opencode.jsonc
-│   ├── auth.json.template        1-provider skeleton, placeholder values (needs the §3 provider — open item)
+│   ├── auth.json.template        1-provider skeleton (deepseek), placeholder values
 │   ├── env.template              1 var NAME, empty value
 │   └── environment.d/
 │       ├── 10-opencode-db.conf   the DB pin (real value)
+│       ├── 20-opencode-http.conf BUN_CONFIG_MAX_HTTP_REQUESTS (fan-out)
 │       └── 90-fcitx5.conf        names only
 ├── shell/
 │   └── bashrc-opencode-block.sh  byte-exact ~/.bashrc extraction + install notes
@@ -395,14 +407,16 @@ bootstrap/
 ## 7. Provenance
 
 * `config/opencode.jsonc` is a byte-copy of machine A's live
-  `~/.config/opencode/opencode.jsonc` at cut time (refreshed 2026-10-14; the
+  `~/.config/opencode/opencode.jsonc` at cut time (refreshed 2026-10-15; the
   deepseek default track landed 2026-10-08). The repo-root `opencode.jsonc` is
   refreshed from the live file too — compare before trusting either:
   `diff ../../opencode.jsonc config/opencode.jsonc`. `bun run check-drift`
   flags the snapshot as drift when the live config moves past it.
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
-  against `~/.bashrc` lines 111, 210-240, 252-290; the only later deviation is
-  the 2026-09-30 probe-set extension (see the file's DEVIATION LOG).
+  against `~/.bashrc` lines 111, 210-240, 252-290; later deviations are logged in
+  the file's DEVIATION LOG (2026-09-30 probe-set extension, 2026-10-15 V3 — the
+  probe set is derived from the config's `baseURL`s — and the DeepSeek-only
+  convergence that followed).
 * `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}`,
   `skills-extra/`, and the local-tools support files
   (`dotfiles/opencode/lib/drawio.py` + three skill files, deployed by
@@ -430,7 +444,8 @@ SQLite writer instead of one per open TUI.
 
 The service keeps the environment of the client that spawned it, so the pins must
 not depend on who spawns it: `~/.local/bin/opencode` exports `OPENCODE_DB` and
-`OPENCODE_DISABLE_MODELS_FETCH`, and `install.sh` step 3 persists the same two with
-`opencode service set env` (read at every spawn). Proxies are deliberately NOT
+`OPENCODE_DISABLE_MODELS_FETCH`, and `install.sh` step 4 persists three —
+`OPENCODE_DB`, `OPENCODE_DISABLE_MODELS_FETCH`, `BUN_CONFIG_MAX_HTTP_REQUESTS` —
+with `opencode service set env` (read at every spawn). Proxies are deliberately NOT
 persisted: the `opencode()` bash wrapper launches a proxied TUI session with
 `--standalone`, so a recovered direct connection needs no cleanup.

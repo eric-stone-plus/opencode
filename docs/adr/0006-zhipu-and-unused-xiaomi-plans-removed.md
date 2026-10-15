@@ -1,5 +1,10 @@
 # Zhipu/Z.AI and the unused Xiaomi plans are removed
 
+**Superseded in part (2026-10-15).** The supported registry set this ADR left behind (Alibaba, DeepSeek and
+`xiaomi-token-plan-cn`) was cut to DeepSeek alone by ADR 0009, and the operator's own blocks went with ADR
+0010; the current pattern is `^deepseek(-|$)` in `packages/schema/src/models-dev.ts`. The removals below
+still stand — read the set, not the wording, as history.
+
 ADR 0005's third vendor, Zhipu (incl. Z.ai), is deleted from source, and the Xiaomi family is cut to the one token plan that has a configured key (`xiaomi-token-plan-cn`). The supported registry set is now Alibaba, DeepSeek and that one plan; `ModelsDev.restrict` is `^(alibaba|deepseek)(-|$)|^xiaomi-token-plan-cn$`.
 
 Deleted, not disabled — the same policy as ADR 0005, and the same consequence (every `sync-upstream` conflicts on the deleted files; resolve with `git rm`):
