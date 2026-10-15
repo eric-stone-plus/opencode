@@ -24,6 +24,8 @@
     "test:effect-simplification-rules": "ast-grep test -c script/ast-grep/effect-simplifications/sgconfig.yml",
     "sync-upstream": "bun run script/sync-upstream.ts",
     "check-drift": "bun run script/check-drift.ts",
+    "check-single-loop": "bun run script/check-single-loop.ts",
+    "debt-ratchet": "bun run script/debt-ratchet.ts",
     "vendor-skills": "bun run script/vendor-skills.ts",
     "cpu-probe": "bun run script/cpu-probe.ts",
     "freeze-capture": "bun run script/freeze-capture.ts",

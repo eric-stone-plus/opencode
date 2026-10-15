@@ -174,14 +174,23 @@ describe("toolchain", () => {
 })
 
 describe("TUI config installation", () => {
-  test("prefers the V2 cli.json from dotfiles over the legacy tui.json", async () => {
+  test("prefers the V2 cli.json seed over the legacy tui.json", async () => {
     const root = await temporary()
     const config = path.join(await temporary(), "config")
-    await Bun.write(path.join(root, "dotfiles", "opencode", "cli.json"), '{"keybinds":"v2"}')
+    await Bun.write(path.join(root, "cli.json"), '{"keybinds":"v2"}')
     await Bun.write(path.join(root, "tui.json"), '{"keybinds":"legacy"}')
     expect(await installTuiConfig(root, config)).toBe(path.join(config, "cli.json"))
     expect(await Bun.file(path.join(config, "cli.json")).text()).toBe('{"keybinds":"v2"}')
     expect(await Bun.file(path.join(config, "tui.json")).exists()).toBe(false)
+  })
+
+  test("keeps a seat that already has cli.json: the seed never clobbers local tuning", async () => {
+    const root = await temporary()
+    const config = path.join(await temporary(), "config")
+    await Bun.write(path.join(root, "cli.json"), '{"keybinds":"v2"}')
+    await Bun.write(path.join(config, "cli.json"), '{"keybinds":"tuned"}')
+    expect(await installTuiConfig(root, config)).toBeUndefined()
+    expect(await Bun.file(path.join(config, "cli.json")).text()).toBe('{"keybinds":"tuned"}')
   })
 
   test("falls back to the repo-root tui.json when no cli.json is present", async () => {
@@ -236,6 +245,7 @@ describe("sync validation order", () => {
     await mkdir(path.join(directory, "packages", "cli"), { recursive: true })
     await mkdir(commands)
     await copyFile(import.meta.dir + "/sync-upstream.ts", path.join(directory, "script", "sync-upstream.ts"))
+    await copyFile(import.meta.dir + "/check-single-loop.ts", path.join(directory, "script", "check-single-loop.ts"))
     await Bun.write(
       path.join(commands, "git"),
       `#!/bin/sh

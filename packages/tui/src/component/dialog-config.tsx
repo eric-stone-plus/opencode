@@ -1,5 +1,5 @@
 import { createMemo, createSignal } from "solid-js"
-import { useConfig } from "../config"
+import { ANIMATIONS_DEFAULT, useConfig } from "../config"
 import { useThemes } from "../context/theme"
 import { DialogSelect } from "../ui/dialog-select"
 import { useToast } from "../ui/toast"
@@ -38,7 +38,7 @@ export const settings: Setting[] = [
     title: "Animations",
     category: "Appearance",
     path: ["animations"],
-    default: false,
+    default: ANIMATIONS_DEFAULT,
     values: [false, true],
     labels: ["off", "on"],
     keywords: ["motion", "effects"],

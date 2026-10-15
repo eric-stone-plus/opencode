@@ -19,6 +19,7 @@ import { homedir } from "os"
 import path from "path"
 import { existsSync } from "fs"
 import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm } from "fs/promises"
+import { checkSingleTurnLoop } from "./check-single-loop"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const UPSTREAM_URL = "https://github.com/anomalyco/opencode.git"
@@ -137,6 +138,23 @@ export async function assertForkInvariants(directory: string) {
   )
 }
 
+// The single-turn-loop invariant is not about upstream re-adding deleted files but about new model
+// streaming sites, which a clean merge can bring in silently: review them before the merge is built
+// and pushed (script/check-single-loop.ts holds the whitelist).
+async function assertSingleTurnLoop(directory: string) {
+  // Partial trees (test fixtures) carry no core sources; the invariant is about the product tree.
+  if (!existsSync(path.join(directory, "packages", "core", "src"))) return
+  const problems = await checkSingleTurnLoop(directory)
+  if (problems.length === 0) return
+  throw new Error(
+    "The single-turn-loop invariant changed:\n" +
+      problems.map((problem) => `  - ${problem}`).join("\n") +
+      "\nReview each new llm.stream(...) call site (AGENTS.md, 'Architecture > How Sessions Work'):" +
+      "\ndeliberate one-shot calls join ALLOWED_LLM_STREAM_SITES in script/check-single-loop.ts with a reason," +
+      "\nturn orchestration belongs in packages/core/src/session/runner/step.ts.",
+  )
+}
+
 export async function installBinary(source: string, destination: string) {
   await mkdir(path.dirname(destination), { recursive: true })
   // Stage beside the live binary so rename stays atomic, including while the
@@ -199,6 +217,7 @@ async function main() {
 
   await assertSyncReady(ROOT, true)
   await assertForkInvariants(ROOT)
+  await assertSingleTurnLoop(ROOT)
   const personal = await mustGit(["log", "--oneline", `upstream/${UPSTREAM_BRANCH}..HEAD`])
   if (personal) {
     console.log("kept on top of upstream:")
@@ -238,6 +257,7 @@ async function main() {
   // tracked files accidentally changed by package lifecycle/build scripts.
   await assertSyncReady(ROOT, true)
   await assertForkInvariants(ROOT)
+  await assertSingleTurnLoop(ROOT)
   console.log("pushing origin/main…")
   await mustGit(["push", "origin", LOCAL_BRANCH])
 
@@ -269,16 +289,27 @@ async function main() {
 }
 
 // V2 migrates tui.json into cli.json exactly once and ignores later tui.json edits, so the
-// deployed keybinds file is cli.json whenever the repo carries one (dotfiles/opencode/cli.json);
+// deployed keybinds file is cli.json whenever the repo carries one (the repo root copy, seeded only
+// when the seat has none - live tuning is never clobbered);
 // the legacy repo-root tui.json is the fallback that still seeds a fresh config directory.
 export async function installTuiConfig(root: string, configDir: string) {
-  const cli = path.join(root, "dotfiles", "opencode", "cli.json")
+  const v2 = path.join(root, "cli.json")
   const legacy = path.join(root, "tui.json")
-  const source = existsSync(cli) ? cli : existsSync(legacy) ? legacy : undefined
-  if (!source) return undefined
-  const destination = path.join(configDir, path.basename(source))
+  if (existsSync(v2)) {
+    const destination = path.join(configDir, "cli.json")
+    // cli.json is a seed: check-drift compares it against the seat and calls the differences local
+    // tuning, not drift. Fresh seats get the repo template; existing ones keep their tuning instead
+    // of being clobbered on every sync.
+    if (existsSync(destination)) return undefined
+    await mkdir(configDir, { recursive: true })
+    await copyFile(v2, destination)
+    return destination
+  }
+  if (!existsSync(legacy)) return undefined
+  // The legacy tui.json is always refreshed: V2 migrates its keys into cli.json itself.
+  const destination = path.join(configDir, "tui.json")
   await mkdir(configDir, { recursive: true })
-  await copyFile(source, destination)
+  await copyFile(legacy, destination)
   return destination
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import fs from "fs/promises"
 import path from "path"
@@ -7,7 +7,13 @@ import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { Location } from "@opencode/core/location"
-import { ForkInstructionsPlugin } from "@opencode/core/plugin/fork/instructions"
+import {
+  applyInstructionBudget,
+  ForkInstructionsPlugin,
+  MAX_INSTRUCTION_BYTES,
+  MAX_INSTRUCTION_FILES,
+  type InstructionSource,
+} from "@opencode/core/plugin/fork/instructions"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Document, Info } from "@opencode/schema/config"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -91,4 +97,43 @@ describe("fork instructions loader", () => {
       }),
     ),
   )
+})
+
+// The instruction budget is the transplant of codewhale's injection budget (32 entries / 12000 bytes,
+// borrow C27): bounded file count, bounded file size, and an honest marker when content is dropped.
+// codewhale packages memory entries whole; instruction files are user-authored, so truncation with a
+// marker is the friendlier of the two honest options and sources are cut on a character boundary.
+const source = (path: string, content: string): InstructionSource => ({ path, content })
+
+describe("instruction budget", () => {
+  test("admits small sources unchanged", () => {
+    const budget = applyInstructionBudget([source("/a.md", "one"), source("/b.md", "two")])
+    expect(budget).toEqual({ files: [source("/a.md", "one"), source("/b.md", "two")], dropped: 0, truncated: 0 })
+  })
+
+  test("drops whole sources beyond the file cap and counts them", () => {
+    const many = Array.from({ length: MAX_INSTRUCTION_FILES + 2 }, (_, index) => source(`/f${index}.md`, "x"))
+    const budget = applyInstructionBudget(many)
+    expect(budget.files).toHaveLength(MAX_INSTRUCTION_FILES)
+    expect(budget.files.map((file) => file.path)).toEqual(many.slice(0, MAX_INSTRUCTION_FILES).map((file) => file.path))
+    expect(budget.dropped).toBe(2)
+    expect(budget.truncated).toBe(0)
+  })
+
+  test("truncates an oversized source on a character boundary and marks the drop", () => {
+    const content = `${"a".repeat(MAX_INSTRUCTION_BYTES - 1)}é${"b".repeat(10)}`
+    const budget = applyInstructionBudget([source("/big.md", content)])
+    expect(budget.dropped).toBe(0)
+    expect(budget.truncated).toBe(1)
+    expect(budget.files.map((file) => file.content)).toEqual([
+      `${"a".repeat(MAX_INSTRUCTION_BYTES - 1)}\n\n[... 12 bytes omitted: instruction budget]`,
+    ])
+  })
+
+  test("leaves content at exactly the byte budget alone", () => {
+    const content = "a".repeat(MAX_INSTRUCTION_BYTES - 2) + "é"
+    const budget = applyInstructionBudget([source("/edge.md", content)])
+    expect(budget.truncated).toBe(0)
+    expect(budget.files.map((file) => file.content)).toEqual([content])
+  })
 })

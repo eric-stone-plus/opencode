@@ -2,7 +2,7 @@
 import { testRender } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { Schema } from "effect"
-import { resolve, ConfigProvider, Info, useConfig, type Interface } from "../src/config"
+import { ANIMATIONS_DEFAULT, resolve, ConfigProvider, Info, useConfig, type Interface } from "../src/config"
 import { settings } from "../src/component/dialog-config"
 import { TuiKeybind } from "../src/config/keybind"
 import { CommandMap, Definitions } from "../src/config/v1/keybind"
@@ -63,6 +63,13 @@ test("resolves nested config and keybind defaults", () => {
 
 test("shows the new session location default in settings", () => {
   expect(settings.find((setting) => setting.path.join(".") === "session.new_location")?.default).toBe("launch")
+})
+
+test("shows the animations default in settings and resolves it the same way", () => {
+  // The panel used to claim `off` (default: false) while every consumer animated (`?? true`); one default now.
+  expect(settings.find((setting) => setting.path.join(".") === "animations")?.default).toBe(ANIMATIONS_DEFAULT)
+  expect(resolve({}, { terminalSuspend: true }).animations).toBe(ANIMATIONS_DEFAULT)
+  expect(resolve({ animations: false }, { terminalSuspend: true }).animations).toBe(false)
 })
 
 test("shows the TPS default in session settings", () => {

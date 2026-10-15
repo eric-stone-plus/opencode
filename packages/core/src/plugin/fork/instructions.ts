@@ -12,6 +12,39 @@ import { InstructionDiscovery } from "../../instruction-discovery.js"
 import { Location } from "../../location.js"
 import { AbsolutePath } from "../../schema.js"
 
+// Injection budget (borrow C27). codewhale caps memory injection at 32 entries / 12000 bytes and
+// labels what it injects with an authority envelope; this is that pattern transplanted to the fork's
+// instruction sources: a bounded number of files, a bounded size per file, a logged count of dropped
+// files, and an inline marker where a file is truncated. The authority label does not carry over:
+// instruction files are user-authored, the same principal as the config that lists them, and labeling
+// the user's own text untrusted would be noise.
+export const MAX_INSTRUCTION_FILES = 32
+export const MAX_INSTRUCTION_BYTES = 12_000
+
+export type InstructionSource = { path: string; content: string }
+
+export function applyInstructionBudget(sources: InstructionSource[]): {
+  files: InstructionSource[]
+  dropped: number
+  truncated: number
+} {
+  const admitted = sources.slice(0, MAX_INSTRUCTION_FILES)
+  let truncated = 0
+  const files = admitted.map((source) => {
+    if (Buffer.byteLength(source.content, "utf8") <= MAX_INSTRUCTION_BYTES) return source
+    truncated++
+    return { ...source, content: capContent(source.content) }
+  })
+  return { files, dropped: sources.length - admitted.length, truncated }
+}
+
+// Cut on a character boundary so the marker is never preceded by half a code point.
+function capContent(content: string): string {
+  const size = Buffer.byteLength(content, "utf8")
+  const head = Buffer.from(content, "utf8").subarray(0, MAX_INSTRUCTION_BYTES).toString("utf8").replace(/\uFFFD+$/, "")
+  return `${head}\n\n[... ${size - Buffer.byteLength(head, "utf8")} bytes omitted: instruction budget]`
+}
+
 /**
  * The `instructions` config array has no upstream consumer. Entries are local files or globs: `~/` expands to the
  * home directory, an absolute entry globs its basename inside its directory, and a relative one is searched upward
@@ -48,11 +81,16 @@ export const Plugin = define({
       const paths = [...new Set((yield* Effect.forEach([...new Set(entries)], resolve)).flat().map((file) => path.resolve(file)))]
       const read = yield* Effect.forEach(paths, (file) =>
         fs.readFileStringSafe(file).pipe(
-          Effect.map((content) => (content ? [new InstructionDiscovery.File({ path: AbsolutePath.make(file), content })] : [])),
-          Effect.orElseSucceed(() => []),
+          Effect.map((content): InstructionSource[] => (content ? [{ path: file, content }] : [])),
+          Effect.orElseSucceed(() => [] as InstructionSource[]),
         ),
       )
-      snapshot.files = read.flat()
+      const budget = applyInstructionBudget(read.flat())
+      if (budget.dropped > 0 || budget.truncated > 0)
+        yield* Effect.logWarning("instruction budget applied", { dropped: budget.dropped, truncated: budget.truncated })
+      snapshot.files = budget.files.map(
+        (source) => new InstructionDiscovery.File({ path: AbsolutePath.make(source.path), content: source.content }),
+      )
     })
     yield* refresh()
     yield* discovery.transform((editor) => snapshot.files.forEach((file) => editor.add(file)))

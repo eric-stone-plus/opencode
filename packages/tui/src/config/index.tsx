@@ -252,6 +252,13 @@ export type Resolved = Omit<Info, "attention" | "cursor" | "keybinds" | "leader"
   }
 }
 
+/**
+ * The single default for interface animations. `resolve()` fills it and the settings dialog reports it, so the
+ * panel cannot drift from the runtime default again: it used to claim `off` (default: false) while every consumer
+ * animated (`?? true`), and `prompt/index.tsx` even disabled its own transitions (`?? false`) for the same unset.
+ */
+export const ANIMATIONS_DEFAULT = true
+
 export function resolve(input: Info, options: { terminalSuspend: boolean }): Resolved {
   const keybinds: TuiKeybind.KeybindOverrides = { ...input.keybinds }
   if (!options.terminalSuspend) {
@@ -266,6 +273,7 @@ export function resolve(input: Info, options: { terminalSuspend: boolean }): Res
 
   return {
     ...input,
+    animations: input.animations ?? ANIMATIONS_DEFAULT,
     attention: {
       notifications: input.attention?.notifications ?? false,
       sound: input.attention?.sound ?? false,
