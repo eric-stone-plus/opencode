@@ -1,0 +1,133 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`golden: a dialog row that is unavailable explains itself 1`] = `
+"--- 80x24 ---
+    Pick a model                                                         esc
+
+    deepseek-chat ready
+    deepseek-reasoner (no API key)
+    qwen3.8-max
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                  Choose enter
+
+--- 100x30 ---
+    Pick a model                                                                             esc
+
+    deepseek-chat ready
+    deepseek-reasoner (no API key)
+    qwen3.8-max
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                      Choose enter
+
+--- 120x32 ---
+    Pick a model                                                                                                 esc
+
+    deepseek-chat ready
+    deepseek-reasoner (no API key)
+    qwen3.8-max
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                          Choose enter
+
+--- 160x40 ---
+    Pick a model                                                                                                                                         esc
+
+    deepseek-chat ready
+    deepseek-reasoner (no API key)
+    qwen3.8-max
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                                                                  Choose enter"
+`;

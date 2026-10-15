@@ -1,0 +1,57 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`golden: the MCP sidebar with one server per status 1`] = `
+"--- 80x24 ---
+▼ MCP
+• github                                                               Connected
+• linear                                                                 Sign in
+• sentry                                                                   Error
+• jira                                                                  Disabled
+
+--- 100x30 ---
+▼ MCP
+• github                                                                                   Connected
+• linear                                                                                     Sign in
+• sentry                                                                                       Error
+• jira                                                                                      Disabled
+
+--- 120x32 ---
+▼ MCP
+• github                                                                                                       Connected
+• linear                                                                                                         Sign in
+• sentry                                                                                                           Error
+• jira                                                                                                          Disabled
+
+--- 160x40 ---
+▼ MCP
+• github                                                                                                                                               Connected
+• linear                                                                                                                                                 Sign in
+• sentry                                                                                                                                                   Error
+• jira                                                                                                                                                  Disabled"
+`;
+
+exports[`golden: the collapsed MCP summary above two servers 1`] = `
+"--- 80x24 ---
+▼ MCP
+• github                                                               Connected
+• sentry                                                                   Error
+• linear                                                                   Error
+
+--- 100x30 ---
+▼ MCP
+• github                                                                                   Connected
+• sentry                                                                                       Error
+• linear                                                                                       Error
+
+--- 120x32 ---
+▼ MCP
+• github                                                                                                       Connected
+• sentry                                                                                                           Error
+• linear                                                                                                           Error
+
+--- 160x40 ---
+▼ MCP
+• github                                                                                                                                               Connected
+• sentry                                                                                                                                                   Error
+• linear                                                                                                                                                   Error"
+`;

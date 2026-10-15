@@ -1,0 +1,41 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`golden: the LSP sidebar across the shipped widths 1`] = `
+"--- 80x24 ---
+LSP
+• typescript
+• gopls
+
+--- 100x30 ---
+LSP
+• typescript
+• gopls
+
+--- 120x32 ---
+LSP
+• typescript
+• gopls
+
+--- 160x40 ---
+LSP
+• typescript
+• gopls"
+`;
+
+exports[`golden: the idle LSP sidebar hint 1`] = `
+"--- 80x24 ---
+LSP
+LSPs will activate as files are read
+
+--- 100x30 ---
+LSP
+LSPs will activate as files are read
+
+--- 120x32 ---
+LSP
+LSPs will activate as files are read
+
+--- 160x40 ---
+LSP
+LSPs will activate as files are read"
+`;
