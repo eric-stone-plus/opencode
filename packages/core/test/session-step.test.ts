@@ -116,7 +116,7 @@ for (const fixture of [
               }),
           },
           retry: (_cause, _error, retry) =>
-            Effect.succeed(retry ? { retry: true, attempt: 2, delay: 0 } : { retry: false }),
+            Effect.succeed(retry ? { retry: true, attempt: 2, delay: 0 } : { retry: false, exhausted: "not-retryable" as const }),
           recoverContinuation: true,
           recoverOverflow: Effect.succeed(false),
         })

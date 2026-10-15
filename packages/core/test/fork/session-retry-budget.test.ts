@@ -58,6 +58,18 @@ const exhaust = (cause: AIError, limit = 100, agent = Agent.ID.make("auto")) =>
     return delays
   })
 
+/** The refusal the policy ends on, for the cases where the reason is what the test is about. */
+const refusal = (cause: AIError, hook: (event: RetryEvent) => void = () => {}, agent = Agent.ID.make("auto")) =>
+  Effect.gen(function* () {
+    const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry_budget"))
+    let last = yield* policy(input(cause, hook, agent))
+    for (let i = 0; last.retry && i < 100; i++) {
+      yield* TestClock.adjust(last.delay)
+      last = yield* policy(input(cause, hook, agent))
+    }
+    return last
+  })
+
 const sum = (values: ReadonlyArray<number>) => values.reduce((total, value) => total + value, 0)
 
 describe("ForkRetryBudget", () => {
@@ -140,7 +152,30 @@ describe("ForkRetryBudget", () => {
           event.decision = { retry: false }
         }),
       )
-      expect(refused).toEqual({ retry: false })
+      expect(refused).toMatchObject({ retry: false })
+      expect(refused.exhausted).toBe("hook")
+    }),
+  )
+
+  it.effect("names why the policy stopped, so the terminal state is not one opaque refusal", () =>
+    Effect.gen(function* () {
+      // The walk-away budget ran out: the failure could have cleared, the allowance did not last.
+      expect(yield* refusal(internal)).toMatchObject({ retry: false, exhausted: "budget" })
+      // The attended allowance is bounded by attempt count instead.
+      expect(yield* refusal(internal, () => {}, Agent.ID.make("build"))).toMatchObject({
+        retry: false,
+        exhausted: "attempts",
+      })
+      // A deterministic rejection never had a retry to spend.
+      expect(yield* refusal(rejected)).toMatchObject({ retry: false, exhausted: "not-retryable" })
+      // Transport timeouts stop after three attempts inside either allowance.
+      const timeout = new AIError({
+        reason: new TransportError({ message: "Timed out", transport: "http", operation: "request", code: "Timeout" }),
+      })
+      expect(yield* refusal(timeout, () => {}, Agent.ID.make("build"))).toMatchObject({
+        retry: false,
+        exhausted: "timeout",
+      })
     }),
   )
 })

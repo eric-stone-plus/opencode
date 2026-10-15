@@ -158,7 +158,7 @@ const run = (snapshots: Layer.Layer<Snapshot.Service>) =>
                 return { content: [{ type: "text" as const, text: "ok" }] }
               }),
           },
-          retry: () => Effect.succeed({ retry: false as const }),
+          retry: () => Effect.succeed({ retry: false as const, exhausted: "not-retryable" as const }),
           recoverContinuation: false,
           recoverOverflow: Effect.succeed(false),
         })

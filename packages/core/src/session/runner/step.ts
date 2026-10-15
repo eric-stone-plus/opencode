@@ -53,7 +53,7 @@ interface Input {
     cause: AIError,
     error: SessionError.Error,
     retry: boolean,
-  ) => Effect.Effect<{ readonly retry: false } | SessionRunnerRetry.Decision>
+  ) => Effect.Effect<SessionRunnerRetry.Refusal | SessionRunnerRetry.Decision>
   readonly recoverContinuation: boolean
   /** The runner owns compaction policy; the attempt invokes it only before durable output. */
   readonly recoverOverflow: Effect.Effect<boolean>

@@ -29,6 +29,18 @@ export interface Decision {
   readonly delay: number
 }
 
+/**
+ * Why the policy stopped retrying. The terminal state used to be a bare `{ retry: false }`, which read
+ * the same whether a deterministic rejection ended the step or a walk-away budget ran out after half an
+ * hour of provider outage - the two cases an operator most needs to tell apart.
+ */
+export type Exhausted = "budget" | "attempts" | "timeout" | "not-retryable" | "hook"
+
+export interface Refusal {
+  readonly retry: false
+  readonly exhausted: Exhausted
+}
+
 /** Bound provider-requested delays so a hostile or buggy retry-after cannot stall a session for hours. */
 const RETRY_AFTER_MAX = Duration.toMillis("15 minutes")
 
@@ -74,7 +86,11 @@ export const policy = (sessionID: SessionSchema.ID) =>
         // The budget is for sessions the user walks away from; an attended request must fail fast and bounded.
         const useBudget = ForkRetryBudget.transient(input.cause) && ForkRetryBudget.unattended(input.agent)
         const next = yield* (useBudget ? budgeted : step)(now, input).pipe(Pull.catchDone(() => Effect.succeed(undefined)))
-        if (!next) return { retry: false as const }
+        if (!next) {
+          const exhausted: Exhausted = useBudget ? "budget" : "attempts"
+          yield* Effect.logInfo("session.retry.exhausted", { sessionID, exhausted, attempt })
+          return { retry: false as const, exhausted }
+        }
         const [, duration] = next
         attempt++
         if (isTimeout(input.cause)) timeouts++
@@ -88,7 +104,18 @@ export const policy = (sessionID: SessionSchema.ID) =>
           decision: input.retry && timeouts <= MAX_TIMEOUT_RETRIES ? { retry: true, delay } : { retry: false },
         }
         yield* input.hook(event)
-        if (!event.decision.retry) return event.decision
+        if (!event.decision.retry) {
+          // A deterministic rejection is the ordinary path and stays quiet; the other three are the ones
+          // worth a log line, because each means the step gave up on a failure that could have cleared.
+          const exhausted: Exhausted = !input.retry
+            ? "not-retryable"
+            : timeouts > MAX_TIMEOUT_RETRIES
+              ? "timeout"
+              : "hook"
+          if (exhausted !== "not-retryable")
+            yield* Effect.logInfo("session.retry.exhausted", { sessionID, exhausted, attempt })
+          return { retry: false as const, exhausted }
+        }
         const normalized =
           Number.isFinite(event.decision.delay) && event.decision.delay >= 0 ? Math.ceil(event.decision.delay) : delay
         return { retry: true as const, attempt, delay: normalized }
