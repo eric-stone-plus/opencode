@@ -573,17 +573,16 @@ else
   # Match the structured severity and message fields. A raw keyword search
   # also counts commands recorded in the log that happen to inspect these
   # messages, which turns the audit into a self-referential false positive.
-  n1=$(grep -cE 'level=ERROR.*message="plugin config hook failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
-  n2=$(grep -cE 'level=WARN.*message="background dependency install failed"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
-  if [ "${n1:-0}" -gt 0 ]; then
-    warn "'plugin config hook failed' x$n1 in log — swallowed config-hook errors (a broken plugin file is the usual cause; mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
+  # V2 moved the swallow points: the plugin supervisor logs a load failure as a
+  # warning (supervisor.ts:63) and a reload failure as an error (:239), and the
+  # config loader logs a failed plugin watch (config/plugin/source.ts:67). The
+  # V1 pair this used to watch ("plugin config hook failed" / "background
+  # dependency install failed") has no producer left in the V2 tree.
+  n=$(grep -cE 'level=(WARN|ERROR).*message="(failed to load plugin|failed to reload plugins|configured plugin watch failed)"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
+  if [ "${n:-0}" -gt 0 ]; then
+    warn "swallowed plugin failure x$n in log — a broken plugin file is the usual cause (mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
   else
-    pass "no 'plugin config hook failed' in log"
-  fi
-  if [ "${n2:-0}" -gt 0 ]; then
-    warn "'background dependency install failed' x$n2 in log — background @opencode-ai/plugin npm install failed silently; re-run install with network/proxy up"
-  else
-    pass "no 'background dependency install failed' in log"
+    pass "no swallowed plugin failure in log"
   fi
 fi
 

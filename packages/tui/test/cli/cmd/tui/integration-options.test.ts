@@ -15,29 +15,25 @@ const integration = (value: Partial<IntegrationInfo> & Pick<IntegrationInfo, "id
 })
 
 describe("integrationOptions", () => {
-  test("keeps popular integrations first and sorts the rest alphabetically", () => {
+  test("keeps the listed vendor first and sorts the rest alphabetically", () => {
     expect(
       integrationOptions([
         integration({ id: "mistral", name: "Mistral" }),
-        integration({ id: "openai", name: "OpenAI" }),
+        integration({ id: "deepseek", name: "DeepSeek" }),
         integration({ id: "custom-z", name: "Zebra" }),
         integration({ id: "anthropic", name: "Anthropic" }),
-        integration({ id: "opencode", name: "OpenCode Zen" }),
-        integration({ id: "opencode-go", name: "OpenCode Go" }),
       ]).map((item) => item.id),
-    ).toEqual(["opencode-go", "opencode", "openai", "anthropic", "mistral", "custom-z"])
+    ).toEqual(["deepseek", "anthropic", "mistral", "custom-z"])
   })
 
-  test("keeps MCP integrations above popular integrations without relying on their IDs", () => {
+  test("keeps MCP integrations above the listed vendor without relying on their IDs", () => {
     expect(
       integrationOptions([
-        integration({ id: "openai", name: "OpenAI" }),
+        integration({ id: "deepseek", name: "DeepSeek" }),
         integration({ id: "linear", name: "Linear", metadata: { source: "mcp" } }),
         integration({ id: "github", name: "GitHub", metadata: { source: "mcp" } }),
-        integration({ id: "opencode", name: "OpenCode Zen" }),
-        integration({ id: "opencode-go", name: "OpenCode Go" }),
       ]).map((item) => item.id),
-    ).toEqual(["github", "linear", "opencode-go", "opencode", "openai"])
+    ).toEqual(["github", "linear", "deepseek"])
   })
 })
 
@@ -47,9 +43,9 @@ describe("integrationCategory", () => {
     expect(integrationCategory(integration({ id: "constructor", name: "constructor" }))).toBe("Services")
   })
 
-  test("labels a known popular id Popular, and MCP wins over it", () => {
-    expect(integrationCategory(integration({ id: "openai", name: "OpenAI" }))).toBe("Popular")
-    expect(integrationCategory(integration({ id: "openai", name: "OpenAI", metadata: { source: "mcp" } }))).toBe("MCP")
+  test("labels the listed vendor Popular, and MCP wins over it", () => {
+    expect(integrationCategory(integration({ id: "deepseek", name: "DeepSeek" }))).toBe("Popular")
+    expect(integrationCategory(integration({ id: "deepseek", name: "DeepSeek", metadata: { source: "mcp" } }))).toBe("MCP")
   })
 })
 

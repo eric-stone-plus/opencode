@@ -37,13 +37,10 @@ import {
   type FormAnswerField,
 } from "../util/form"
 
+// This fork ships one vendor (ADR 0010), so the upstream popularity ladder went with the vendors it
+// ranked: those ids can no longer appear in the list, and the supported provider was not on it.
 const INTEGRATION_PRIORITY: Record<string, number> = {
-  "opencode-go": 0,
-  opencode: 1,
-  openai: 2,
-  "github-copilot": 3,
-  anthropic: 4,
-  google: 5,
+  deepseek: 0,
 }
 
 type ConnectMethod = Exclude<IntegrationInfo["methods"][number], { type: "env" }>
