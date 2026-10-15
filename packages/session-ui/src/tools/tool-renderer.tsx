@@ -1129,6 +1129,8 @@ export interface ToolProps {
   deferContent?: boolean
   virtualizeDiff?: boolean
   onContentRendered?: () => void
+  /** Paths the patch view lists, without change counts or diffs, instead of `metadata.files`. */
+  pendingFiles?: readonly string[]
   forceOpen?: boolean
   locked?: boolean
 }
@@ -1682,7 +1684,7 @@ ToolRegistry.register({
               <span data-slot="basic-tool-tool-title">
                 <TextShimmer text={i18n.t("ui.tool.webfetch")} active={pending()} />
               </span>
-              <Show when={!pending() && url()}>
+              <Show when={props.status !== "streaming" && url()}>
                 <a
                   data-slot="basic-tool-tool-subtitle"
                   class="webfetch-link"
@@ -2209,7 +2211,18 @@ ToolRegistry.register({
   render(props) {
     const i18n = useI18n()
     const fileComponent = useFileComponent()
-    const files = createMemo(() => patchFileGroups(props.metadata.files))
+
+    const files = createMemo(
+      () =>
+        props.pendingFiles?.map((path) => ({
+          path,
+          type: "update" as const,
+          additions: 0,
+          deletions: 0,
+          views: [],
+        })) ?? patchFileGroups(props.metadata.files),
+    )
+
     const [expanded, setExpanded] = createSignal<string[]>([])
 
     const title = createMemo(() => {
