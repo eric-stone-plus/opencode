@@ -13,6 +13,13 @@
  * build or push if upstream reintroduced a self-update path this fork deleted
  * on purpose (see assertForkInvariants). The product is packages/cli (upstream
  * V2); the legacy packages/opencode runtime no longer exists.
+ *
+ * Delete/modify conflicts (status DU, "deleted by us") are resolved
+ * automatically by keeping this fork's deletion: rerere never records them, so
+ * without automation every sync window re-litigates the same ~50 files by hand
+ * (docs/adr/0005: "Resolve them with git rm; rerere only memorizes content
+ * conflicts"). When nothing but DU conflicts remain, the merge is committed and
+ * the sync continues; content conflicts still stop the run for manual review.
  */
 import { $ } from "bun"
 import { homedir } from "os"
@@ -155,6 +162,62 @@ async function assertSingleTurnLoop(directory: string) {
   )
 }
 
+// Fork wiring anchors (borrow C11, reduced). A clean upstream merge can silently drop a gate script
+// entry, a pre-push line, or the fork plugin chain registration - every downstream guard then stops
+// running without a single test failing. The full feature registry was rejected as unmaintainable
+// (a file-level manifest cannot classify fork intent vs merge content); these anchors are the subset
+// whose loss is silent, so they are asserted instead.
+export const FORK_WIRING_ANCHORS: ReadonlyArray<{ file: string; contains: readonly string[] }> = [
+  {
+    file: "package.json",
+    contains: [
+      '"check-single-loop": "bun run script/check-single-loop.ts"',
+      '"check-provider-policy": "bun run script/check-provider-policy.ts"',
+      '"debt-ratchet": "bun run script/debt-ratchet.ts"',
+      '"check-drift": "bun run script/check-drift.ts"',
+    ],
+  },
+  {
+    file: ".husky/pre-push",
+    contains: ["bun run check\n", "bun run check-single-loop\n", "bun run check-provider-policy\n", "bun run debt-ratchet\n"],
+  },
+  {
+    file: "packages/core/src/plugin/internal.ts",
+    contains: ["...ForkPlugin.post", "PluginInternal.guarded", '"block-unsafe-kill"', '"secret-path-guard"'],
+  },
+  {
+    file: "packages/core/src/plugin/supervisor.ts",
+    contains: ["PluginInternal.guarded.has(plugin.id)"],
+  },
+  {
+    file: "packages/core/src/plugin/fork/index.ts",
+    contains: ["ForkChildAuthorityPlugin", "ForkAutonomyPlugin"],
+  },
+]
+
+export async function assertForkWiring(directory: string) {
+  // Partial trees (test fixtures) carry no core sources; the wiring is about the product tree.
+  if (!existsSync(path.join(directory, "packages", "core", "src"))) return
+  const problems: string[] = []
+  for (const anchor of FORK_WIRING_ANCHORS) {
+    const file = path.join(directory, anchor.file)
+    if (!existsSync(file)) {
+      problems.push(`${anchor.file} is missing`)
+      continue
+    }
+    const text = await readFile(file, "utf8")
+    for (const needle of anchor.contains)
+      if (!text.includes(needle)) problems.push(`${anchor.file} no longer contains ${JSON.stringify(needle)}`)
+  }
+  if (problems.length === 0) return
+  throw new Error(
+    "Fork wiring lost after the merge:\n" +
+      problems.map((problem) => `  - ${problem}`).join("\n") +
+      "\nRestore the wiring (gate scripts, pre-push lines, fork plugin chain), commit, then run:" +
+      "\n  bun run sync-upstream --continue",
+  )
+}
+
 export async function installBinary(source: string, destination: string) {
   await mkdir(path.dirname(destination), { recursive: true })
   // Stage beside the live binary so rename stays atomic, including while the
@@ -168,6 +231,36 @@ export async function installBinary(source: string, destination: string) {
   } finally {
     await rm(staging, { recursive: true, force: true })
   }
+}
+
+// Delete/modify conflicts where this fork deleted the file ("deleted by us",
+// porcelain status DU). Parsed from porcelain v1 -z output so paths with
+// spaces or non-ASCII survive.
+export function deleteModifyPaths(porcelain: string): string[] {
+  return porcelain.split("\0").flatMap((entry) => (entry.startsWith("DU ") ? [entry.slice(3)] : []))
+}
+
+// Resolves every DU conflict by keeping the deletion (`git rm`), the policy
+// docs/adr/0005 documents. Returns the resolved paths; other conflict classes
+// stay for manual review.
+export async function resolveDeleteModifyConflicts(directory: string): Promise<string[]> {
+  const status = await git(["status", "--porcelain=v1", "-z"], directory)
+  const paths = deleteModifyPaths(status.text)
+  for (const target of paths) await mustGit(["rm", "--", target], directory)
+  return paths
+}
+
+async function unmergedPaths(directory: string) {
+  const remaining = await mustGit(["diff", "--name-only", "--diff-filter=U"], directory)
+  return remaining === "" ? [] : remaining.split("\n")
+}
+
+// Window size trend line (informational, no gate): what the merge changed
+// relative to this fork's side, so delete-side and content churn stay visible
+// across syncs without a stored ledger.
+async function reportMergeWindow(directory: string) {
+  const summary = await git(["diff", "--shortstat", "HEAD^1..HEAD"], directory)
+  if (summary.ok && summary.text) console.log(`merge window: ${summary.text}`)
 }
 
 async function main() {
@@ -204,19 +297,36 @@ async function main() {
     } else {
       console.log(`merging ${onto} into ${LOCAL_BRANCH}…`)
       const merge = await git(["merge", "--no-edit", onto])
-      if (!merge.ok) {
-        throw new Error(
-          `${merge.error || merge.text}\n\nConflict. Fix files, then:\n` +
-            "  git add -A && git commit --no-edit\n" +
-            "  bun run sync-upstream --continue\n" +
-            "To abort: git merge --abort",
-        )
+      if (merge.ok) {
+        await reportMergeWindow(ROOT)
+      } else {
+        const resolved = await resolveDeleteModifyConflicts(ROOT)
+        if (resolved.length > 0)
+          console.log(
+            `kept this fork's deletion on ${resolved.length} modify/delete conflict(s) (rerere never records them)`,
+          )
+        const remaining = await unmergedPaths(ROOT)
+        if (remaining.length > 0) {
+          throw new Error(
+            `${merge.error || merge.text}\n\n` +
+              `Conflicts remaining: ${remaining.length}` +
+              (resolved.length > 0 ? ` (delete-side conflicts resolved automatically: ${resolved.length})` : "") +
+              "\nFix files, then:\n" +
+              "  git add -A && git commit --no-edit\n" +
+              "  bun run sync-upstream --continue\n" +
+              "To abort: git merge --abort",
+          )
+        }
+        await mustGit(["commit", "--no-edit"])
+        console.log("merge committed automatically: only delete-side conflicts remained")
+        await reportMergeWindow(ROOT)
       }
     }
   }
 
   await assertSyncReady(ROOT, true)
   await assertForkInvariants(ROOT)
+  await assertForkWiring(ROOT)
   await assertSingleTurnLoop(ROOT)
   const personal = await mustGit(["log", "--oneline", `upstream/${UPSTREAM_BRANCH}..HEAD`])
   if (personal) {
@@ -257,6 +367,7 @@ async function main() {
   // tracked files accidentally changed by package lifecycle/build scripts.
   await assertSyncReady(ROOT, true)
   await assertForkInvariants(ROOT)
+  await assertForkWiring(ROOT)
   await assertSingleTurnLoop(ROOT)
   console.log("pushing origin/main…")
   await mustGit(["push", "origin", LOCAL_BRANCH])

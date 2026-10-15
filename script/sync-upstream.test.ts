@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, open, readdir, rm, stat } from "fs/pro
 import { tmpdir } from "os"
 import path from "path"
 import { rejects } from "assert/strict"
-import { assertBunVersion, assertForkInvariants, assertSyncReady, installBinary, installTuiConfig } from "./sync-upstream"
+import { assertBunVersion, assertForkInvariants, assertForkWiring, assertSyncReady, deleteModifyPaths, installBinary, installTuiConfig, resolveDeleteModifyConflicts } from "./sync-upstream"
 
 const directories: string[] = []
 const gitBinary = Bun.which("git")!
@@ -159,6 +159,82 @@ describe("fork invariants after the upstream merge", () => {
       "packages/cli/src/services/other.ts": 'const installer = "https://opencode.ai/v2/install"\n',
     })
     await rejects(assertForkInvariants(installer), /services\/other\.ts:1/)
+  })
+})
+
+describe("delete/modify conflict resolution", () => {
+  test("parses only the deleted-by-us entries from porcelain output", () => {
+    expect(deleteModifyPaths("DU a.ts\0UU b.ts\0UD c.ts\0")).toEqual(["a.ts"])
+    expect(deleteModifyPaths("")).toEqual([])
+    expect(deleteModifyPaths("DU with space.txt\0")).toEqual(["with space.txt"])
+  })
+
+  test("keeps this fork's deletion on a modify/delete conflict", async () => {
+    const directory = await temporary()
+    await git(directory, "init", "--initial-branch=main", "--template=")
+    await git(directory, "config", "core.hooksPath", "/dev/null")
+    await Bun.write(path.join(directory, "deleted-by-us.txt"), "base")
+    await Bun.write(path.join(directory, "kept.txt"), "base")
+    await git(directory, "add", ".")
+    await git(directory, "commit", "-m", "base")
+    await git(directory, "checkout", "-b", "upstream")
+    await Bun.write(path.join(directory, "deleted-by-us.txt"), "upstream change")
+    await git(directory, "commit", "-am", "upstream edit")
+    await git(directory, "checkout", "main")
+    await git(directory, "rm", "deleted-by-us.txt")
+    await git(directory, "commit", "-m", "fork deletes the file")
+    await rejects(git(directory, "merge", "--no-edit", "upstream"))
+    expect(await git(directory, "status", "--porcelain")).toBe("DU deleted-by-us.txt")
+    expect(await resolveDeleteModifyConflicts(directory)).toEqual(["deleted-by-us.txt"])
+    expect(await git(directory, "diff", "--name-only", "--diff-filter=U")).toBe("")
+    expect(await Bun.file(path.join(directory, "deleted-by-us.txt")).exists()).toBe(false)
+  })
+})
+
+describe("fork wiring anchors", () => {
+  const base: Record<string, string> = {
+    "package.json":
+      '{"scripts":{"check-single-loop": "bun run script/check-single-loop.ts","check-provider-policy": "bun run script/check-provider-policy.ts","debt-ratchet": "bun run script/debt-ratchet.ts","check-drift": "bun run script/check-drift.ts"}}',
+    ".husky/pre-push":
+      "bun run check\nbun run check-single-loop\nbun run check-provider-policy\nbun run debt-ratchet\n",
+    "packages/core/src/plugin/internal.ts":
+      '...ForkPlugin.post\nPluginInternal.guarded\n"block-unsafe-kill"\n"secret-path-guard"\n',
+    "packages/core/src/plugin/supervisor.ts": "PluginInternal.guarded.has(plugin.id)\n",
+    "packages/core/src/plugin/fork/index.ts": "ForkChildAuthorityPlugin\nForkAutonomyPlugin\n",
+  }
+
+  async function wired(files: Record<string, string> = {}) {
+    const directory = await temporary()
+    for (const [file, text] of Object.entries({ ...base, ...files })) {
+      await mkdir(path.dirname(path.join(directory, file)), { recursive: true })
+      await Bun.write(path.join(directory, file), text)
+    }
+    return directory
+  }
+
+  test("accepts a fully wired fork tree", async () => {
+    await assertForkWiring(await wired())
+  })
+
+  test("rejects a pre-push hook that lost a gate", async () => {
+    await rejects(
+      assertForkWiring(await wired({ ".husky/pre-push": "bun run check\nbun run check-single-loop\n" })),
+      /pre-push no longer contains "bun run check-provider-policy\\n"/,
+    )
+  })
+
+  test("rejects a package.json that lost a gate script", async () => {
+    await rejects(
+      assertForkWiring(await wired({ "package.json": '{"scripts":{"check-drift":"bun run script/check-drift.ts"}}' })),
+      /package\.json no longer contains/,
+    )
+  })
+
+  test("rejects a plugin chain that lost its registration or guards", async () => {
+    await rejects(
+      assertForkWiring(await wired({ "packages/core/src/plugin/internal.ts": "...ForkPlugin.post\n" })),
+      /internal\.ts no longer contains "PluginInternal\.guarded"/,
+    )
   })
 })
 
