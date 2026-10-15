@@ -66,9 +66,13 @@ export function PromptFooter(props: {
     // Cache hit rate over the current model window (the same scope as the speed cells), omitted
     // until receipts arrive: a switch must not blend the previous provider's cache behavior in.
     const cache = cacheHitRate(messages)
+    // A flat plan settles at zero cost: the cell says $0.00 instead of vanishing, because a zero
+    // price is data ("this plan does not meter") and its disappearance reads like lost telemetry.
+    // Still hidden while nothing has been spent and the model has not run at all.
+    const spent = cost > 0 || messages.some((message) => message.type === "assistant")
     return [
       usage ? formatContextUsage(usage.tokens, usage.percent) : undefined,
-      cost > 0 ? money.format(cost) : undefined,
+      spent ? money.format(cost) : undefined,
       ttft === undefined ? undefined : `TTFT avg ${Locale.duration(Math.round(ttft))}`,
       tpot === undefined ? undefined : `TPOT avg ${Locale.duration(Math.round(tpot))}/tok`,
       rate === undefined ? undefined : formatTokenRate(rate),
@@ -80,7 +84,7 @@ export function PromptFooter(props: {
   const shortcut = (id: string) => props.context.keymap.shortcuts(id)[0]
   const layout = createMemo(() => {
     const command = shortcut("command.palette.show")
-    if (status().length === 0) return { usage: false, shortcuts: dimensions().width >= 44 }
+    if (status().length === 0) return { usage: [], shortcuts: dimensions().width >= 44 }
     return promptFooterLayout({
       width: Math.max(0, dimensions().width - 8),
       usage: status(),
@@ -93,7 +97,7 @@ export function PromptFooter(props: {
       <Match when={props.mode === "normal"}>
         <Switch>
           <Match when={live() || status().length > 0}>
-            <box flexDirection="row" flexShrink={props.showDetails && layout().usage ? 0 : 1} minWidth={0}>
+            <box flexDirection="row" flexShrink={props.showDetails && layout().usage.length > 0 ? 0 : 1} minWidth={0}>
               <Show when={live()}>
                 <box
                   flexShrink={0}
@@ -114,10 +118,10 @@ export function PromptFooter(props: {
                   </text>
                 </box>
               </Show>
-              <Show when={props.showDetails && layout().usage && status().length > 0}>
+              <Show when={props.showDetails && layout().usage.length > 0}>
                 <text fg={props.context.theme.text.muted} wrapMode="none" flexShrink={0}>
                   <Show when={live()}> · </Show>
-                  {status().join(" · ")}
+                  {layout().usage.join(" · ")}
                 </text>
               </Show>
             </box>
@@ -158,14 +162,26 @@ export default Plugin.define({
   },
 })
 
-function promptFooterLayout(input: { width: number; usage: string[]; shortcuts: string[] }) {
-  const usage = input.usage.join(" · ")
-  const shortcuts = input.shortcuts.join(" · ")
+/**
+ * Picks the footer strip's cells for the width at hand. The row degrades cell by cell from the right
+ * (the speed averages go first, the context and cost anchors last) instead of dropping the whole
+ * usage block, which made the row blink in and out around the threshold. The commands hint outlives
+ * the cells - static chrome the eye looks for - trading trailing cells for its own slot, and it
+ * stands alone when no cell fits at all.
+ */
+export function promptFooterLayout(input: { width: number; usage: string[]; shortcuts: string[] }): {
+  usage: string[]
+  shortcuts: boolean
+} {
   const available = Math.max(0, input.width - Math.min(28, Math.floor(input.width / 2)))
-  if (usage && shortcuts && stringWidth(`${usage} · ${shortcuts}`) <= available) {
-    return { usage: true, shortcuts: true }
+  const hint = input.shortcuts.join(" · ")
+  let alone: { usage: string[]; shortcuts: boolean } | undefined
+  for (let keep = input.usage.length; keep > 0; keep--) {
+    const usage = input.usage.slice(0, keep).join(" · ")
+    if (stringWidth(usage) > available) continue
+    if (hint.length > 0 && stringWidth(`${usage} · ${hint}`) <= available)
+      return { usage: input.usage.slice(0, keep), shortcuts: true }
+    alone ??= { usage: input.usage.slice(0, keep), shortcuts: false }
   }
-  if (usage && stringWidth(usage) <= available) return { usage: true, shortcuts: false }
-  if (!usage && shortcuts && stringWidth(shortcuts) <= available) return { usage: false, shortcuts: true }
-  return { usage: false, shortcuts: false }
+  return alone ?? { usage: [], shortcuts: hint.length > 0 && stringWidth(hint) <= available }
 }

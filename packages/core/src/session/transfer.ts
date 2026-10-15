@@ -8,6 +8,7 @@ import { Clock, Context, DateTime, Effect, Layer, Schema } from "effect"
 import { map } from "effect/Array"
 import path from "path"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { App } from "../app.js"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
@@ -39,6 +40,19 @@ export interface Interface {
     data: Data
     location: Location.Ref
   }) => Effect.Effect<Session.Info, ImportConflictError | Session.NotFoundError>
+}
+
+/**
+ * Import is a trust boundary: a transfer file can arrive from a URL the user was talked into
+ * fetching (`session import https://…`). Session rules from the payload may only restrict, never
+ * grant - `Permission.evaluate` resolves a ruleset with findLast, so a trailing allow would override
+ * the agent's own denies - and the title is untrusted terminal text: plain, bounded, control-free.
+ */
+export function sanitizeImportedInfo(info: Pick<Data["info"], "title" | "permissions">) {
+  return {
+    title: info.title === undefined ? undefined : stripTerminalControl(info.title).slice(0, 200),
+    permissions: info.permissions?.filter((rule) => rule.effect !== "allow"),
+  }
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionTransfer") {}
@@ -86,6 +100,7 @@ const layer = Layer.effect(
             data,
           }
         })
+        const imported = sanitizeImportedInfo(input.data.info)
         yield* bus
           .publish(
             SessionEvent.Created,
@@ -99,11 +114,11 @@ const layer = Layer.effect(
               subpath: RelativePath.make(
                 path.relative(project.directory, input.location.directory).replaceAll("\\", "/"),
               ),
-              title: input.data.info.title,
+              title: imported.title,
               agent: input.data.info.agent,
               model: input.data.info.model,
               metadata: input.data.info.metadata,
-              permissions: input.data.info.permissions,
+              permissions: imported.permissions,
             },
             {
               location: input.location,

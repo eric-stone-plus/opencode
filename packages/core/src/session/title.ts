@@ -132,19 +132,33 @@ export const layer = Layer.effect(
           ? yield* attempt({ session, agent: selection.agent, text, model: selection.primary })
           : undefined)
       if (!title) return
-      const expectedSequence = (yield* Bus.latestSequence(db, sessionID)) + 1
-      const current = yield* store.get(sessionID)
-      if (!current || current.title !== session.title || current.title === truncate(title)) return
-      yield* bus
-        .publish(
-          SessionEvent.Renamed,
-          {
-            sessionID: session.id,
-            title: truncate(title),
-          },
-          { commit: (sequence) => (sequence === expectedSequence ? Effect.void : Effect.die(titleChanged)) },
-        )
-        .pipe(Effect.catchDefect((defect) => (defect === titleChanged ? Effect.void : Effect.die(defect))))
+      const renamed = truncate(title)
+      // Publish the rename as the session's very next event. While a turn streams the bus lands an
+      // event every ~100ms, so the optimistic sequence check failed under ordinary activity and the
+      // rename died silently - the session stayed untitled and its tab unnamed. Re-read the sequence
+      // and retry a bounded number of times; abandoning is logged, never silent.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const expectedSequence = (yield* Bus.latestSequence(db, sessionID)) + 1
+        const current = yield* store.get(sessionID)
+        if (!current || current.title !== session.title || current.title === renamed) return
+        const published = yield* bus
+          .publish(
+            SessionEvent.Renamed,
+            {
+              sessionID: session.id,
+              title: renamed,
+            },
+            { commit: (sequence) => (sequence === expectedSequence ? Effect.void : Effect.die(titleChanged)) },
+          )
+          .pipe(
+            Effect.as(true),
+            Effect.catchDefect((defect) => (defect === titleChanged ? Effect.succeed(false) : Effect.die(defect))),
+          )
+        if (published) return
+      }
+      yield* Effect.logWarning("SessionTitle: rename abandoned, the session kept changing under it", {
+        sessionID,
+      })
     })
     return Service.of({ generate })
   }),

@@ -1,3 +1,4 @@
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { logo } from "../logo"
 
 const reset = "\x1b[0m"
@@ -28,7 +29,7 @@ export function sessionEpilogue(input: { title: string; sessionID?: string }) {
   return [
     ...wordmark("  "),
     "",
-    `  ${weak("Session")}${bold}${input.title}${reset}`,
+    `  ${weak("Session")}${bold}${stripTerminalControl(input.title)}${reset}`,
     `  ${weak("Continue")}${bold}opencode -s ${input.sessionID}${reset}`,
     "",
   ].join("\n")

@@ -5,7 +5,7 @@ import { testRender } from "@opentui/solid"
 import type { Context } from "@opencode/plugin/tui/context"
 import { createSignal } from "solid-js"
 import { ConfigProvider } from "../../src/config"
-import { PromptFooter } from "../../src/feature-plugins/prompt/footer"
+import { PromptFooter, promptFooterLayout } from "../../src/feature-plugins/prompt/footer"
 import { createTuiResolvedConfig } from "../fixture/tui-runtime"
 
 test("prompt footer separates simultaneous subagent, shell, and usage status", async () => {
@@ -157,6 +157,7 @@ test("prompt footer can hide details", async () => {
 function speedContext(
   messages: unknown[],
   session: Record<string, unknown> = { id: "session", location: { directory: "/workspace" } },
+  cost = 1,
 ) {
   const color = RGBA.fromInts(200, 200, 200)
   return {
@@ -168,7 +169,7 @@ function speedContext(
         family: () => ["session"],
         status: () => "idle",
         get: () => session,
-        cost: () => 1,
+        cost: () => cost,
         message: { list: () => messages },
       },
       shell: { list: () => [] },
@@ -343,4 +344,76 @@ test("prompt footer omits unmeasured speed cells and honors the TPS setting", as
   } finally {
     waiting.renderer.destroy()
   }
+})
+
+test("prompt footer shows a zero cost on a flat plan instead of hiding the cell", async () => {
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={speedContext([settled], undefined, 0)} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
+    { width: 120, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    // A flat plan settles at $0.00: the cell is data ("this plan does not meter"), not noise.
+    expect(app.captureCharFrame()).toContain("1.0K (10%) · $0.00 ·")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("prompt footer hides the cost cell while nothing has been spent or run", async () => {
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={speedContext([], undefined, 0)} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
+    { width: 120, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).not.toContain("$")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("prompt footer keeps the anchor cells instead of dropping the whole usage block", async () => {
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <PromptFooter context={speedContext([settled])} sessionID="session" mode="normal" showDetails={true} />
+      </ConfigProvider>
+    ),
+    { width: 60, height: 1 },
+  )
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    // Narrow: the averages go, the anchors stay; the old layout dropped every cell at once.
+    expect(frame).toContain("1.0K (10%) · $1.00")
+    expect(frame).not.toContain("TTFT")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("promptFooterLayout degrades cell by cell and keeps the commands hint last", () => {
+  const usage = ["aaaa", "bbbb", "cccc"]
+  const shortcuts = ["hhhh"]
+  expect(promptFooterLayout({ width: 60, usage, shortcuts })).toEqual({ usage, shortcuts: true })
+  // cccc goes before the hint: static chrome outlives the trailing average.
+  expect(promptFooterLayout({ width: 42, usage, shortcuts })).toEqual({ usage: ["aaaa", "bbbb"], shortcuts: true })
+  expect(promptFooterLayout({ width: 20, usage, shortcuts })).toEqual({ usage: ["aaaa"], shortcuts: false })
+  expect(promptFooterLayout({ width: 6, usage, shortcuts })).toEqual({ usage: [], shortcuts: false })
+})
+
+test("promptFooterLayout keeps the commands hint alone when no cell fits", () => {
+  expect(promptFooterLayout({ width: 20, usage: ["wwwwwwwwwwwwwwwwwwww"], shortcuts: ["hhhh"] })).toEqual({
+    usage: [],
+    shortcuts: true,
+  })
 })

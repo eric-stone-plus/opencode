@@ -86,6 +86,7 @@ import { FrecencyProvider } from "./prompt/frecency"
 import { PromptStashProvider } from "./prompt/stash"
 import { Toast, ToastProvider, useToast } from "./ui/toast"
 import { isFallbackTitle } from "@opencode/util/session-title-fallback"
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import * as Model from "./util/model"
 import { ArgsProvider, useArgs, type Args } from "./context/args"
 import { openUrl } from "@opencode/util/open"
@@ -581,7 +582,9 @@ function App() {
         return
       }
 
-      renderer.setTerminalTitle(`OC | ${title.length > 40 ? title.slice(0, 37) + "…" : title}`)
+      // Titles are model- and import-controlled: the terminal driver must never see raw escapes.
+      const safe = stripTerminalControl(title)
+      renderer.setTerminalTitle(`OC | ${safe.length > 40 ? safe.slice(0, 37) + "…" : safe}`)
       return
     }
 

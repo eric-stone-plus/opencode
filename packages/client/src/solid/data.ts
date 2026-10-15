@@ -736,6 +736,12 @@ export function createData(config: CreateDataInput) {
         return
       }
       case "session.renamed": {
+        // The event carries the authoritative title: apply it immediately. Gating the store write on
+        // network syncs lost the rename whenever a refetch failed or the connection was momentarily
+        // not "connected" (refresh drops such loads), and the tab stayed unnamed until some later
+        // resync. The sync below still re-applies the title so a stale snapshot cannot resurrect.
+        if (store.session.info[event.data.sessionID])
+          setStore("session", "info", event.data.sessionID, "title", event.data.title)
         // Preserve the live title when it races the session's initial read.
         refresh(() => {
           const family = sync.pending(`session.family:${event.data.sessionID}`)

@@ -1,6 +1,7 @@
 import { autocomplete, cancel, intro, isCancel, log, outro } from "@clack/prompts"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/effect/service"
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { Effect, Option } from "effect"
 import { EOL } from "node:os"
 import { Commands } from "../../commands"
@@ -53,7 +54,7 @@ export default Runtime.handler(
                   message: "Select session to export",
                   maxItems: 10,
                   options: page.data.map((session) => ({
-                    label: session.title,
+                    label: stripTerminalControl(session.title ?? "Untitled session"),
                     value: session.id,
                     hint: `${new Date(session.time.updated).toLocaleString()} - ${session.id.slice(-8)}`,
                   })),

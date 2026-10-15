@@ -1,6 +1,7 @@
 import { OpenCode, type SessionInfo } from "@opencode/client"
 import { Service } from "@opencode/client/effect/service"
 import { Effect, Option, Stream } from "effect"
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { EOL } from "node:os"
 import { Commands } from "../../commands"
 import { Runtime } from "../../../framework/runtime"
@@ -101,7 +102,7 @@ function formatList(sessions: ReadonlyArray<SessionInfo>) {
     .map((session) =>
       [
         session.id,
-        (session.title ?? "Untitled session").replace(/[\r\n\t]/g, " "),
+        stripTerminalControl(session.title ?? "Untitled session"),
         new Date(session.time.updated).toLocaleString(),
       ].join("\t"),
     )

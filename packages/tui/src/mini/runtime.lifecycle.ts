@@ -17,6 +17,7 @@ import {
   type ScrollbackWriter,
 } from "@opentui/core"
 import { isFallbackTitle } from "@opencode/util/session-title-fallback"
+import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { monoSnapshot } from "./mono"
 import { entrySplash, exitSplash } from "./splash"
 import { resolveRunTheme } from "./theme"
@@ -175,7 +176,9 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
   const setTitle = (title?: string) => {
     if (input.host.platform !== "linux") return
     if (!title || isFallbackTitle(title)) return renderer.setTerminalTitle("OpenCode")
-    renderer.setTerminalTitle(`OC | ${title.length > 40 ? title.slice(0, 37) + "…" : title}`)
+    // Titles are model- and import-controlled: the terminal driver must never see raw escapes.
+    const safe = stripTerminalControl(title)
+    renderer.setTerminalTitle(`OC | ${safe.length > 40 ? safe.slice(0, 37) + "…" : safe}`)
   }
   setTitle(input.sessionTitle)
   const theme = await resolveRunTheme(renderer, tuiConfig.theme, mono)

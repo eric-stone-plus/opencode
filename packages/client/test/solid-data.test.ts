@@ -158,6 +158,48 @@ test("keeps the previous model in a live variant notice until the projected mess
   }
 })
 
+test("a session.renamed title lands immediately and survives a failed refetch", async () => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      throw new Error(`refetch failed: ${request.url}`)
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+  try {
+    setup.data.session.remember(session(0))
+    const event: OpenCodeEvent = {
+      id: "evt_renamed",
+      created: 2,
+      type: "session.renamed",
+      durable: { aggregateID: "ses_refresh", seq: 1, version: 1 },
+      data: { sessionID: "ses_refresh", title: "Generated title" },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+    // The event carries the authoritative title. It used to be written only after the session
+    // refetch resolved inside `refresh`, so a failed or dropped refetch lost the rename until some
+    // later resync - the tab stayed unnamed. It must land without any network help.
+    expect(setup.data.session.get("ses_refresh")?.title).toBe("Generated title")
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("reconciles a stale running tool when execution settles", async () => {
   const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
   let completed = false
