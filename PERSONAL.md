@@ -442,6 +442,33 @@ That guard was rehearsed against a real merge, not just a fixture: a throwaway c
 
 The same day closed the removal out at the config and credential layer (ADR 0010). The operator withdrew ADR 0009's carve-out: MiMo is deprecated, so both non-DeepSeek blocks left all three `opencode.jsonc` copies, the e2e/verify/README seed material shrank to the DeepSeek entry, `environment.d/95-qwen-provider.conf` was deleted, the wrapper's egress probe set — already derived from the config since V3 — fell to one endpoint, and `~/.config/agent-secrets/mimo.env` plus the `xiaomi-token-plan-cn` credential were purged. Two defects surfaced while doing it and are fixed in the same window: `auth purge` could not name an integration the live catalog no longer lists (its candidate list came from the integration catalog alone, so a removed vendor's key was unreachable even with `--all`, which is the one command that would have taken DeepSeek's key with it) — the candidate list now completes itself from the credential store, lazily and only when a target matches nothing else; and the TUI's `integration.id in INTEGRATION_PRIORITY` walked the prototype chain, so an integration whose id was `toString` sorted with a NaN key and rendered as "Popular". The NAMES-ONLY contract gained its first mechanical gate (`script/check-names-only.ts`, wired into pre-push): it scans `bootstrap/config/**` with the HTTP recorder's own secret patterns and refuses a seed file that ships a value, which is the one path by which a live key could have entered this repository. The provider-policy gate's `REMOVED_PATHS` list now names the paths a *clean* merge would resurrect rather than the files that existed at deletion time — upstream landed `packages/ai/src/protocols/alibaba-responses.ts` after the sync, and a brand-new upstream file is added without a delete/modify conflict for the automation to catch. The seat's plugin copy of `secret-path-guard` also gained the rule that mattered most in hindsight: `~/.config/environment.d` drop-ins were readable by every file tool while `motoko-keys.conf` (0600) sat in the same directory.
 
+## Owner decisions pinned (2026-10-15)
+
+The full-scope round left nine decisions that belong to the operator, plus six residuals worth
+watching. None is blocked on code: each is either implemented with a documented default or deferred
+with its evidence recorded. Re-read this list before starting a related change.
+
+| # | Decision | State |
+|---|---|---|
+| 1 | Introduce a `features.toml`-style registry with an owner path and drift test, replacing the file list? | Not introduced. The removal surface is covered by `REMOVED_PATHS` in `check-provider-policy.ts` plus the sync's delete/modify automation; a registry stays an option if that stops being enough. |
+| 2 | Keep the README translation files (21 of 54 DU conflicts) or keep re-deleting them every window? | Re-deleted each window. The DU automation makes that cost near zero, the same trade C37 took for the recording cassettes. |
+| 3 | `desktop` / AI vendor surfaces: keep behind a config flag, or stay deleted? | Stay deleted (ADR 0007, ADR 0009). A re-added vendor is a support surface the allowlist cannot see, which is what `REMOVED_PATHS` guards. |
+| 4 | Enable C33 strict mode (a spawn without a declared write scope is refused)? | Soft start. Nothing is refused until the declaration rate is observed; the enforcement path is implemented and tested. |
+| 5 | Enable the C29 high-risk deny set? | Empty by default (the audit card is a display surface). Enabling it would change live workflows, so it stays the operator's call. |
+| 6 | Implement the C34 goal loop, and on by default? | Deferred. Its boundary (core loop vs the goal-mode orchestrator) needs a design decision first, then a dry-run window. |
+| 7 | Is the C31 role taxonomy worth touching the generated client surface? | Deferred. It would add a generated-file merge tax on every sync. |
+| 8 | Accept `theme.text.muted` for C7's greyed-out rows instead of a new token? | Implemented, awaiting visual sign-off. Behaviour is pinned by tests and the token choice is reversible. |
+| 9 | Is C5's 96 KB resident tool-surface budget right? | Implemented (today ≈79 KB). Loosen or tighten it in the same commit that updates the set pin. |
+
+Residual risks worth watching (unchanged this round, each with a trigger to revisit):
+
+1. C33's soft start means the protection is near zero until models declare write scopes — a design choice, not a defect.
+2. C29 states only an upper bound in the audit card; the text says so and does not change what is authorised.
+3. C21's fail-closed guarantee covers the fork's own layer of the nine-layer pipeline; upstream's layers are untouched.
+4. The C5 pin covers today's set at 96 KB; a new upstream tool trips both the set pin and the budget, which is intended.
+5. A restored upstream provider brings its cassettes back with it — the sync's delete/modify automation only handles "we deleted, upstream did not".
+6. `debt-ratchet` counts text: a comment containing `: any`, `TODO`, `FIXME`, `XXX` or a `@ts-` prefix moves the metric, so new comments have to avoid those shapes.
+
 ## Agent rules for this fork
 
 - Default branch for diffs and PRs against **this** repo is `main`, not `dev`.
