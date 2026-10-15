@@ -16,6 +16,17 @@ import { SkillFile } from "./skill-file.js"
 
 type Source = Skill.DirectorySource | Skill.UrlSource
 
+/**
+ * A skill id that two roots both define. Later sources win, which is deliberate, but it used to be
+ * silent: a project skill shadowing a global one of the same id left no record of which root is in
+ * effect or that the other one exists at all (borrow C35's attribution half). The same path loaded
+ * twice is not a shadow - a source can legitimately be reachable through two config entries.
+ */
+export function shadowed(existing: Skill.Info | undefined, incoming: Skill.Info) {
+  if (existing === undefined || existing.path === incoming.path) return undefined
+  return { id: incoming.id, kept: incoming.path, replaced: existing.path }
+}
+
 export const Plugin = define({
   id: "opencode.config.skill",
   effect: Effect.fn(function* (ctx) {
@@ -151,9 +162,16 @@ export const Plugin = define({
         yield* FiberMap.clear(watches)
         const skills = new Map<Skill.ID, Skill.Info>()
         const current = sources()
+        const shadows: Array<{ id: Skill.ID; kept: string; replaced: string }> = []
         for (const source of current) {
-          for (const skill of yield* load(source)) skills.set(skill.id, skill)
+          for (const skill of yield* load(source)) {
+            const shadow = shadowed(skills.get(skill.id), skill)
+            if (shadow) shadows.push(shadow)
+            skills.set(skill.id, skill)
+          }
         }
+        if (shadows.length > 0)
+          yield* Effect.logWarning("skill id defined by more than one root; the later source wins", { shadows })
         loaded.skills = Array.from(skills.values())
         if (file) {
           yield* Effect.logInfo("skills rescanned", {

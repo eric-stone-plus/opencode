@@ -2,9 +2,10 @@ import fs from "fs/promises"
 import path from "path"
 import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { TestConsole } from "effect/testing"
 import { Config } from "@opencode/core/config"
 import { Directory, Document, type Entry, Info } from "@opencode/schema/config"
-import { ConfigSkillPlugin } from "@opencode/core/config/plugin/skill"
+import { ConfigSkillPlugin, shadowed } from "@opencode/core/config/plugin/skill"
 import { ConfigCompatibilityPlugin } from "@opencode/core/config/plugin/compatibility"
 import { SkillFile } from "@opencode/core/config/plugin/skill-file"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -174,6 +175,26 @@ metadata:
   })
 })
 
+describe("ConfigSkillPlugin.shadowed", () => {
+  test("records which root won when two roots define the same id", () => {
+    const global = Skill.Info.make({
+      id: Skill.ID.make("review"),
+      name: Skill.Name.make("Review"),
+      path: AbsolutePath.make("/home/.config/opencode/skill/review/SKILL.md"),
+      content: "global",
+    })
+    const project = Skill.Info.make({ ...global, path: AbsolutePath.make("/repo/.opencode/skill/review/SKILL.md") })
+    expect(shadowed(global, project)).toEqual({
+      id: Skill.ID.make("review"),
+      kept: AbsolutePath.make("/repo/.opencode/skill/review/SKILL.md"),
+      replaced: AbsolutePath.make("/home/.config/opencode/skill/review/SKILL.md"),
+    })
+    // The first registration is not a shadow, and the same file reached twice is not one either.
+    expect(shadowed(undefined, global)).toBeUndefined()
+    expect(shadowed(global, { ...project, path: global.path })).toBeUndefined()
+  })
+})
+
 describe("ConfigSkillPlugin.Plugin", () => {
   it.live("maps config entry types to skill directories", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
@@ -244,6 +265,33 @@ describe("ConfigSkillPlugin.Plugin", () => {
           expect((yield* skill.list()).find((item) => item.id === "deploy")?.description).toBe("Deploy")
           expect((yield* skill.list()).find((item) => item.id === "review")?.description).toBe("Second")
           expect(pulls).toEqual(["https://example.test/skills/"])
+        }),
+      ),
+    ),
+  )
+
+  it.live("records the shadowed root when two roots define the same skill id", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const first = path.join(tmp.path, "first")
+          const second = path.join(tmp.path, "second")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(path.join(first, "review"), { recursive: true })
+            await fs.mkdir(path.join(second, "review"), { recursive: true })
+            await write(first, "review", "From the first root")
+            await write(second, "review", "From the second root")
+          })
+
+          const skill = yield* start([first, second], tmp.path)
+          const review = (yield* skill.list()).find((item) => item.id === "review")
+          expect(review?.description).toBe("From the second root")
+
+          // The later source still wins, and now the other root is on the record instead of gone.
+          const captured = JSON.stringify(yield* TestConsole.logLines)
+          expect(captured).toContain("more than one root")
+          expect(captured).toContain(path.join(first, "review", "SKILL.md"))
+          expect(captured).toContain(path.join(second, "review", "SKILL.md"))
         }),
       ),
     ),

@@ -192,4 +192,48 @@ describe("SkillInstructions", () => {
       expect((yield* instructions.load(agent.permissions).pipe(Effect.flatMap(readInitial))).text).toBe("")
     }).pipe(Effect.provide(layer(() => [effect])))
   })
+
+  it.effect("keeps a large index inside its budget without hiding a single skill", () => {
+    const agent = Agent.Info.make(Agent.Info.default(build))
+    // A seat with every root populated: 63 skills at 100 characters of description overflows 12000 bytes.
+    const many = Array.from({ length: 63 }, (_, index) =>
+      Skill.Info.make({
+        id: Skill.ID.make(`skill-${index.toString().padStart(2, "0")}`),
+        name: Skill.Name.make(`Skill ${index}`),
+        description: "d".repeat(100),
+        path: AbsolutePath.make(path.resolve(`/skills/skill-${index}/SKILL.md`)),
+        content: "guidance",
+      }),
+    )
+    return Effect.gen(function* () {
+      const instructions = yield* SkillInstructions.Service
+      const initialized = yield* instructions.load(agent.permissions).pipe(Effect.flatMap(readInitial))
+      expect(Buffer.byteLength(initialized.text)).toBeLessThanOrEqual(SkillInstructions.INDEX_BUDGET)
+      // Detail degrades, discoverability does not: every id is still listed.
+      for (const skill of many) expect(initialized.text).toContain(`<id>${skill.id}</id>`)
+      expect(initialized.text).toContain("Descriptions are omitted for ")
+      expect(initialized.text).not.toContain("are not listed here")
+    }).pipe(Effect.provide(layer(() => many)))
+  })
+
+  it.effect("accounts for skills it cannot list at all instead of truncating silently", () => {
+    const agent = Agent.Info.make(Agent.Info.default(build))
+    // Far past any real seat: even ids and names cannot fit, so the listing has to stop and say so.
+    const many = Array.from({ length: 2000 }, (_, index) =>
+      Skill.Info.make({
+        id: Skill.ID.make(`skill-${index.toString().padStart(4, "0")}`),
+        name: Skill.Name.make(`Skill ${index}`),
+        description: "d".repeat(100),
+        path: AbsolutePath.make(path.resolve(`/skills/skill-${index}/SKILL.md`)),
+        content: "guidance",
+      }),
+    )
+    return Effect.gen(function* () {
+      const instructions = yield* SkillInstructions.Service
+      const initialized = yield* instructions.load(agent.permissions).pipe(Effect.flatMap(readInitial))
+      expect(Buffer.byteLength(initialized.text)).toBeLessThanOrEqual(SkillInstructions.INDEX_BUDGET)
+      expect(initialized.text).toContain("further skills are not listed here: the index budget is spent.")
+      expect(initialized.text).toContain("<id>skill-0000</id>")
+    }).pipe(Effect.provide(layer(() => many)))
+  })
 })
