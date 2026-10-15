@@ -646,3 +646,91 @@ test("keeps the first row selected when current is only a marker", async () => {
     select.app.renderer.destroy()
   }
 })
+
+test("a disabled row with a reason stays visible and the keyboard skips it", async () => {
+  await using tmp = await tmpdir()
+  const select = await mountSelect(tmp.path, [
+    { title: "Alpha", value: "alpha" },
+    { title: "Beta", value: "beta", disabled: true, reason: "no API key" },
+    { title: "Gamma", value: "gamma" },
+  ])
+
+  try {
+    const frame = select.app.captureCharFrame()
+    expect(frame).toContain("Beta")
+    expect(frame).toContain("(no API key)")
+
+    select.app.mockInput.pressArrow("down")
+    await select.app.waitFor(() => select.moved.length === 1)
+    expect(select.moved).toEqual(["gamma"])
+
+    select.app.mockInput.pressEnter()
+    await select.app.waitFor(() => select.selected.length === 1)
+    expect(select.selected).toEqual(["gamma"])
+  } finally {
+    select.app.renderer.destroy()
+  }
+})
+
+test("a disabled row without a reason stays hidden", async () => {
+  await using tmp = await tmpdir()
+  const select = await mountSelect(tmp.path, [
+    { title: "Alpha", value: "alpha" },
+    { title: "Hidden", value: "hidden", disabled: true },
+    { title: "Gamma", value: "gamma" },
+  ])
+
+  try {
+    expect(select.app.captureCharFrame()).not.toContain("Hidden")
+
+    select.app.mockInput.pressArrow("down")
+    await select.app.waitFor(() => select.moved.length === 1)
+    expect(select.moved).toEqual(["gamma"])
+  } finally {
+    select.app.renderer.destroy()
+  }
+})
+
+test("a leading disabled row moves the initial selection to the first available row", async () => {
+  await using tmp = await tmpdir()
+  const select = await mountSelect(tmp.path, [
+    { title: "Blocked", value: "blocked", disabled: true, reason: "waiting for sign-in" },
+    { title: "Alpha", value: "alpha" },
+    { title: "Gamma", value: "gamma" },
+  ])
+
+  try {
+    expect(select.app.captureCharFrame()).toContain("(waiting for sign-in)")
+
+    select.app.mockInput.pressEnter()
+    await select.app.waitFor(() => select.selected.length === 1)
+    expect(select.selected).toEqual(["alpha"])
+
+    select.app.mockInput.pressArrow("up")
+    await select.app.waitFor(() => select.moved.length === 1)
+    expect(select.moved).toEqual(["gamma"])
+  } finally {
+    select.app.renderer.destroy()
+  }
+})
+
+test("a click on a disabled row neither selects nor focuses it", async () => {
+  await using tmp = await tmpdir()
+  const select = await mountSelect(tmp.path, [
+    { title: "Alpha", value: "alpha" },
+    { title: "Beta", value: "beta", disabled: true, reason: "no API key" },
+  ])
+
+  try {
+    const frame = select.app.captureCharFrame().split("\n")
+    const row = frame.findIndex((line) => line.includes("Beta"))
+    const column = frame[row]!.indexOf("Beta") + 1
+    await select.app.mockMouse.click(column, row)
+    await select.app.waitForFrame(() => true)
+
+    expect(select.selected).toEqual([])
+    expect(select.moved).toEqual([])
+  } finally {
+    select.app.renderer.destroy()
+  }
+})

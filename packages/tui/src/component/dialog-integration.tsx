@@ -1131,12 +1131,16 @@ async function multiselectAnswer(
                 description: option.description,
                 disabled:
                   !selected.includes(option.value) && field.maxItems !== undefined && selected.length >= field.maxItems,
+                reason:
+                  !selected.includes(option.value) && field.maxItems !== undefined && selected.length >= field.maxItems
+                    ? `at most ${field.maxItems} selected`
+                    : undefined,
               })),
               ...(field.custom ? [{ title: "Type your own answer", value: CUSTOM as typeof CUSTOM }] : []),
               {
                 title: "Continue",
                 value: SUBMIT as typeof SUBMIT,
-                description: invalid,
+                reason: invalid,
                 disabled: invalid !== undefined,
               },
             ]}
@@ -1193,7 +1197,13 @@ async function externalAnswer(
             title={formLabel(field) || title}
             options={[
               { title: opened ? "Open link again" : "Open link", value: OPEN as typeof OPEN, description: field.url },
-              { title: "I finished", value: true as const, description: field.description, disabled: !opened },
+              {
+                title: "I finished",
+                value: true as const,
+                description: field.description,
+                disabled: !opened,
+                reason: opened ? undefined : "open the link first",
+              },
             ]}
             onSelect={(option) => resolve(option.value)}
           />

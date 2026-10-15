@@ -79,6 +79,8 @@ export interface DialogSelectOption<T = any> {
   truncateTitle?: boolean | "left"
   category?: string
   disabled?: boolean
+  /** Why the row cannot be selected. A disabled row that carries a reason stays visible (greyed) instead of disappearing. */
+  reason?: string
   bg?: RGBA
   fg?: RGBA
   gutter?: (color: RGBA) => JSX.Element
@@ -120,6 +122,37 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   let resetSelection = false
   let pendingScroll: (() => void) | undefined
 
+  // Availability: selection never lands on a disabled row. Such a row still renders when it can say
+  // why (a reason), so an unavailable entry explains itself instead of vanishing from the list.
+  const selectable = (option: DialogSelectOption<T>) => option.disabled !== true
+  const visible = (option: DialogSelectOption<T>) => selectable(option) || option.reason !== undefined
+
+  // The nearest selectable row from `index` in `direction`, falling back to the other direction so a
+  // home/end jump still lands somewhere when the edge row is unavailable.
+  function nearestSelectable(index: number, direction: 1 | -1) {
+    const options = flat()
+    const start = Math.min(Math.max(index, 0), options.length - 1)
+    const scan = (step: 1 | -1) => {
+      for (let offset = 0; offset < options.length; offset++) {
+        const candidate = start + offset * step
+        if (candidate < 0 || candidate >= options.length) return undefined
+        if (selectable(options[candidate]!)) return candidate
+      }
+      return undefined
+    }
+    return scan(direction) ?? scan(direction === 1 ? -1 : 1)
+  }
+
+  // The next selectable row after `from` in `direction`, wrapping around the list.
+  function nextSelectable(from: number, direction: 1 | -1) {
+    const options = flat()
+    for (let offset = 1; offset <= options.length; offset++) {
+      const candidate = (((from + offset * direction) % options.length) + options.length) % options.length
+      if (selectable(options[candidate]!)) return candidate
+    }
+    return undefined
+  }
+
   function scrollAfterLayout(center: boolean, value: T) {
     if (pendingScroll) renderer.off(CliRenderEvents.FRAME, pendingScroll)
     pendingScroll = () => {
@@ -138,8 +171,9 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         if (props.search || props.focusCurrent === false) return
         if (props.focusTarget !== undefined && (props.preserveSelection || store.filter.length > 0)) return
         if (current !== undefined) {
-          const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
-          if (currentIndex >= 0) {
+          const found = flat().findIndex((opt) => isDeepEqual(opt.value, current))
+          const currentIndex = found >= 0 ? nearestSelectable(found, 1) : undefined
+          if (currentIndex !== undefined) {
             setStore("selected", currentIndex)
             selection = flat()[currentIndex]
             scrollAfterLayout(true, current)
@@ -182,12 +216,12 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
 
   const filtered = createMemo(() => {
-    if (props.search) return props.search(store.filter).filter((x) => x.disabled !== true)
-    if (props.skipFilter || props.renderFilter === false) return props.options.filter((x) => x.disabled !== true)
+    if (props.search) return props.search(store.filter).filter(visible)
+    if (props.skipFilter || props.renderFilter === false) return props.options.filter(visible)
     const needle = store.filter.toLowerCase()
     const options = pipe(
       props.options,
-      filter((x) => x.disabled !== true),
+      filter(visible),
     )
     if (!needle) return options
 
@@ -253,21 +287,23 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         ) {
           const count = flat().length
           if (count === 0) return
-          const next = reconcileSelection(store.selected, count)
+          const next = nearestSelectable(reconcileSelection(store.selected, count), 1)
+          if (next === undefined) return
           if (next !== store.selected) setStore("selected", next)
           return
         }
         if (resetSelection && store.filter.length > 0) {
-          const option = flat()[0]
-          if (!option) return
-          setStore("selected", 0)
-          selection = option
+          const index = nearestSelectable(0, 1)
+          if (index === undefined) return
+          setStore("selected", index)
+          selection = flat()[index]
           return
         }
         if (!selection) {
           if (props.focusCurrent !== false && (props.focusTarget ?? props.current) !== undefined) {
-            const index = flat().findIndex((option) => isDeepEqual(option.value, props.focusTarget ?? props.current))
-            if (index >= 0) {
+            const found = flat().findIndex((option) => isDeepEqual(option.value, props.focusTarget ?? props.current))
+            const index = found >= 0 ? nearestSelectable(found, 1) : undefined
+            if (index !== undefined) {
               setStore("selected", index)
               selection = flat()[index]
               return
@@ -279,8 +315,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           return
         }
         const previous = selection
-        const index = flat().findIndex((option) => isDeepEqual(option.value, previous.value))
-        if (index >= 0) {
+        const found = flat().findIndex((option) => isDeepEqual(option.value, previous.value))
+        if (found >= 0) {
+          const index = nearestSelectable(found, 1)
+          if (index === undefined) return
           const option = flat()[index]
           const moved = index !== store.selected || option.category !== previous.category
           setStore("selected", index)
@@ -296,8 +334,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           scrollAfterLayout(false, option.value)
           return
         }
-        const next = reconcileSelection(store.selected, flat().length)
-        if (flat().length === 0) return
+        const next = nearestSelectable(reconcileSelection(store.selected, flat().length), 1)
+        if (flat().length === 0 || next === undefined) return
         setStore("selected", next)
         selection = flat()[next]
       },
@@ -317,7 +355,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         selection = intent()
         const intended = selection
         const index = intended ? options.findIndex((option) => isDeepEqual(option.value, intended.value)) : -1
-        const next = index >= 0 ? index : reconcileSelection(store.selected, options.length)
+        const next = nearestSelectable(index >= 0 ? index : reconcileSelection(store.selected, options.length), 1)
+        if (next === undefined) return
         const option = options[next]
         if (!option) return
         setStore("selected", next)
@@ -344,7 +383,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       if (props.search) return
       if (filter.length > 0) resetSelection = true
       if (filter.length > 0) {
-        const option = flat()[0]
+        const option = flat()[nearestSelectable(0, 1) ?? 0]
         if (!option) return
         moveTo(0, true, false)
         scrollAfterLayout(true, option.value)
@@ -360,8 +399,17 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   function move(direction: number) {
     if (props.locked) return
-    if (flat().length === 0) return
-    moveTo(moveSelection(store.selected, { count: flat().length, delta: direction, policy: "wrap" }), true)
+    const options = flat()
+    if (options.length === 0) return
+    const target =
+      Math.abs(direction) === 1
+        ? nextSelectable(store.selected, direction > 0 ? 1 : -1)
+        : nearestSelectable(
+            moveSelection(store.selected, { count: options.length, delta: direction, policy: "wrap" }),
+            direction > 0 ? 1 : -1,
+          )
+    if (target === undefined) return
+    moveTo(target, true)
   }
 
   function moveSection(direction: 1 | -1) {
@@ -374,8 +422,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   }
 
   function moveTo(next: number, center = false, preserve = true) {
+    const target = nearestSelectable(next, next >= store.selected ? 1 : -1)
+    if (target === undefined) return
     setFocusedAction(undefined)
-    setStore("selected", next)
+    setStore("selected", target)
     const option = selected()
     if (!option) return
     selection = option
@@ -427,7 +477,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       return
     }
     const option = selected()
-    if (!option) return
+    if (!option || !selectable(option)) return
     option.onSelect?.(dialog)
     props.onSelect?.(option)
   }
@@ -761,19 +811,19 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                           flexDirection="column"
                           position="relative"
                           onMouseMove={() => {
-                            if (props.locked) return
+                            if (props.locked || !selectable(option)) return
                             setFocusedAction(undefined)
                             const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
                             if (index === -1 || index === store.selected) return
                             moveTo(index)
                           }}
                           onMouseUp={() => {
-                            if (props.locked) return
+                            if (props.locked || !selectable(option)) return
                             option.onSelect?.(dialog)
                             props.onSelect?.(option)
                           }}
                           onMouseDown={() => {
-                            if (props.locked) return
+                            if (props.locked || !selectable(option)) return
                             const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
                             if (index === -1) return
                             moveTo(index)
@@ -807,6 +857,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                               titleWidth={option.titleWidth}
                               truncateTitle={option.truncateTitle}
                               description={option.description !== category ? option.description : undefined}
+                              disabled={option.disabled === true}
+                              reason={option.reason}
                               active={active()}
                               current={current()}
                               muted={actionFocused()}
@@ -852,6 +904,8 @@ function Option(props: {
   title: string
   titleView?: JSX.Element
   description?: string
+  disabled?: boolean
+  reason?: string
   active?: boolean
   current?: boolean
   muted?: boolean
@@ -865,6 +919,7 @@ function Option(props: {
 }) {
   const theme = useTheme().surface("dialog")
   const text = createMemo(() => {
+    if (props.disabled) return theme.text.muted
     if (props.active && !props.muted) return props.activeColor ?? theme.text.action.primary.focused
     if (props.muted && (props.active || props.current)) return theme.text.muted
     if (props.current) return theme.text.formfield.selected
@@ -901,6 +956,9 @@ function Option(props: {
           <span style={{ fg: props.active && !props.muted ? text() : theme.text.muted }}>
             {" " + props.description}
           </span>
+        </Show>
+        <Show when={props.reason}>
+          <span style={{ fg: theme.text.muted }}>{" (" + props.reason + ")"}</span>
         </Show>
       </text>
       <Show when={props.footer}>
