@@ -65,7 +65,6 @@
       "models": {
         "deepseek-flash": {
           "name": "DeepSeek-V4.1-Flash",
-          "reasoning": true,
           "tool_call": true,
           "limit": {
             "context": 1000000,
@@ -95,10 +94,11 @@
   "permission": "allow",
   // Swarm default (owner call 2026-10-15): primaries fan out subagents, and a
   // subagent may fan out again. Upstream's default of 1 forbids nesting
-  // outright; the cap bounds a runaway tree, not fan-out width, which is
-  // uncapped (measured: 500 concurrent sessions on one server, zero errors).
+  // outright; 100 is "no limit" in practice - the schema has no maximum and no
+  // real tree reaches 100 levels. Fan-out width was never capped (measured:
+  // 500 concurrent sessions on one server, zero errors, ~1.1 GB RSS).
   "experimental": {
-    "subagent_depth": 3
+    "subagent_depth": 100
   },
   "default_agent": "auto",
   "instructions": ["~/.config/opencode/autonomy.md", "~/.config/opencode/AGENTS.goal.md"],

@@ -525,8 +525,8 @@ parameter optimization lands in the same commit.
 | `packages/core/src/plugin/fork/mode/auto.txt` | standing card gains the swarm mandate | the card is the only per-agent injection point that reaches the wire (`modes.ts:92-103` → `cards.ts:14-16` → `model-request.ts:431-439,245-257,288`); the `instructions` files are session-wide and leak into subagents |
 | `dotfiles/opencode/AGENTS.goal.md:7` | trigger covers `auto` as well as `goal` | the playbook must describe itself the way the cards invoke it |
 | `dotfiles/opencode/autonomy.md:9` | "Research defaults to the swarm" bullet | auto's policy file, and the only part that needs no rebuild |
-| `opencode.jsonc` (3 copies, sha256 `67f23a81da50…`) | `experimental.subagent_depth: 3`; `agent.general.permission.task` dropped; `provider.deepseek.options.headerTimeout: 600000` | nesting is allowed for a swarm of swarms; `general` may fan out while `explore` keeps its read-only surface; DeepSeek queues instead of rejecting and only closes an unstarted request after 10 minutes, so the 300 s default header timeout would give up first |
-| `bootstrap/config/environment.d/20-opencode-http.conf` + install.sh pin | `BUN_CONFIG_MAX_HTTP_REQUESTS=1024` | Bun caps in-flight `fetch` at 256 per process, **globally and for the whole response body including SSE streams** (measured by an attacker: 256 with default, 64/600/1024 with the variable, identical in a compiled binary) |
+| `opencode.jsonc` (3 copies, sha256 `d1cd7474fbf2…`) | `experimental.subagent_depth: 100`; `agent.general.permission.task` dropped; `provider.deepseek.options.headerTimeout: 600000` | nesting is allowed for a swarm of swarms, and 100 is "no limit" in practice (the schema is `NonNegativeInt` with no maximum, and no real tree reaches 100 levels — the owner asked for no artificial cap, and fan-out width was never capped either); `general` may fan out while `explore` keeps its read-only surface; DeepSeek queues instead of rejecting and only closes an unstarted request after 10 minutes, so the 300 s default header timeout would give up first |
+| `bootstrap/config/environment.d/20-opencode-http.conf` + install.sh pin | `BUN_CONFIG_MAX_HTTP_REQUESTS=4096` | Bun caps in-flight `fetch` at 256 per process, **globally and for the whole response body including SSE streams**. Measured 2026-10-15: default → 3000 requests peak at 256 in flight, 6019 ms, 11.7 waves; `=4096` → all 3000 in flight, 612 ms (9.8x); N=5000 → peak 4096, no internal clamp below the configured value. 4096 sits **above** DeepSeek's account ceiling on purpose (2500 for `deepseek-flash`), so the client never queues before the provider does |
 | `packages/core/src/plugin/fork/modes.ts:92-100` | comment corrected, behavior unchanged | the standing card keys on the session's agent and is **not** parentID-guarded; only the goal card is. A child session that resolves to `auto` (API `session.create` with `agent`, `switchAgent`, command subagents, or an omitted agent falling back to `default_agent`) keeps its profile framing |
 | `packages/core/src/{tool/plugin/edit.ts,tool/plugin/write.ts,file-mutation.ts}` | stale "after LSP runtime exists" TODOs replaced with the real location | that work exists in `plugin/fork/lsp.ts` (`execute.after`, 15 s budget, `metadata.diagnostics`); the three files now carry a one-line local diff each |
 
@@ -546,6 +546,14 @@ the real tier used the live DeepSeek provider with the credential row copied int
 | --- | --- | --- | --- | --- |
 | mock provider, 20 ms | 8 / 32 / 64 / 128 / 256 / 500 | 0.3 / 0.4 / 1.7 / 2.6 / 4.3 / 8.8 s | 0 / 0 / 0 / 0 / 0 / 0 | 240 / 350 / 450 / 700 / 1005 / 1116 MB |
 | real DeepSeek | 8 / 32 / 64 / 128 / 256 | 1.8 / 1.6 / 2.7 / 2.8 / 5.1 s | 0 / 0 / 0 / 0 / 0 | 256 / 341 / 409 / 675 / 791 MB |
+| mock provider, 5 s, `BUN_CONFIG_MAX_HTTP_REQUESTS=4096` | 1000 / 2000 / 3000 | 21.2 / 33.0 / 47.6 s | 0 / 0 / 0 | 1595 / 3729 / 4867 MB peak |
+
+- 3000 concurrent sessions drain with zero errors at a 4867 MB peak (guardrails at 8000 MB RSS and a
+  4000 MB `MemAvailable` floor never tripped), and the in-flight LLM count tracks the issue rate rather
+  than a client cap: 1000 sessions → 1000 in flight, 2000 → 1996, 3000 → 2099.
+- The Bun fetch gate measured directly: default → 3000 requests peak at 256 in flight (6019 ms, 11.7
+  waves); `=4096` → all 3000 in flight (612 ms, 9.8x faster); N=5000 → peak 4096, so the variable is not
+  clamped below its configured value.
 
 - 500 concurrent sessions are accepted and drained with zero errors and ~1.1 GB RSS; the marginal cost at
   that size is ~0.34 MB per session.

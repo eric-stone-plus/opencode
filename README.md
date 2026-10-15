@@ -60,7 +60,7 @@ The build bakes the channel in from the checked-out branch (`OPENCODE_CHANNEL` w
 
 Upstream's `build` and `plan` primaries are removed (`"disable": true` in the seat config, so the cycle is exactly auto <-> goal).
 
-Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches. Fan-out is not capped — one server ran 500 concurrent sessions with zero errors (2026-10-15) — and `@general` may spawn its own subagents (`experimental.subagent_depth: 3`), while `explore` stays read-only and cannot.
+Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches. Fan-out is not capped — one server ran 3000 concurrent sessions with zero errors at a ~4.9 GB peak (2026-10-15) — and `@general` may spawn its own subagents (`experimental.subagent_depth: 100`, no practical cap), while `explore` stays read-only and cannot.
 
 ### Documentation
 

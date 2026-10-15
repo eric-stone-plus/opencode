@@ -356,7 +356,7 @@ fi
 # whichever client or wrapper starts it. Writes service config only; never opens the DB.
 OC_REAL="$TARGET_HOME/.opencode/bin/opencode"
 if [ -x "$OC_REAL" ]; then
-  for pin in "OPENCODE_DB opencode-main.db" "OPENCODE_DISABLE_MODELS_FETCH 1" "BUN_CONFIG_MAX_HTTP_REQUESTS 1024"; do
+  for pin in "OPENCODE_DB opencode-main.db" "OPENCODE_DISABLE_MODELS_FETCH 1" "BUN_CONFIG_MAX_HTTP_REQUESTS 4096"; do
     act "service set env $pin"
     if [ "$DRY_RUN" -eq 0 ]; then
       # shellcheck disable=SC2086

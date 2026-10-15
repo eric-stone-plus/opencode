@@ -182,7 +182,7 @@ the shell wrapper): keep the provider key there for the auth.json re-seed.
 | File | Vars | Re-seed source |
 | --- | --- | --- |
 | `10-opencode-db.conf` | `OPENCODE_DB=opencode-main.db` | not secret — install.sh writes the real value |
-| `20-opencode-http.conf` | `BUN_CONFIG_MAX_HTTP_REQUESTS=1024` | not secret — install.sh writes it; Bun caps in-flight `fetch` at 256 per process by default, and the swarm default fans out past that (DeepSeek allows 2500 concurrent `deepseek-flash` requests per account). The service also pins it (`opencode service set env`), which is what a running service actually inherits |
+| `20-opencode-http.conf` | `BUN_CONFIG_MAX_HTTP_REQUESTS=4096` | not secret — install.sh writes it; Bun caps in-flight `fetch` at 256 per process by default, and the swarm default fans out past that (DeepSeek allows 2500 concurrent `deepseek-flash` requests per account). The service also pins it (`opencode service set env`), which is what a running service actually inherits |
 | `90-fcitx5.conf` | `QT_IM_MODULE` `XMODIFIERS` `SDL_IM_MODULE` `GLFW_IM_MODULE` | not secret: `fcitx` / `@im=fcitx` / `fcitx` / `ibus` (and `GTK_IM_MODULE` must stay **unset** — 2026-09-24 dual-channel fix) |
 
 Claude Code plumbing (`~/.claude/settings.json` `env` block: `ANTHROPIC_BASE_URL`
