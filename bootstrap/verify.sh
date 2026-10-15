@@ -241,14 +241,14 @@ PYEOF
       ph=$(printf '%s\n' "$authout" | sed -n 's/^PLACEHOLDERS //p')
       info "providers: $names"
       ok=1
-      for want in deepseek bailian-token-plan-personal xiaomi-token-plan-cn; do
+      for want in deepseek; do
         case ",$names," in
           *",$want,"*) : ;;
           *) fail "auth provider missing: $want"; ok=0 ;;
         esac
       done
       if [ "$ok" -eq 1 ]; then
-        pass "all three provider entries present (deepseek, bailian-token-plan-personal, xiaomi-token-plan-cn)"
+        pass "provider entry present (deepseek)"
       fi
       if [ -n "$ph" ]; then
         warn "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"
@@ -285,7 +285,6 @@ mode_check() {
 }
 mode_check "$DATA/auth.json" FAIL "auth.json"
 mode_check "$CFG/env" FAIL "env seed"
-mode_check "$TARGET_HOME/.config/environment.d/95-qwen-provider.conf" WARN "95-qwen-provider.conf"
 
 # --- 7. kill-guard battery + 5 hook surfaces ---------------------------------
 echo "-- kill-guard wiring"

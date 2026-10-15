@@ -99,14 +99,14 @@ overwritten are listed in §5.
 ### Step 4 — secret entry (the only manual step)
 
 Nothing in this bundle carries secret values. Fill `~/.local/share/opencode/auth.json`
-(three provider keys: `deepseek`, `bailian-token-plan-personal`, `xiaomi-token-plan-cn`) and the `environment.d` seed files per §3, then:
+(one provider key: `deepseek`) and the `environment.d` seed files per §3, then:
 
 ```sh
 # install.sh created the skeleton if auth.json was absent:
 ls -l ~/.local/share/opencode/auth.json   # mode 0600
 # mode 0600 is converged on every run for auth.json, ~/.config/opencode/env
 # and the secret-bearing environment.d drop-ins (content is never touched):
-ls -l ~/.config/opencode/env ~/.config/environment.d/95-qwen-provider.conf
+ls -l ~/.config/opencode/env
 ```
 
 ### Step 5 — re-login, then verify
@@ -136,7 +136,7 @@ a *function*).
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
-| 4 | `environment.d/{90-fcitx5,95-qwen-provider}.conf` | **only if absent**; templates carry names only; `95-qwen-provider` gets mode 0600 |
+| 4 | `environment.d/90-fcitx5.conf` | **only if absent**; template carries names only |
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
@@ -158,18 +158,22 @@ better (live-edit). *Directory* symlinks for `skills/` and `command/` are
 
 ## 3. Secrets re-seed (values never vendored)
 
-`~/.local/share/opencode/auth.json` — three entries (V2 imports it once into the
+`~/.local/share/opencode/auth.json` — one entry (V2 imports it once into the
 `credential` table of an existing DB; a fresh DB needs `opencode auth import`), each
 `{ "type": "api", "key": … }`:
 
 | Provider id (auth.json / opencode.jsonc) | Endpoint | Where the key comes from |
 | --- | --- | --- |
-| `deepseek` | `api.deepseek.com` (DeepSeek, current default model track) | DeepSeek platform console |
-| `bailian-token-plan-personal` | `token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1` (Alibaba Cloud Model Studio, Anthropic face) | Alibaba token-plan console |
-| `xiaomi-token-plan-cn` | `token-plan-cn.xiaomimimo.com` (Xiaomi MiMo token plan) | Xiaomi token-plan console |
+| `deepseek` | `api.deepseek.com` (DeepSeek, the only supported vendor) | DeepSeek platform console |
+
+The `bailian-token-plan-personal` and `xiaomi-token-plan-cn` entries were removed
+on 2026-10-15 with those vendors (ADR 0010). A removed vendor's key is purged from
+the seat with `opencode auth purge <id> --yes --history` (sweeps the credential
+store, `auth.json`, env files, `environment.d`, `service*.json`, the systemd user
+environment, DB history and tool-output/log copies).
 
 `~/.config/opencode/env` is a seed file only (NOT read by the binary, NOT sourced by
-the shell wrapper): keep the three provider keys there for the auth.json re-seed.
+the shell wrapper): keep the provider key there for the auth.json re-seed.
 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` and the other V1 flags have no effect on V2.
 
 `~/.config/environment.d/` templates (names-only in `bootstrap/config/`):
@@ -178,7 +182,6 @@ the shell wrapper): keep the three provider keys there for the auth.json re-seed
 | --- | --- | --- |
 | `10-opencode-db.conf` | `OPENCODE_DB=opencode-main.db` | not secret — install.sh writes the real value |
 | `90-fcitx5.conf` | `QT_IM_MODULE` `XMODIFIERS` `SDL_IM_MODULE` `GLFW_IM_MODULE` | not secret: `fcitx` / `@im=fcitx` / `fcitx` / `ibus` (and `GTK_IM_MODULE` must stay **unset** — 2026-09-24 dual-channel fix) |
-| `95-qwen-provider.conf` | `QIANWEN_TP_PERSONAL_KEY` `QIANWEN_TP_PERSONAL_BASE_URL` | keys from the Alibaba token-plan console |
 
 Claude Code plumbing (`~/.claude/settings.json` `env` block: `ANTHROPIC_BASE_URL`
 =`https://apinebula.ai`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_DEFAULT_*_MODEL`) is
@@ -302,11 +305,11 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   the mode cards are fork plugins (`packages/core/src/plugin/fork/modes.ts`),
   so a machine-B build must come from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
-  machine-A `~/.bashrc` verbatim **except** the egress probe set: 2026-09-30
-  it was extended to the default xiaomi provider endpoint
-  (`token-plan-cn.xiaomimimo.com`, host from `opencode.jsonc` provider config)
-  — the two-endpoint set predates the default-model switch and missed
-  xiaomi-only outages.
+  machine-A `~/.bashrc` verbatim **except** the egress probe set: since
+  2026-10-15 V3 it extracts every `baseURL` from `opencode.jsonc` and probes
+  them with an AND gate (direct only when all pass), so it adapts to whatever
+  provider set the config declares; with the DeepSeek-only config that is one
+  endpoint (`api.deepseek.com`).
 
 **Not reproduced (by design or by nature)**
 
@@ -359,12 +362,11 @@ bootstrap/
 ├── verify.sh                     post-install audit (--home for testing)
 ├── config/
 │   ├── opencode.jsonc            byte-copy of live ~/.config/opencode/opencode.jsonc
-│   ├── auth.json.template        2-provider skeleton, placeholder values (needs the §3 providers — open item)
-│   ├── env.template              2 var NAMES, empty values
+│   ├── auth.json.template        1-provider skeleton, placeholder values (needs the §3 provider — open item)
+│   ├── env.template              1 var NAME, empty value
 │   └── environment.d/
 │       ├── 10-opencode-db.conf   the DB pin (real value)
-│       ├── 90-fcitx5.conf        names only
-│       └── 95-qwen-provider.conf  names only
+│       └── 90-fcitx5.conf        names only
 ├── shell/
 │   └── bashrc-opencode-block.sh  byte-exact ~/.bashrc extraction + install notes
 ├── agent-hooks/                  full guard battery (4 files)

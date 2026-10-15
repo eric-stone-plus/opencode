@@ -375,7 +375,7 @@ STAGE_SED=""
 install_file "$BOOTSTRAP_DIR/config/environment.d/10-opencode-db.conf" \
              "$TARGET_HOME/.config/environment.d/10-opencode-db.conf"
 # Seed-only: never overwrite existing ones (may carry live plumbing on machine A).
-for f in 90-fcitx5.conf 95-qwen-provider.conf; do
+for f in 90-fcitx5.conf; do
   dst="$TARGET_HOME/.config/environment.d/$f"
   if [ -L "$dst" ] && [ ! -e "$dst" ]; then
     say "WARN  $dst is a dangling symlink -> $(readlink "$dst") (left as-is; templates never overwrite)"
@@ -387,12 +387,9 @@ for f in 90-fcitx5.conf 95-qwen-provider.conf; do
     changed
   fi
 done
-# F4: the drop-in whose header declares mode 0600 must land 0600 even
-# though the template ships 0644 (it carries key placeholders).
-# 90-fcitx5.conf holds no secrets and keeps default perms.
-for f in 95-qwen-provider.conf; do
-  require_private "$TARGET_HOME/.config/environment.d/$f"
-done
+# 90-fcitx5.conf holds no secrets and keeps default perms. There is no
+# secret-bearing environment.d drop-in left: the qwen template went with the
+# vendor on 2026-10-15 (ADR 0010).
 note "environment.d changes take effect on next login (systemd user generator)."
 
 # --- 5. agent-hooks battery + guard-surface wiring ----------------------------

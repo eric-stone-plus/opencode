@@ -9,12 +9,12 @@
       "initialization": { "basedpyright": { "analysis": { "typeCheckingMode": "standard" } } }
     }
   },
-  // Default track (2026-10-07): switch to DeepSeek-V4.1-Flash.
-  // API id is deepseek-flash (deepseek-v4-flash is a retired alias that
-  // now routes to the same model). Revert this line and the auto/goal
-  // pins to "xiaomi-token-plan-cn/mimo-v2.6-pro" to go back: the xiaomi
-  // block below stays config-declared and self-contained, so it works
-  // without a registry row (ADR 0009). Other provider blocks are unchanged.
+  // Default track (2026-10-07): DeepSeek-V4.1-Flash, and since 2026-10-15
+  // DeepSeek is the only provider in this config (ADR 0009/0010): the
+  // alibaba/mimo provider blocks and their credentials were removed, so
+  // there is no other track to revert to. API id is deepseek-flash
+  // (deepseek-v4-flash is a retired alias that now routes to the same
+  // model).
   "model": "deepseek/deepseek-flash",
   // Cost display (2026-10-10): flat-rate/subscription model rows (all-zero
   // cost in the registry) are auto-matched to canonical PAYG list prices so
@@ -23,119 +23,6 @@
   // `cost: { "input": 0, "output": 0 }` — config-declared costs win outright
   // over the registry cascade.
   "provider": {
-    "bailian-token-plan-personal": {
-      "npm": "@ai-sdk/anthropic",
-      "name": "Alibaba Cloud Model Studio",
-      "options": {
-        "baseURL": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1"
-      },
-      "models": {
-        "qwen3.8-max": {
-          "name": "Qwen3.8 Max",
-          "reasoning": true,
-          "limit": {
-            "context": 983616,
-            "input": 852544,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "options": {
-            "effort": "max",
-            "maxOutputTokens": 65536,
-            // Per-model compaction adaptation (2026-10-10): raise the
-            // conservative 256k WORKING_CONTEXT_CAP clamp (overflow.ts) to the
-            // hand-calibrated limit.input of this block. Same pattern pinned on
-            // the mimo/deepseek blocks.
-            "workingContextCap": 852544
-          }
-        }
-      }
-    },
-    // Xiaomi MiMo token-plan track (mainland CN). Endpoint choice
-    // (probed 2026-09-29): BOTH faces work — /v1 (OpenAI) and
-    // /anthropic/v1 (Messages). Picked /v1 because it matches the
-    // models.dev registry entry verbatim (npm/baseURL duplicated here so
-    // nothing overrides it), keeps GET /v1/models alive for discovery,
-    // and the reasoning_content → thinking mapping is already declared in
-    // the registry (interleaved.field). Measured parity on the deciding
-    // axes: implicit prefix caching reports on both faces
-    // (cached_tokens/cache_read_input_tokens ≈ 2944/3020 on a repeat
-    // call), streaming thinking deltas on both, multi-turn thinking
-    // replay with empty signatures accepted on the anthropic face.
-    // The /anthropic face would only add native thinking blocks at the
-    // cost of overriding npm + losing /v1/models — no long-session win.
-    //
-    // Long-task tuning:
-    // - limit.input is load-bearing (overflow.ts:29): with it the usable
-    //   window is the workingContextCap pin below minus the 20k reserve
-    //   (917504 − 20k = 897504 per compaction cycle; the pre-2026-10-10
-    //   256k clamp yielded 236k). Without it the full maxOutputTokens is
-    //   deducted and the cycle lands at 190464. 917504 = context − output.
-    // - maxOutputTokens is the FULL 131072 on purpose (bailian left at
-    //   65536, endpoint untested):
-    //   reasoning_tokens count against max_tokens (complex prompt at
-    //   max_tokens=2000 → completion 2000, of which 1036 reasoning,
-    //   finish=length, visible answer truncated). A 65536 cap lets the
-    //   reasoning budget eat half the turn and cut the actual work off
-    //   mid-tool-call. Token-plan billing is flat (cost 0 in registry),
-    //   so the larger cap costs nothing unless the model uses it.
-    // - effort/variants (swarm-verified 2026-09-29): computed variant
-    //   set is {low, medium, high} — the registry's toggle-only
-    //   reasoning_options collapses (reasoningToggle() {} →
-    //   nonEmptyVariants → undefined) and the generic openai-compatible
-    //   ladder at transform.ts:1000-1008 takes over. Pins ARE wire-live
-    //   (reasoning_effort reaches the body, @ai-sdk/openai-compatible
-    //   dist:538) but the gateway honors none-vs-on only: low/medium/high
-    //   measured statistically identical (non-monotone);
-    //   reasoning_effort:"none" kills thinking entirely (off-switch only
-    //   via model options.reasoningEffort, not the variant ladder).
-    //   Agents pin "high" = ladder top; mimo has no "max".
-    "xiaomi-token-plan-cn": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Xiaomi MiMo Token Plan (CN)",
-      "options": {
-        "baseURL": "https://token-plan-cn.xiaomimimo.com/v1"
-      },
-      "models": {
-        "mimo-v2.6-pro": {
-          "name": "MiMo-V2.6-Pro",
-          "reasoning": true,
-          "limit": {
-            "context": 1048576,
-            "input": 917504,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text", "image", "audio", "video"],
-            "output": ["text"]
-          },
-          "options": {
-            "maxOutputTokens": 131072,
-            "workingContextCap": 917504
-          }
-        },
-        "mimo-v2.6-flash": {
-          "name": "MiMo-V2.6-Flash",
-          "reasoning": true,
-          "limit": {
-            "context": 1048576,
-            "input": 917504,
-            "output": 131072
-          },
-          "modalities": {
-            "input": ["text", "image", "audio", "video"],
-            "output": ["text"]
-          },
-          "options": {
-            "maxOutputTokens": 131072,
-            "workingContextCap": 917504
-          }
-        }
-      }
-    },
     // DeepSeek official API. npm + baseURL are the registry values, so
     // this block only overlays the flash model. Key is already in
     // auth.json under provider id "deepseek".

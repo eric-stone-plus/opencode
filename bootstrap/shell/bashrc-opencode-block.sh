@@ -18,10 +18,12 @@
 #      "35;112;35M") as input. _oc_tty_reset disables the modes on entry and
 #      exit; _oc_tty_flush_input discards the residual pty input queue.
 #      (NEVER send ?1049l in there — see original comment in the block.)
-#   2. Egress self-heal: probe real direct egress first (proxy vars stripped);
-#      only if all provider endpoints fail, fall back to the local causeway
-#      proxy chain (18880 -> 17878) for the session. Direct recovery
-#      automatically falls back to direct on the next launch.
+#   2. Egress self-heal: probe real direct egress for EVERY provider baseURL in
+#      opencode.jsonc (proxy vars stripped); direct only when all pass. Any
+#      unreachable endpoint sends the session to the local causeway proxy chain
+#      (18880 -> 17878) — switch-safe: no runtime model change can hit a
+#      blocked endpoint unnoticed. Direct recovery automatically falls back to
+#      direct on the next launch.
 #   3. V2 service semantics: the TUI is a thin client and the shared background
 #      service (`opencode serve --service`) makes the model requests. The service
 #      keeps the environment of the client that spawned it, so a proxy exported by
@@ -46,6 +48,23 @@
 #   launches (see 3 above). _oc_tty_reset/_oc_tty_flush_input and the
 #   18880 -> 17878 chain are unchanged.
 #
+#   2026-10-15 V3 (silent-direct-egress-audit-20261015) — OR gate -> AND gate,
+#   hardcoded probe set -> dynamic. The V2 "any endpoint reachable => direct"
+#   hole: the session may talk to a different provider than the one probed —
+#   runtime model switching (deepseek<->mimo in this seat) and agent-pinned
+#   models make the launch-time "current model" unknowable, so a green probe on
+#   endpoint A left a session that silently stalls on a blocked endpoint B the
+#   moment it switches. (Adding missing providers to the OR set is a placebo:
+#   OR can never be switch-safe.) Now every "baseURL" in opencode.jsonc is
+#   extracted and probed; direct only when ALL pass, otherwise the session runs
+#   on the 18880 -> 17878 chain, which is transparent for all providers. All
+#   three endpoints measured direct-reachable 2026-10-15 (401/404/404 in
+#   ~0.13s), so the healthy path is unchanged. Probe timeout stays 6s/endpoint.
+#
+#   2026-10-15 DeepSeek-only follow-up — the seat's config collapsed to one
+#   provider (deepseek), so the dynamic extraction now yields exactly one
+#   endpoint and the hardcoded fallback list was reduced to it (ADR 0010).
+#
 # INSTALL (machine B):
 #   Option A (install.sh does this by default):
 #     append to ~/.bashrc, inside the interactive-only guard:
@@ -54,17 +73,17 @@
 #   Verify with: type opencode   (must show the wrapper function)
 #
 # DEPENDENCIES: bash (interactive), curl (egress probes), python3 (_oc_tty_flush_input).
-# DEGRADATION ON A BOX WITHOUT causeway: if none of the two probes succeeds and the
+# DEGRADATION ON A BOX WITHOUT causeway: if the probes fail and the
 # 18880/17878 ports are dead, the wrapper runs `command opencode "$@"` directly
 # — correct behavior on a machine with healthy direct egress.
 #
 # >>> machine-A .bashrc verbatim extraction >>>
 export CAUSEWAY_GFW_PROXY="http://127.0.0.1:18880"
 
-# claude(GLM)/opencode(阿里云 token-plan) 出口自愈（2026-08-30）：两端点所在阿里北京段
-#（39.106.x/39.108.x）联通直连路径被 RST/黑洞——traceroute 断在骨干、同 IP 任意 SNI 皆 RST，
-# 定性运营商侧故障（非本机非配置）；18880 实测可达（未带 key 返 401 = TLS/HTTP 全通）。
-# 策略 = 直连优先预检（剥 proxy env 测真直连），失败才挂 18880，直连恢复自动回落。
+# opencode(deepseek) 出口自愈（2026-08-30 起；2026-10-15 收敛到唯一 provider）：2026-08-30 的故障
+# 发生在当时的阿里北京段端点（39.106.x/39.108.x）——直连路径被 RST/黑洞，traceroute 断在骨干、
+# 同 IP 任意 SNI 皆 RST，定性运营商侧故障（非本机非配置）；18880 实测可达（未带 key 返 401 =
+# TLS/HTTP 全通）。策略 = 直连优先预检（剥 proxy env 测真直连），失败才挂 18880，直连恢复自动回落。
 _egress_direct_ok() {  # $1=endpoint；curl 拿到任意 HTTP 响应（含 401）= 通；RST/超时 = 断
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
         timeout 6 curl -sS -o /dev/null -X POST -d '{}' -H 'content-type: application/json' "$1" 2>/dev/null
@@ -114,15 +133,30 @@ _oc_tty_flush_input() {
     return 0
 }
 opencode() {
-    # 任一端点通即直连（2026-10-12 V2：只剩 deepseek 与 xiaomi 两个 provider）。
-    local ep_deepseek="https://api.deepseek.com/chat/completions"
-    local ep_xiaomi="https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
-    local rc
+    # 2026-10-15 V3：探针集=动态抽取 opencode.jsonc 全部 provider baseURL，
+    # AND 门禁——全部直连通才直连；任一不通则整会话挂代理（18880→17878）。
+    # 旧 OR 门禁（任一通即直连）在会话内切换 provider 时会静默卡死：探针通的
+    # 不等于本次要用的（写下这条时 seat 还在 deepseek↔mimo 间运行时切换；给 OR
+    # 补端点只是安慰剂，只有 AND 能保证"直连绿灯 = 用哪个 provider 都不卡"）。
+    # 2026-10-15 起 seat 只剩 deepseek 一个 provider，AND 门禁保留为不变量：
+    # 将来若再加 provider，它自动覆盖，这里无需改动。
+    local eps ep rc
+    local -a bad=()
     _oc_tty_reset   # 启动前先清一遍：本终端可能残留着上一个硬死实例泄漏的鼠标模式
-    if _egress_direct_ok "$ep_deepseek" || _egress_direct_ok "$ep_xiaomi"; then
+    eps="$(grep -o '"baseURL"[[:space:]]*:[[:space:]]*"https\{0,1\}://[^"]*"' \
+        "$HOME/.config/opencode/opencode.jsonc" 2>/dev/null \
+        | sed 's/.*"\(https\{0,1\}:\/\/[^"]*\)".*/\1/' | sort -u)"
+    # Fallback only when the config declares no baseURL at all: the seat is
+    # DeepSeek-only (ADR 0010), so this list has exactly one endpoint.
+    [[ -n "$eps" ]] || eps="https://api.deepseek.com"
+    while IFS= read -r ep; do
+        [[ -z "$ep" ]] && continue
+        _egress_direct_ok "$ep" || bad+=("$ep")
+    done <<< "$eps"
+    if [[ ${#bad[@]} -eq 0 ]]; then
         command opencode "$@"
     elif _egress_18880_or_bail opencode; then
-        echo "opencode: 两端点直连皆不可达，本次会话走 $EGRESS_PROXY" >&2
+        echo "opencode: 端点直连不可达（${bad[*]}），本次会话走 $EGRESS_PROXY" >&2
         # V2 后台服务沿用“拉起它的客户端”的环境，代理变量传不进已在运行的服务；
         # TUI 启动（无子命令）改用 --standalone，让私有服务器继承本次的代理环境。
         if [[ $# -eq 0 || "$1" == -* || -d "$1" ]]; then
