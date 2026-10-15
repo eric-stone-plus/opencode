@@ -66,6 +66,28 @@ describe("auth purge", () => {
     ])
   })
 
+  // ADR 0010: removing a vendor deletes its config block, not its stored key — so the credential
+  // outlives the integration catalog and can only be named from the credential store.
+  test("resolves a credential whose integration left the config, and only then reads the store", async () => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", "xiaomi-token-plan-cn", "--dry-run", "--server", server.url.toString()])
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" })
+    expect(stub.purges).toEqual([
+      { integrationIDs: ["xiaomi-token-plan-cn"], files: true, history: false, compact: false, dryRun: true },
+    ])
+    expect(result.stdout).toContain("removed integration (xiaomi-token-plan-cn): default")
+    expect(stub.paths).toContain("/api/credential")
+  })
+
+  test("does not read the credential store while a catalog target resolves", async () => {
+    const stub = purgeServer()
+    using server = stub.server
+    const result = await cli(["auth", "purge", "deepseek-plan", "--dry-run", "--server", server.url.toString()])
+    expect(result.exitCode).toBe(0)
+    expect(stub.paths).not.toContain("/api/credential")
+  })
+
   test("purges everything with --all and exits 2 while copies remain", async () => {
     const stub = purgeServer({ remaining: [{ kind: "database", location: "~/data/db (file)", count: 3 }] })
     using server = stub.server
@@ -98,6 +120,13 @@ function purgeServer(options: { remaining?: unknown[] } = {}) {
               connections: item.labels.map((label) => ({ type: "credential", method: "key", id: `cred_${label}`, label })),
             })),
           ),
+        )
+      if (url.pathname === "/api/credential" && request.method === "GET")
+        return Response.json(
+          located([
+            { id: "cred_Work", integrationID: "deepseek-plan", label: "Work", active: true, value: "fake-value" },
+            { id: "cred_orphan", integrationID: "xiaomi-token-plan-cn", label: "default", active: true, value: "fake-value" },
+          ]),
         )
       if (url.pathname === "/api/credential/purge" && request.method === "POST") {
         const body = (await request.json()) as { integrationIDs?: string[]; dryRun?: boolean }

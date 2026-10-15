@@ -1,6 +1,6 @@
 import { confirm, intro, log, multiselect, outro } from "@clack/prompts"
 import { Effect } from "effect"
-import type { CredentialPurgeOutput, IntegrationInfo } from "@opencode/client"
+import type { CredentialPurgeOutput, IntegrationInfo, OpenCodeClient } from "@opencode/client"
 import { Commands } from "../../commands"
 import { Runtime } from "../../../framework/runtime"
 import { handlePromptErrors, prompt, requireInteractive } from "../../../ui/prompt"
@@ -13,14 +13,14 @@ export default Runtime.handler(
       return yield* Effect.fail(new Error("Pass integration targets or --all, not both"))
     intro("Purge credentials")
     const client = yield* createClient({ server: input.server._tag === "Some" ? input.server.value : undefined, standalone: input.standalone })
-    const candidates = (yield* loadIntegrations(client)).filter(stored)
-    const named = input.all ? candidates : yield* resolve(candidates, input.targets)
+    const candidates = (yield* loadIntegrations(client)).filter(stored).map(candidate)
+    const named = input.all ? candidates : yield* resolve(candidates, input.targets, removed(client, candidates))
     if (named.length === 0) return yield* Effect.fail(new Error("No stored credentials found"))
 
     const history = input.history || input.compact
     log.info(
       [
-        ...named.map((item) => `${item.name} (${item.id}): ${labels(item).join(", ")}`),
+        ...named.map((item) => `${item.name} (${item.id}): ${item.labels.join(", ")}`),
         `Also: ${[input.files ? "credential files and environment" : "", history ? "session history, tool output, and logs" : ""].filter(Boolean).join("; ") || "nothing else"}`,
       ].join("\n"),
     )
@@ -57,36 +57,66 @@ function stored(integration: IntegrationInfo) {
   return integration.connections.some((connection) => connection.type === "credential")
 }
 
+// A purge target carries only what the picker and the request need. Credentials are the one thing
+// that outlives a removed integration — ADR 0010 deletes the config block, not the stored key —
+// so the store, not the catalog, is the last place that still knows such an integration.
+type Candidate = { id: string; name: string; labels: string[] }
+
+function candidate(integration: IntegrationInfo): Candidate {
+  return { id: integration.id, name: integration.name, labels: labels(integration) }
+}
+
 function labels(integration: IntegrationInfo) {
   return integration.connections.flatMap((connection) => (connection.type === "credential" ? [connection.label] : []))
 }
 
+// Consulted only when a target matches nothing in the catalog, so the common path never reads
+// credentials: a purge for an integration the config no longer declares would otherwise be
+// impossible to name, and `--all` is not an alternative while other credentials must survive.
+function removed(client: OpenCodeClient, candidates: Candidate[]) {
+  return Effect.gen(function* () {
+    const known = new Set(candidates.map((item) => item.id))
+    const credentials = yield* request((signal) => client.credential.list({ signal }))
+    const orphans = new Map(
+      credentials.filter((item) => !known.has(item.integrationID)).map((item) => [item.integrationID, item]),
+    )
+    return [...orphans].map(([id, credential]) => ({ id, name: "removed integration", labels: [credential.label] }))
+  })
+}
+
 // Exact ID, then exact name, then substring: `deepseek` stays unambiguous next to `deepseek-coding`.
-function pick(candidates: IntegrationInfo[], target: string) {
+function pick(candidates: Candidate[], target: string) {
   const needle = target.trim().toLowerCase()
   const tiers = [
-    (item: IntegrationInfo) => item.id.toLowerCase() === needle,
-    (item: IntegrationInfo) => item.name.toLowerCase() === needle,
-    (item: IntegrationInfo) => item.id.toLowerCase().includes(needle) || item.name.toLowerCase().includes(needle),
+    (item: Candidate) => item.id.toLowerCase() === needle,
+    (item: Candidate) => item.name.toLowerCase() === needle,
+    (item: Candidate) => item.id.toLowerCase().includes(needle) || item.name.toLowerCase().includes(needle),
   ]
   return needle === "" ? [] : (tiers.map((tier) => candidates.filter(tier)).find((found) => found.length > 0) ?? [])
 }
 
-const resolve = Effect.fn("cli.auth.purge.resolve")(function* (candidates: IntegrationInfo[], targets: readonly string[]) {
+const resolve = Effect.fn("cli.auth.purge.resolve")(function* (
+  candidates: Candidate[],
+  targets: readonly string[],
+  removed: Effect.Effect<Candidate[], unknown>,
+) {
   if (targets.length === 0) {
     yield* requireInteractive("Name the integrations to purge, or pass --all")
     const ids = yield* prompt<string[]>(() =>
       multiselect({
         message: "Select integrations to purge",
         required: true,
-        options: candidates.map((item) => ({ value: item.id, label: item.name, hint: labels(item).join(", ") })),
+        options: candidates.map((item) => ({ value: item.id, label: item.name, hint: item.labels.join(", ") })),
       }),
     )
     return candidates.filter((item) => ids.includes(item.id))
   }
-  const list = candidates.map((item) => `${item.id} (${item.name})`).join(", ")
+  const pool = targets.some((target) => pick(candidates, target).length === 0)
+    ? [...candidates, ...(yield* removed)]
+    : candidates
+  const list = pool.map((item) => `${item.id} (${item.name})`).join(", ")
   const problems = targets.flatMap((target) => {
-    const found = pick(candidates, target)
+    const found = pick(pool, target)
     if (found.length === 1) return []
     return [
       found.length === 0
@@ -95,7 +125,7 @@ const resolve = Effect.fn("cli.auth.purge.resolve")(function* (candidates: Integ
     ]
   })
   if (problems.length > 0) return yield* Effect.fail(new Error(problems.join("\n")))
-  return [...new Map(targets.flatMap((target) => pick(candidates, target)).map((item) => [item.id, item])).values()]
+  return [...new Map(targets.flatMap((target) => pick(pool, target)).map((item) => [item.id, item])).values()]
 })
 
 const units = {
