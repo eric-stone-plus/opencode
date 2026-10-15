@@ -183,7 +183,7 @@ export const FORK_WIRING_ANCHORS: ReadonlyArray<{ file: string; contains: readon
   },
   {
     file: "packages/core/src/plugin/internal.ts",
-    contains: ["...ForkPlugin.post", "PluginInternal.guarded", '"block-unsafe-kill"', '"secret-path-guard"'],
+    contains: ["...ForkPlugin.post", "export const guarded", '"block-unsafe-kill"', '"secret-path-guard"'],
   },
   {
     file: "packages/core/src/plugin/supervisor.ts",

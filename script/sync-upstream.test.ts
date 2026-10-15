@@ -198,7 +198,7 @@ describe("fork wiring anchors", () => {
     ".husky/pre-push":
       "bun run check\nbun run check-single-loop\nbun run check-provider-policy\nbun run debt-ratchet\n",
     "packages/core/src/plugin/internal.ts":
-      '...ForkPlugin.post\nPluginInternal.guarded\n"block-unsafe-kill"\n"secret-path-guard"\n',
+      '...ForkPlugin.post\nexport const guarded\n"block-unsafe-kill"\n"secret-path-guard"\n',
     "packages/core/src/plugin/supervisor.ts": "PluginInternal.guarded.has(plugin.id)\n",
     "packages/core/src/plugin/fork/index.ts": "ForkChildAuthorityPlugin\nForkAutonomyPlugin\n",
   }
@@ -230,10 +230,18 @@ describe("fork wiring anchors", () => {
     )
   })
 
+  // The fixtures above encode the needles, so they cannot tell whether a needle still matches the real
+  // tree - which is how `internal.ts` kept a needle ("PluginInternal.guarded") the file never contained:
+  // it exports `guarded`, and the namespace string lives in supervisor.ts. This case runs the same check
+  // against the checkout, so a needle that no longer matches reality fails here instead of at the next sync.
+  test("the anchors match the real repository tree", async () => {
+    await assertForkWiring(path.resolve(import.meta.dirname, ".."))
+  })
+
   test("rejects a plugin chain that lost its registration or guards", async () => {
     await rejects(
       assertForkWiring(await wired({ "packages/core/src/plugin/internal.ts": "...ForkPlugin.post\n" })),
-      /internal\.ts no longer contains "PluginInternal\.guarded"/,
+      /internal\.ts no longer contains "export const guarded"/,
     )
   })
 })
