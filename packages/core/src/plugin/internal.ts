@@ -278,9 +278,19 @@ const post = [
   ...ForkPlugin.post,
 ] as const satisfies readonly InternalPlugin[]
 
-// Repository config must not switch off policy enforcement or the fork provider policy, so plugin remove operations
-// skip these IDs.
-export const guarded: ReadonlySet<string> = new Set([ConfigPolicyPlugin.Plugin.id, DeclaredProvidersPlugin.Plugin.id])
+// Repository config must not switch off the fork's policy plugins, its own behavior chain, or the seat's
+// safety guards, so plugin remove operations skip these IDs. Repository config is untrusted - any repo
+// the seat opens can carry `plugins: ["-*"]` or `"-<id>"` - and without this set a repository could
+// silently disable, for example, the external block-unsafe-kill / secret-path-guard hooks.
+export const guarded: ReadonlySet<string> = new Set([
+  ConfigPolicyPlugin.Plugin.id,
+  DeclaredProvidersPlugin.Plugin.id,
+  ForkRuntimePlugin.Plugin.id,
+  ...ForkPlugin.post.map((plugin) => plugin.id),
+  // Safety guards installed from the seat's global config directory (external plugins, not in this tree).
+  "block-unsafe-kill",
+  "secret-path-guard",
+])
 
 export const list = Effect.fn("PluginInternal.list")(function* () {
   // Capture only services; activation supplies the child Scope and batching context.
