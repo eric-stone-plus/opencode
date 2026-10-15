@@ -75,3 +75,16 @@ Not removed, deliberately:
   fork serves neither, and ADR 0006 keeps public-site content.
 - `docs/OPERATIONS.md` §1 and the ADRs keep their historical vendor references: they are
   dated records of what was true then, not live surfaces.
+- Every other residual vendor reference found by the 2026-10-15 repo-wide sweep falls into
+  one of these classes, and none is a reachable support surface: the gates that name removed
+  vendors on purpose (`script/check-provider-policy.ts` and its `REMOVED_PATHS`), test
+  fixtures plus the kept cache-format dialect (`packages/ai/test/cache-policy.test.ts`,
+  `packages/protocol/openapi.json`'s generated `Model.CacheFormat` enum,
+  `bailian-token-plan-personal` used as an arbitrary integration id in
+  `packages/core/test/credential-purge.test.ts` and `packages/server/test/credential-purge.test.ts`),
+  icon assets, web properties this fork neither builds nor deploys (`services/www`,
+  `packages/web`'s localized docs, `packages/console`, and `packages/stats`, whose model
+  tables attribute third-party usage rather than declare providers), unrelated tools
+  (`@alibaba-group/open-code-review` in `script/open-code-review.test.ts`, Azure Trusted
+  Signing in `script/sign-windows.ps1`), and natural-language false positives (Czech and
+  Slovak "mimo" for "outside", Polish "mimo to" for "despite that").
