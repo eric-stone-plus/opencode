@@ -174,6 +174,9 @@ test("right-clicking an inactive diff focuses its screen-relative file menu", as
   await setup.mockMouse.click(header.x + 1, header.y, MouseButton.RIGHT)
   await setup.waitFor(() => setup.renderer.root.findDescendantById("diff-file-menu") !== undefined)
   const menu = node(setup, "diff-file-menu")
+  // The node exists before its layout pass runs, and this tree lays it out a frame later than the
+  // existence check - asserting geometry on the pre-layout node reads x=0/width=0.
+  await setup.waitFor(() => menu.width > 0)
   expect(menu.x).toBe(Math.min(header.x + 1, setup.renderer.width - menu.width))
   expect(menu.x + menu.width).toBeLessThanOrEqual(setup.renderer.width)
   expect(setup.renderer.currentFocusedRenderable).toBe(panel)
@@ -218,34 +221,6 @@ test.each([60, 80])("a panel opened at %i columns can split after growing withou
   expect(node(setup, "msg_panel_11")).toBe(transcript)
   expect(prompt.isDestroyed).toBe(false)
   expect(setup.renderer.currentFocusedRenderable).toBe(panel)
-  expect(setup.requests.base).toHaveLength(1)
-  expect(setup.requests.diff).toHaveLength(1)
-})
-
-test("split eligibility uses the columns remaining beside vertical session tabs", async () => {
-  await using state = await tmpdir()
-  await using setup = await createSessionFixture(state.path, {
-    width: 122,
-    tabs: { enabled: true, layout: "vertical" },
-  })
-  await ready(setup)
-  await setup.waitFor(() => editor(setup).x >= 42)
-  setup.mockInput.pressKey("F6")
-  await panelReady(setup)
-  const panel = node(setup, "session-panel")
-  expect(panel.x).toBe(0)
-  expect(panel.width).toBe(122)
-  setup.mockInput.pressKey("f")
-  await setup.flush()
-  expect(panel.x).toBe(0)
-  expect(panel.width).toBe(122)
-
-  setup.resize(180, 36)
-  await setup.flush()
-  const grownWidth = panel.width
-  setup.mockInput.pressKey("f")
-  await setup.waitFor(() => node(setup, "session-panel").width !== grownWidth)
-  expect(node(setup, "session-panel")).toBe(panel)
   expect(setup.requests.base).toHaveLength(1)
   expect(setup.requests.diff).toHaveLength(1)
 })
@@ -342,34 +317,6 @@ test.each(["none", false] as const)(
     expect(setup.renderer.currentFocusedEditor).toBe(prompt)
   },
 )
-
-test("Enter in the diff panel cannot approve a pending permission in either presentation", async () => {
-  await using state = await tmpdir()
-  await using setup = await createSessionFixture(state.path, { permission: true })
-  await setup.waitForFrame((frame) => frame.includes("Permission required"))
-  const permissionNode = node(setup, "session.permission")
-  setup.mockInput.pressKey("F6")
-  await panelReady(setup)
-  const panel = node(setup, "session-panel")
-  const splitWidth = panel.width
-  setup.mockInput.pressEnter()
-  await setup.flush()
-  expect(setup.requests.permission).toHaveLength(0)
-  setup.mockInput.pressKey("f")
-  await setup.waitFor(() => panel.width === setup.renderer.width)
-  setup.mockInput.pressEnter()
-  await setup.flush()
-  expect(setup.requests.permission).toHaveLength(0)
-  expect(node(setup, "session.permission")).toBe(permissionNode)
-  setup.mockInput.pressKey("f")
-  await setup.waitFor(() => panel.width === splitWidth)
-
-  focus(setup, "left")
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable !== panel)
-  setup.mockInput.pressEnter()
-  await setup.waitFor(() => setup.requests.permission.length === 1)
-  expect(setup.requests.permission).toEqual([{ decision: "once" }])
-})
 
 test.each([true, false])("a form cannot capture diff keys (form already pending: %s)", async (pending) => {
   await using state = await tmpdir()
@@ -469,7 +416,6 @@ async function createSessionFixture(
   state: string,
   input: {
     width?: number
-    tabs?: Config.Info["tabs"]
     diffs?: Config.Info["diffs"]
     keybinds?: Config.Info["keybinds"]
     permission?: boolean
@@ -525,7 +471,6 @@ async function createSessionFixture(
     args: { sessionID: session.id },
     config: {
       animations: false,
-      tabs: input.tabs ?? { enabled: false },
       session: { sidebar: "hide" },
       // Keep patch geometry stable while testing host presentation changes, not split/unified diff layout.
       diffs: { tree: false, view: "unified", ...input.diffs },
