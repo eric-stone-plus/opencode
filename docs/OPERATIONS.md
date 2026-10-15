@@ -65,3 +65,17 @@ Pre-installation backup: `~/Downloads/stability-20260919T105706Z/`, containing t
 - Pruning old tool output still has limited opportunities within a single very long user turn. Automatic compaction continues to bound the working window. This audit does not change history retention rules or introduce aggressive compression.
 
 The evidence does not establish absolute stability. This release provides improvements supported by regression tests, with recovery behavior and a rollback backup.
+
+## 2. Where the honest limitations live
+
+Section 1 is a snapshot of one audit; the maintained limitations live with their subjects:
+
+| Location | Scope |
+| --- | --- |
+| `PERSONAL.md` | Fork decisions, the sync conflict ledger, and the project-config trust gate |
+| `packages/ai/AGENTS.md` → Known limitations | Cassette coverage, the dead golden harness, carried modality contracts |
+| `packages/core/AGENTS.md` → Known limitations | Project-local plugin execution, config load order, per-session goal state |
+| `docs/adr/` | Decisions and their consequences (deleted providers, desktop removal, config load order) |
+| Section 1 above | The 2026-09-19 stability audit and its remaining limitations |
+
+Convention: a package-level `AGENTS.md` carries a `Known limitations` section that names what the package does not do, with `file:line` evidence, so the gap is stated where it is met rather than rediscovered. Add a limitation to the section closest to the code; this index only points at them.
