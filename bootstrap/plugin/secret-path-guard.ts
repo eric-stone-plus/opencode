@@ -55,6 +55,17 @@ const DENY: readonly Rule[] = [
   { re: /firecrawl-cli\/credentials\.json$/, why: "firecrawl credentials" },
   { re: /\.config\/opencode\/env$/, why: "provider API key env" },
   { re: /\.config\/claude-env$/, why: "Anthropic auth token env" },
+  // environment.d drop-ins carry provider keys as often as not — the seat's own 95-*.conf
+  // template shipped mode 0600 for exactly that reason, and motoko-keys.conf holds live keys —
+  // while the DB pin and the IME files beside them hold nothing secret. The directory is denied
+  // whole (the shape of a key-bearing drop-in is not distinguishable by name, and a grep aimed at
+  // the directory would print every one of them), and a legitimate non-secret field is still
+  // reachable through a field-targeted shell filter.
+  {
+    re: /(^|\/)\.config\/environment\.d(\/|$)/,
+    why: "environment.d drop-in (may hold provider keys)",
+    hint: FIELD_HINT,
+  },
   { re: /(^|\/)\.ssh(\/|$)/, why: "SSH key material" },
   { re: /(^|\/)\.gnupg(\/|$)/, why: "GPG private material" },
   { re: /\.aws\/(credentials|config)$/, why: "AWS credentials" },

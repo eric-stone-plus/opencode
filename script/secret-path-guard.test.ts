@@ -30,6 +30,9 @@ describe("secret-path-guard file tools", () => {
     expect(await denial("read", { path: DB })).toStartWith("Blocked: refusing to use path inside OpenCode database")
     expect(await denial("read", { path: `${DB}-wal` })).toContain("OpenCode database")
     expect(await denial("read", { path: "/home/eric/.local/state/opencode/service-main.json" })).toContain("service registration")
+    // environment.d drop-ins: the qwen provider template was 0600 for a reason, and motoko-keys.conf holds live keys.
+    expect(await denial("read", { path: "/home/eric/.config/environment.d/motoko-keys.conf" })).toContain("environment.d")
+    expect(await denial("grep", { pattern: "KEY", path: "/home/eric/.config/environment.d" })).toContain("environment.d")
   })
 
   test("denies every path a patch touches", async () => {
@@ -46,6 +49,8 @@ describe("secret-path-guard file tools", () => {
     expect(await denial("grep", { pattern: "auth.json", path: "src" })).toBeUndefined()
     expect(await denial("grep", { pattern: "API[_-]?KEY", path: "src" })).toBeUndefined()
     expect(await denial("read", null)).toBeUndefined()
+    // environment.d is file-tool-only: a field-targeted shell filter stays the deliberate escape hatch.
+    expect(await shell("cut -d= -f1 ~/.config/environment.d/motoko-keys.conf")).toBeUndefined()
   })
 })
 
