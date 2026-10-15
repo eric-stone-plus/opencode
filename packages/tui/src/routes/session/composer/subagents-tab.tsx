@@ -47,11 +47,13 @@ export function SubagentsTab(props: { sessionID: string }) {
         const agentMatch = title.match(/@(\w+) subagent/)
         return {
           sessionID: session.id,
-          agent: session.agent
-            ? Locale.titlecase(session.agent)
-            : agentMatch
-              ? Locale.titlecase(agentMatch[1])
-              : "Subagent",
+          agent: sanitizeTerminalOutput(
+            session.agent
+              ? Locale.titlecase(session.agent)
+              : agentMatch
+                ? Locale.titlecase(agentMatch[1])
+                : "Subagent",
+          ),
           title: agentMatch ? title.replace(agentMatch[0], "").trim() || title : title,
           status: data.session.status(session.id),
           current: session.id === route.sessionID,

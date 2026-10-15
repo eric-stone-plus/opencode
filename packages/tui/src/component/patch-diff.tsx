@@ -16,6 +16,7 @@ import { useRenderer } from "@opentui/solid"
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show, splitProps } from "solid-js"
 import { splitAddedPatch, splitPatchHunks, type AddedPatchChunk } from "../util/diff"
 import { stringWidth } from "../util/string-width"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export interface PatchDiffRef {
   readonly hunks: () => readonly (DiffRenderable | BoxRenderable)[]
@@ -37,10 +38,12 @@ type Props = Omit<JSX.IntrinsicElements["diff"], "diff" | "lineNumberBg" | "ref"
 
 export function PatchDiff(props: Props) {
   const [local, diffProps] = splitProps(props, ["diff", "hunkFg", "lineNumberBg", "ref", "scroll", "gutterPadding"])
-  const hunks = createMemo(() => splitPatchHunks(local.diff))
+  // Diff text is file content, so it is untrusted; every diff surface mounts this component.
+  const diff = createMemo(() => sanitizeTerminalOutput(local.diff))
+  const hunks = createMemo(() => splitPatchHunks(diff()))
   const chunks = createMemo(() => {
     if (!local.scroll) return
-    const result = splitAddedPatch(local.diff, VIRTUAL_CHUNK_LINES)
+    const result = splitAddedPatch(diff(), VIRTUAL_CHUNK_LINES)
     return result && lineCount(result) > VIRTUAL_MIN_LINES ? result : undefined
   })
   // Virtual chunks mount independently, so size the gutter for the whole file rather than the mounted chunks.

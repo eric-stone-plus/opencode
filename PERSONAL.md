@@ -649,8 +649,10 @@ no-op `sanitizeTerminalOutput` turns all nine red. Unit suites pin the projectio
 (`test/util/terminal-output.test.ts`, `test/util/session-projection-sanitization.test.ts`,
 `test/mini/entry-body-sanitization.test.ts`, plus cases in `test/util/{tool-display,permission,error}.test.ts`).
 
-Still unfiltered on purpose or not yet covered: `util/presentation.ts` splash art (own ANSI),
-`diff-viewer` parse-error text, and `Locale.titlecase(agent)` labels that come from local config.
+Still unfiltered on purpose: `util/presentation.ts`, whose splash art embeds its own ANSI, and the
+embedded terminal pane, which is a terminal emulator and must interpret sequences rather than strip
+them. Diffs reach every surface through `component/patch-diff.tsx`, so the sanitizer lives there rather
+than at each caller.
 
 ## Agent rules for this fork
 
