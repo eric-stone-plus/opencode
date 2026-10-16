@@ -308,3 +308,19 @@ index dc346fd4b1680151772e7979d8e699ec9e6c2c8a..74415bd2635026ebd38aa8f2d98bf920
    }
    pushScissorRect(x, y, width, height) {
      this.guard();
+diff --git a/parser.worker.js b/parser.worker.js
+index dfcd8bcb88931e925d5c39b1a37417bf20216b6c..0f89035d7d03324ffc5d583721672a31e935d63c 100644
+--- a/parser.worker.js
++++ b/parser.worker.js
+@@ -4032,7 +4032,10 @@
+       if (captureName === "injection.content" || captureName.includes("injection")) {
+         const nodeType = capture.node.type;
+         let targetLanguage;
+-        if (injectionMapping?.nodeTypes && injectionMapping.nodeTypes[nodeType]) {
++        const languageFromQuery = capture.setProperties?.["injection.language"];
++        if (languageFromQuery) {
++          targetLanguage = languageFromQuery;
++        } else if (injectionMapping?.nodeTypes && injectionMapping.nodeTypes[nodeType]) {
+           targetLanguage = injectionMapping.nodeTypes[nodeType];
+         } else if (nodeType === "code_fence_content") {
+           const parent = capture.node.parent;
