@@ -13,6 +13,7 @@ import { collectNodeAssets, copyNodeAssets, hashNodeAssets, seaAssetMap } from "
 import { appArchiveAsset, mainConfig } from "../vite.node.config"
 import { nodeExecArgv, nodeTarget, type NodeTarget } from "../src/node/target"
 import { buildAppArchive } from "./app-assets"
+import { ensureTreeSitterAssetsForBuild } from "./tree-sitter-assets"
 import { verifyArtifact } from "./verify-artifact"
 import { NativeArch } from "../../../script/native-arch"
 
@@ -87,6 +88,9 @@ async function assertTextImportsInlined(bundlePath: string) {
       throw new Error(`${bundlePath}: ${source} — text imports are not inlined as content (marker ${marker})`)
   }
 }
+
+// The SEA asset set includes the pinned tree-sitter parser assets; verify them before collecting.
+await ensureTreeSitterAssetsForBuild()
 
 for (const target of targets) {
   console.log(`building cli-node-${targetName(target)}`)

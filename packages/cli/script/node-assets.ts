@@ -6,6 +6,8 @@ import { getNodeAssets } from "@opentui/core/node-assets"
 import { attentionSoundAssets, type NodeTarget, photonWasmAsset, shellParserWasmAssets } from "../src/node/target"
 import { collectFiles } from "./files"
 import { resolveOpencodePty } from "./opencode-pty"
+import { treeSitterAssetCachePath } from "../../tui/src/tree-sitter-assets.build"
+import { treeSitterAssetManifest } from "../../tui/src/tree-sitter-assets.manifest.generated"
 
 const dir = path.resolve(import.meta.dirname, "..")
 
@@ -46,6 +48,10 @@ export async function collectNodeAssets(target: NodeTarget) {
     ...attentionSoundAssets.map((key) => ({
       key,
       source: path.resolve(dir, "../ui/src/assets/audio", path.basename(key)),
+    })),
+    ...treeSitterAssetManifest.map((asset) => ({
+      key: `tree-sitter/${asset.name}`,
+      source: treeSitterAssetCachePath(asset),
     })),
     ...(opencodePty && target.opencodePtyAsset ? [{ key: target.opencodePtyAsset, source: opencodePty.source }] : []),
     ...(await collectFiles(ptyRoot))

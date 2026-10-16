@@ -12,6 +12,7 @@ import { discoverPluginRuntimeSpecifiers, pluginRuntimeLoaderCode } from "@openc
 import { buildAppArchive } from "./app-assets"
 import { verifyArtifact, verifySimulationGraph } from "./verify-artifact"
 import { resolveOpencodePty } from "./opencode-pty"
+import { ensureTreeSitterAssetsForBuild } from "./tree-sitter-assets"
 import { NativeArch } from "../../../script/native-arch"
 
 const dir = path.resolve(import.meta.dirname, "..")
@@ -70,6 +71,9 @@ if (!skipInstall)
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]} @opencode-ai/pty@${pkg.dependencies["@opencode-ai/pty"]}`
 const appArchive = path.join(dir, ".cache", "bun-app-archive.bin")
 await Bun.write(appArchive, await buildAppArchive(Script.channel, { skipBuild: skipWebUi }))
+// Verifies the pinned tree-sitter parser assets and refreshes any missing cache entries before the
+// bundle embeds them; a digest mismatch fails the build here.
+await ensureTreeSitterAssetsForBuild()
 const appAssetsPlugin: BunPlugin = {
   name: "opencode-app-assets",
   setup(build) {

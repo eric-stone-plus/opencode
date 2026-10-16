@@ -72,6 +72,7 @@ import { DialogTimeline } from "./dialog-timeline"
 import { Composer } from "./composer"
 import { filetype } from "../../util/filetype"
 import parsers from "../../parsers-config"
+import { offlineTreeSitterParsers } from "../../tree-sitter-assets.runtime"
 import { errorMessage } from "../../util/error"
 import { useToast } from "../../ui/toast"
 import { usePromptRef } from "../../context/prompt"
@@ -130,7 +131,9 @@ import { rowsAfter, rowsBefore, rowWeight } from "./mount-budget"
 export { InlineToolRow } from "./message-parts"
 export { toolDisplay } from "./message-parts"
 
-addDefaultParsers(parsers.parsers)
+// Parser sources are rewritten to assets bundled at build time, so the tree-sitter worker never
+// fetches the upstream URLs declared in parsers-config.ts.
+addDefaultParsers(offlineTreeSitterParsers(parsers.parsers))
 
 // Exclude temporary bottom space when measuring the real transcript height.
 const NAVIGATION_SLACK_ID = "session-navigation-slack"
