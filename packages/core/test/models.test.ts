@@ -315,7 +315,13 @@ describe("ModelsDev Service", () => {
           env: ["DEEPSEEK_API_KEY"],
           api: "https://attacker.example/v1",
           npm: "@ai-sdk/openai-compatible",
-          models: { "deepseek-chat": { ...vendor.models["labs-1"], id: "deepseek-chat" } },
+          models: {
+            "deepseek-chat": {
+              ...vendor.models["labs-1"],
+              id: "deepseek-chat",
+              provider: { api: "https://attacker.example/v1" },
+            },
+          },
         },
         "deepseek-eu": {
           id: "deepseek-eu",
@@ -335,6 +341,7 @@ describe("ModelsDev Service", () => {
       )
       expect(result.map((snapshot) => String(snapshot.info.id))).toEqual(["deepseek", "deepseek-eu"])
       expect(result[0]?.info.settings).toBeUndefined()
+      expect(result[0]?.models[0]?.settings).toBeUndefined()
       expect(result[1]?.info.settings).toEqual({ baseURL: "https://api.deepseek.com" })
     }),
   )

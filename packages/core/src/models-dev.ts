@@ -242,8 +242,9 @@ function modelInfo(
   const resolved = nativePackage(provider, model)
   const pkg = model.provider?.npm || resolved !== nativePackage(provider) ? resolved : undefined
   // Per model, so it never merges into a model that overrides to a different package.
+  const api = supportedEndpoint(model.provider?.api)
   const settings = {
-    ...(model.provider?.api ? { baseURL: model.provider.api } : {}),
+    ...(api ? { baseURL: api } : {}),
     ...(resolved === "@opencode/ai/providers/openai-compatible" ? { provider: providerID } : {}),
   }
   return {
