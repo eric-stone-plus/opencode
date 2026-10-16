@@ -294,6 +294,42 @@ target home): `~/.claude/settings.json:20`, `~/.zcode/settings.json:8`,
 `~/.kimi-code/config.toml:69-73`, and the fifth surface is the opencode plugin
 port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 
+### Project trust gate (untrusted repositories)
+
+Opening a repository can execute code at session start with no prompt: a project
+`opencode.jsonc`, its `.opencode/plugin/` directory, its `AGENTS.md` chain, and
+its MCP/LSP entries are all project-controlled. The gate that decides whether any
+of them loads is the **operator's declaration**, not the project:
+
+- `<global config dir>/trusted-roots` — one **absolute** path per line, `#`
+  comments. Relative, glob, and `~` lines are ignored *with a reason* (logged as
+  a warning at startup); a root that does not exist yet is kept lexically
+  ("declare before create"); a symlinked root trusts its resolved target; an
+  unreadable file or root means **closed**.
+- **No declaration means closed**: project config, the project `AGENTS.md`
+  chain, project plugins/MCP, and the read-triggered nested `AGENTS.md` guidance
+  are all off. That is the state of a fresh seat — a project cannot authorize
+  itself.
+- The declaration is read once at server start by the CLI
+  (`packages/cli/src/server-process.ts`) and installed through
+  `ProjectTrust.node.replace` in `packages/server/src/routes.ts`; the primitive is
+  `packages/core/src/fork/project-trust.ts`.
+
+**The escape hatch is the widest setting, not a no-op.** The env override is
+three-state (`OPENCODE_CONFIG_PROJECT_DISABLE`, alias
+`OPENCODE_DISABLE_PROJECT_CONFIG`):
+
+| value | effect |
+| --- | --- |
+| unset | project-side discovery on, bounded by the declaration (closed with no declaration) |
+| exactly `0` or `false` (trimmed, case-insensitive) | **project: true + trust ALL** — the declaration is ignored, and the read path walks without a bound. This is the historical "project config was never gated" behavior |
+| anything else (`1`, `yes`, `on`, `true`, `2`, `no`, `off`, `""`, …) | **project: false** — hard off, regardless of the declaration |
+
+So `=0` is not "re-enable the default"; it is "trust every repository". Set it
+only for a shell where every directory is yours. The value is read once when the
+server process starts: exporting it later in a client does nothing to an
+already-running shared service.
+
 ### Updating the vendored skills
 
 The mattpocock set under `skills/` is **frozen** (owner decision 2026-10-16):

@@ -32,6 +32,7 @@
     "check-command-surfaces": "bun run script/check-command-surfaces.ts",
     "debt-ratchet": "bun run script/debt-ratchet.ts",
     "vendor-skills": "bun run script/vendor-skills.ts",
+    "update-skills": "bun run script/update-skills.ts",
     "cpu-probe": "bun run script/cpu-probe.ts",
     "freeze-capture": "bun run script/freeze-capture.ts",
     "typecheck": "bun turbo typecheck --concurrency=3",

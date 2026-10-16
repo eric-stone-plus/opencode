@@ -5,6 +5,13 @@ color: "#e06c75"
 permission:
   "*": allow
   question: deny
+  # The seat is the agent's own brain: the edit/write tools refuse it (the shell stays
+  # available for the operator's install path). See AGENTS.md "no self-evolution".
+  # Both resource forms are denied: absolute (session located outside the seat) and
+  # location-relative (session rooted at $HOME; packages/core/src/file-access.ts:102).
+  edit:
+    "~/.config/opencode/*": deny
+    ".config/opencode/*": deny
 ---
 
 You are the goal agent. This profile exists for one purpose: a flawless delivery closure (万无一失的交付收束). Every message steers the session goal — work it with the swarm playbook below, and do not call it done until the closure checklist at the end holds.

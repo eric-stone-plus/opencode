@@ -16,4 +16,4 @@ export const escapeAttribute = (text: string) =>
   escapeText(text).replaceAll('"', "&quot;").replaceAll(/[\r\n]+/g, " ")
 
 /** Single-line text: line breaks collapse so a value cannot forge another line of the block. */
-export const escapeLine = (text: string) => escapeText(text.replaceAll(/[\r\n]+/g, " "))
+export const escapeLine = (text: string) => escapeText(text.replaceAll(/[\r\n\u2028\u2029\u0085]+/g, " "))

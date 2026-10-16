@@ -82,16 +82,26 @@ function stripTrailingSeparator(value: string): string {
  * Canonical form of a path for the trust decision: symlinks resolved and `..`/`.` collapsed.
  * A path that cannot be resolved is never trusted (fail closed): this returns `undefined` for any
  * failure other than nonexistence, and every predicate that sees `undefined` answers "no". A path
- * that does not exist has no symlinks to resolve, so it falls back to its lexical absolute form.
+ * that does not exist yet has no symlinks of its own, but its existing ancestors still do, so the
+ * longest resolvable prefix is resolved and the missing tail is re-appended — a lexical fallback
+ * would let `root/link-out/missing` look contained when `link-out` points elsewhere.
  */
 function canonicalize(input: string): string | undefined {
   const resolved = path.resolve(input)
-  try {
-    return realpathSync.native(resolved)
-  } catch (cause) {
-    const code = errorCode(cause)
-    if (code === "ENOENT" || code === "ENOTDIR") return resolved
-    return undefined
+  let prefix = resolved
+  const tail: string[] = []
+  for (;;) {
+    try {
+      const real = realpathSync.native(prefix)
+      return tail.length === 0 ? real : path.join(real, ...tail)
+    } catch (cause) {
+      const code = errorCode(cause)
+      if (code !== "ENOENT" && code !== "ENOTDIR") return undefined
+      const parent = path.dirname(prefix)
+      if (parent === prefix) return resolved
+      tail.unshift(path.basename(prefix))
+      prefix = parent
+    }
   }
 }
 

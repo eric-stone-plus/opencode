@@ -106,6 +106,35 @@ describe("fork seat config: two profiles", () => {
     expect(read("bootstrap/agent/goal.md")).toContain("Round 2")
   })
 
+  test("both profiles refuse the seat with the edit tool, in both resource forms", () => {
+    const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8")
+    // No self-evolution (AGENTS.md): the seat is the agent's own brain. `file-access.ts:102` hands
+    // tools a location-relative resource for targets inside the session's location and an absolute
+    // one for targets outside, so both spellings must be denied — and after the wildcard, or
+    // findLast() keeps the allow. The shell stays open for the operator's install path.
+    for (const card of ["bootstrap/agent/auto.md", "bootstrap/agent/goal.md"]) {
+      const text = read(card)
+      const frontmatter = text.slice(0, text.indexOf("\n---", 4))
+      const wildcard = frontmatter.indexOf('"*": allow')
+      const absolute = frontmatter.indexOf('"~/.config/opencode/*": deny')
+      const relative = frontmatter.indexOf('".config/opencode/*": deny')
+      expect(wildcard).toBeGreaterThan(-1)
+      expect(absolute).toBeGreaterThan(wildcard)
+      expect(relative).toBeGreaterThan(absolute)
+    }
+    for (const { text } of copies) {
+      const { decoded } = normalized(text)
+      for (const name of ["auto", "goal"] as const) {
+        const edits = (decoded.agents?.[name]?.permissions ?? []).filter((rule) => rule.action === "edit")
+        expect(edits.map((rule) => rule.effect)).toEqual(["deny", "deny"])
+        expect(edits.map((rule) => rule.resource)).toEqual([
+          "~/.config/opencode/*",
+          ".config/opencode/*",
+        ])
+      }
+    }
+  })
+
   test("the retired instruction documents stay deleted", () => {
     for (const file of [
       "bootstrap/autonomy.md",

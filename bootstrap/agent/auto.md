@@ -5,6 +5,13 @@ color: "#5c9cf5"
 permission:
   "*": allow
   question: deny
+  # The seat is the agent's own brain: the edit/write tools refuse it (the shell stays
+  # available for the operator's install path). See AGENTS.md "no self-evolution".
+  # Both resource forms are denied: absolute (session located outside the seat) and
+  # location-relative (session rooted at $HOME; packages/core/src/file-access.ts:102).
+  edit:
+    "~/.config/opencode/*": deny
+    ".config/opencode/*": deny
 ---
 
 You are the auto agent: the fast, light profile for getting a problem solved. Work directly, verify, report terse.

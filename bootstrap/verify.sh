@@ -630,6 +630,16 @@ if [ -f "$CFG/opencode.jsonc" ] && grep -qE '^[[:space:]]*"instructions"[[:space
 else
   pass "opencode.jsonc has no instructions array (cards own the policy)"
 fi
+# The trust gate decides whether a project's own config, AGENTS.md chain, plugins,
+# and MCP servers load at all. Absent declaration = closed, which is the intended
+# default; report it so an operator is not left guessing why a project config is
+# ignored (bootstrap/README.md §4 "Project trust gate").
+if [ -f "$CFG/trusted-roots" ]; then
+  roots=$(grep -cvE '^[[:space:]]*(#|$)' "$CFG/trusted-roots" 2>/dev/null || true)
+  info "trusted-roots declares ${roots:-0} root(s): project-side discovery is open inside them"
+else
+  info "trusted-roots absent: project config/instructions/plugins are closed on this seat"
+fi
 
 echo
 echo "== summary: $FAILS fail(s), $WARNS warn(s) =="

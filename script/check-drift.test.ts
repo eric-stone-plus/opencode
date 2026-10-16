@@ -51,7 +51,7 @@ function row(rows: Awaited<ReturnType<typeof collectDrift>>, label: string) {
 }
 
 const cleanTotals = {
-  ok: MANAGED_FILES.length + SEED_FILES.length + MIRROR_FILES.length + ABSENT_FILES.length + 5,
+  ok: MANAGED_FILES.length + SEED_FILES.length + MIRROR_FILES.length + ABSENT_FILES.length + 7,
   drift: 0,
   missing: 0,
   seed: 0,
@@ -100,7 +100,9 @@ describe("collectDrift", () => {
       status: "drift",
       detail: "removed on purpose (2026-10-16); delete it",
     })
-    expect(summarize(rows).drift).toBe(1)
+    // Two rows fire: the exact-name ABSENT row and the plugin-directory allowlist
+    // (defense in depth — a renamed copy is caught by the second one alone).
+    expect(summarize(rows).drift).toBe(2)
   })
 
   test("a retired repo file that comes back is drift", async () => {
@@ -192,6 +194,71 @@ describe("collectDrift", () => {
     const rows = await collectDrift(root, home)
     expect(row(rows, "cli.json")?.status).toBe("drift")
     expect(summarize(rows).missing).toBe(0)
+  })
+
+  test("the audit covers exactly the files it claims to cover", () => {
+    // The totals are derived from these lists, so a shrunken list would shrink the
+    // audit silently. Pin the membership instead.
+    expect(MANAGED_FILES.map((mapping) => mapping.source).sort()).toEqual([
+      "bootstrap/agent-hooks/block-unsafe-kill.sh",
+      "bootstrap/agent-hooks/cases.json",
+      "bootstrap/agent-hooks/run-cases.sh",
+      "bootstrap/agent-hooks/run-cases.ts",
+      "bootstrap/config/environment.d/10-opencode-db.conf",
+      "bootstrap/plugin/block-unsafe-kill.ts",
+      "bootstrap/plugin/local-tools.ts",
+      "bootstrap/plugin/open-code-review.ts",
+      "bootstrap/plugin/secret-path-guard.ts",
+      "bootstrap/plugin/skill-hints.ts",
+      "bootstrap/shell/bashrc-opencode-block.sh",
+      "dotfiles/opencode/AGENTS.md",
+      "dotfiles/opencode/agent/auto.md",
+      "dotfiles/opencode/agent/goal.md",
+      "dotfiles/opencode/lib/drawio.py",
+      "dotfiles/opencode/skills/drawio/SKILL.md",
+      "dotfiles/opencode/skills/marker/SKILL.md",
+      "dotfiles/opencode/skills/planning-with-files/SKILL.md",
+    ])
+    expect(MIRROR_FILES.map(([left, right]) => `${left}|${right}`).sort()).toEqual([
+      "bootstrap/AGENTS.md|dotfiles/opencode/AGENTS.md",
+      "bootstrap/agent/auto.md|dotfiles/opencode/agent/auto.md",
+      "bootstrap/agent/goal.md|dotfiles/opencode/agent/goal.md",
+    ])
+    expect(ABSENT_FILES.map((entry) => `${entry.root}:${entry.path}`).sort()).toEqual([
+      "repo:bootstrap/AGENTS.goal.md",
+      "repo:bootstrap/autonomy.md",
+      "repo:bootstrap/plugin/mpskills-update.ts",
+      "repo:dotfiles/opencode/AGENTS.goal.md",
+      "repo:dotfiles/opencode/autonomy.md",
+      "repo:script/mpskills-update.test.ts",
+      "seat:.config/opencode/AGENTS.goal.md",
+      "seat:.config/opencode/autonomy.md",
+      "seat:.config/opencode/plugin/mpskills-update.ts",
+    ])
+  })
+
+  test("an unexpected seat plugin is drift, whatever its name", async () => {
+    const { root, home } = await mirror()
+    await write(path.join(home, ".config/opencode/plugin/skills-updater.ts"), "export default {}\n")
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "~/.config/opencode/plugin (allowlist)")?.status).toBe("drift")
+    expect(row(rows, "~/.config/opencode/plugin (allowlist)")?.detail).toContain("skills-updater.ts")
+    expect(summarize(rows).drift).toBe(1)
+  })
+
+  test("a renamed refresh mechanism in the bundle is drift", async () => {
+    const { root, home } = await mirror()
+    await write(path.join(root, "bootstrap/plugin/mpskills-refresh.ts"), "export default {}\n")
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "bootstrap/plugin (retired refresh mechanisms)")?.status).toBe("drift")
+    expect(summarize(rows).drift).toBe(1)
+  })
+
+  test("the managed plugins are not flagged by the allowlist", async () => {
+    const { root, home } = await mirror()
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "~/.config/opencode/plugin (allowlist)")?.status).toBe("ok")
+    expect(row(rows, "bootstrap/plugin (retired refresh mechanisms)")?.status).toBe("ok")
   })
 
   test("a trailing-slash home is normalized", async () => {

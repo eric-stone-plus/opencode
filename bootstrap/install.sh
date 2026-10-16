@@ -1007,8 +1007,9 @@ done
 # re-vendor, no auto-commit). A stale seat copy would keep refreshing the
 # vendored skills behind the operator's back, so the install removes it.
 if [ -e "$PL/mpskills-update.ts" ] || [ -L "$PL/mpskills-update.ts" ]; then
+  # No timestamp backup: the mechanism is retired on purpose (the content stays in git history), and a
+  # dormant copy of a fetch/re-vendor/git-commit plugin on disk is exactly what the freeze removes.
   if [ "$DRY_RUN" -eq 0 ]; then
-    backup_file "$PL/mpskills-update.ts"
     rm -f "$PL/mpskills-update.ts"
   fi
   act "retired $PL/mpskills-update.ts (skills are frozen; updates are an operator task)"
@@ -1042,8 +1043,8 @@ install_file "$BOOTSTRAP_DIR/AGENTS.md" "$CFG/AGENTS.md"
 # silently re-loads a policy the cards now own.
 for f in autonomy.md AGENTS.goal.md; do
   if [ -e "$CFG/$f" ] || [ -L "$CFG/$f" ]; then
+    # No timestamp backup: the content moved into the mode cards and stays in git history.
     if [ "$DRY_RUN" -eq 0 ]; then
-      backup_file "$CFG/$f"
       rm -f "$CFG/$f"
     fi
     act "retired $CFG/$f (content moved into the mode cards)"

@@ -63,8 +63,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
   const global = yield* Global.Service
   if (options.mode === "service") yield* Effect.sync(() => process.chdir(global.home))
   // The operator's trust declaration lives beside the global config, so a project can never write
-  // it. A missing or unreadable file is absent data, which the gate treats as closed.
-  const declarationPath = path.join(global.config, "trusted-roots")
+  // it. Resolve it: a relative OPENCODE_CONFIG_DIR would otherwise make the declaration path
+  // cwd-relative, and a repository that ships `.opencode/trusted-roots` could authorize itself when
+  // the CLI happens to run from that directory. A missing or unreadable file is absent data, which
+  // the gate treats as closed.
+  const declarationPath = path.resolve(global.config, "trusted-roots")
   const declaration = yield* Effect.tryPromise(() => readFile(declarationPath, "utf8")).pipe(
     Effect.orElseSucceed(() => undefined),
   )

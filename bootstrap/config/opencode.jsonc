@@ -119,9 +119,18 @@
       "variant": "max",
       // findLast() keeps the LAST matching rule, so the wildcard must come
       // first and the narrow denials after it, or they get overridden.
+      // The seat is the agent's own brain (AGENTS.md "no self-evolution"):
+      // the edit/write tools refuse it, both resource forms, because
+      // file-access.ts:102 hands tools a location-relative path for targets
+      // inside the session's location and an absolute one for targets
+      // outside. The shell stays open for the operator's install path.
       "permission": {
         "*": "allow",
-        "question": "deny"
+        "question": "deny",
+        "edit": {
+          "~/.config/opencode/*": "deny",
+          ".config/opencode/*": "deny"
+        }
       }
     },
     // Goal mode: red Goal profile. The prompt body lives in agent/goal.md
@@ -135,9 +144,15 @@
       "color": "#e06c75",
       "model": "deepseek/deepseek-flash",
       "variant": "max",
+      // Same seat deny as auto: the card declares it too, so the rule lands
+      // last whichever document is applied last (see the auto block).
       "permission": {
         "*": "allow",
-        "question": "deny"
+        "question": "deny",
+        "edit": {
+          "~/.config/opencode/*": "deny",
+          ".config/opencode/*": "deny"
+        }
       }
     },
     // build and plan are removed, not hidden. `disable` is the legacy `agent`

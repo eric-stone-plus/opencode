@@ -230,6 +230,49 @@ async function configSnapshotRow(root: string, home: string): Promise<Row> {
   return { label, status: "ok" }
 }
 
+// Retired refresh mechanisms, matched by name pattern rather than exact path: a
+// renamed copy of the skills auto-updater is still an auto-updater.
+const RETIRED_PLUGIN_PATTERN = /mpskills|skills-update|mattpocock|vendor-skills/i
+
+// The seat plugin directory is a code-execution surface: the loader imports every
+// `.ts`/`.js` file it finds (packages/core/src/plugin/source-directory.ts). An exact-name
+// ABSENT row cannot see a renamed copy, so the directory is allowlisted instead: the managed
+// plugins are the only files that may live there.
+const SEAT_PLUGIN_DIR = ".config/opencode/plugin"
+
+async function seatPluginRow(home: string): Promise<Row> {
+  const label = "~/.config/opencode/plugin (allowlist)"
+  const dir = path.join(home, SEAT_PLUGIN_DIR)
+  if (!existsSync(dir)) return { label, status: "missing", detail: `seat copy missing: ~/${SEAT_PLUGIN_DIR}` }
+  const allowed = new Set(
+    MANAGED_FILES.filter((mapping) => path.dirname(mapping.destination) === SEAT_PLUGIN_DIR).map((mapping) =>
+      path.basename(mapping.destination),
+    ),
+  )
+  const entries = await readdir(dir, { withFileTypes: true })
+  const extra = entries
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && /\.(ts|js)$/.test(entry.name) && !allowed.has(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+  return extra.length
+    ? { label, status: "drift", detail: `unexpected plugin file(s): ${extra.slice(0, 3).join(", ")}` }
+    : { label, status: "ok" }
+}
+
+async function retiredPluginPatternRow(root: string): Promise<Row> {
+  const label = "bootstrap/plugin (retired refresh mechanisms)"
+  const dir = path.join(root, "bootstrap", "plugin")
+  if (!existsSync(dir)) return { label, status: "missing", detail: "repo copy missing (check --root)" }
+  const entries = await readdir(dir, { withFileTypes: true })
+  const hits = entries
+    .filter((entry) => RETIRED_PLUGIN_PATTERN.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+  return hits.length
+    ? { label, status: "drift", detail: `retired mechanism present: ${hits.join(", ")}` }
+    : { label, status: "ok" }
+}
+
 export async function collectDrift(root: string, home: string): Promise<Row[]> {
   // install.sh normalizes a trailing slash before rewriting home-derived
   // files; match it so `--home ~/` does not misreport those rows.
@@ -240,6 +283,8 @@ export async function collectDrift(root: string, home: string): Promise<Row[]> {
     ...(await Promise.all(ABSENT_FILES.map((entry) => guard(entry.path, () => absentRow(root, seat, entry))))),
     ...(await Promise.all(MIRROR_FILES.map(([left, right]) => guard(left, () => mirrorRow(root, left, right))))),
     await guard("bootstrap/config/opencode.jsonc", () => configSnapshotRow(root, seat)),
+    await guard("~/.config/opencode/plugin (allowlist)", () => seatPluginRow(seat)),
+    await guard("bootstrap/plugin (retired refresh mechanisms)", () => retiredPluginPatternRow(root)),
     ...(await skillRows(root, seat)),
     ...(await skillsExtraRows(root, seat)),
   ]

@@ -15,6 +15,7 @@ import { $ } from "bun"
 import path from "path"
 import os from "os"
 import { cp, mkdir, readdir, rm, writeFile } from "fs/promises"
+import { existsSync } from "fs"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const DEST = path.join(ROOT, "skills")
@@ -45,6 +46,15 @@ const source =
 const revision = (await $`git -C ${source} rev-parse HEAD`.quiet()).text().trim()
 const branch = (await $`git -C ${source} rev-parse --abbrev-ref HEAD`.quiet()).text().trim()
 if (!revision) throw new Error(`not a git checkout, or empty: ${source}`)
+
+// Pre-flight BEFORE touching DEST. A bad or partial --source must never leave the vendored tree
+// wiped: the wipe is recursive, and an operator re-vendor that fails halfway is data loss.
+for (const bucket of BUCKETS) {
+  const dir = path.join(source, "skills", bucket)
+  if (!existsSync(dir)) throw new Error(`source has no skills/${bucket}: ${source}`)
+  const skills = (await readdirSorted(dir)).filter((entry) => existsSync(path.join(dir, entry, "SKILL.md")))
+  if (skills.length === 0) throw new Error(`source has no skills under skills/${bucket}: ${source}`)
+}
 
 await rm(DEST, { recursive: true, force: true })
 await mkdir(DEST, { recursive: true })

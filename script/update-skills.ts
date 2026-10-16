@@ -30,8 +30,11 @@ import { $ } from "bun"
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 const flag = process.argv.indexOf("--source")
-const source = path.resolve((flag === -1 ? process.env.MATTPOCOCK_SKILLS : process.argv[flag + 1]) ?? "")
-if (!source) throw new Error("usage: bun run update-skills --source <checkout>")
+// No cwd fallback: an empty `--source` (or a missing value) must fail here, not resolve to the
+// current directory and re-vendor from whatever checkout happens to be around.
+const raw = flag === -1 ? process.env.MATTPOCOCK_SKILLS : process.argv[flag + 1]
+if (!raw) throw new Error("usage: bun run update-skills --source <checkout>")
+const source = path.resolve(raw)
 
 const revision = (await $`git -C ${source} rev-parse HEAD`.quiet().nothrow()).text().trim()
 if (!revision) throw new Error(`not a git checkout, or empty: ${source}`)

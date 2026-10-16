@@ -74,8 +74,10 @@ happen.
   applies to the fork checkout when the change would alter seat behaviour.
 - **No self-install.** Never run `opencode plugin add|remove|update`,
   `opencode mcp add --global`, `bun run vendor-skills`, `bun run update-skills`,
-  `bun run sync-upstream`, `bootstrap/install.sh`, or any command whose effect is
-  to rewrite the seat. Those are operator commands.
+  `bun run sync-upstream`, or `bootstrap/install.sh` as a side effect of other
+  work, and never run anything whose effect is to rewrite the seat — unless the
+  operator's task *is* that seat change (the one exception below). Otherwise those
+  are operator commands.
 - **No runtime writers.** No plugin, hook, or script may write instructions,
   skills, cards, or config while the agent runs. A plugin may read the seat; it
   may not mutate it. A plugin that needs to remember something uses session

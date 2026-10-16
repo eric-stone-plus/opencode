@@ -114,6 +114,22 @@ describe("ProjectTrust.allows", () => {
     expect(ProjectTrust.allows(data, path.join(outside, "enter", "sub"))).toBe(true)
   })
 
+  test("a missing tail cannot hide behind a symlinked parent", async () => {
+    await using tmp = await tmpdir()
+    const trusted = path.join(tmp.path, "trusted")
+    const outside = path.join(tmp.path, "outside")
+    await fs.mkdir(trusted, { recursive: true })
+    await fs.mkdir(outside, { recursive: true })
+    await fs.symlink(outside, path.join(trusted, "escape"))
+    const data: ProjectTrust.Data = { all: false, roots: [trusted] }
+    // The path does not exist yet ("declare before create"), but its parent is a symlink out of the
+    // root: the old lexical fallback answered `true` here.
+    expect(ProjectTrust.allows(data, path.join(trusted, "escape", "missing"))).toBe(false)
+    expect(ProjectTrust.nearestRoot(data, path.join(trusted, "escape", "missing"))).toBeUndefined()
+    // A missing path whose existing ancestors stay inside the root is still trusted.
+    expect(ProjectTrust.allows(data, path.join(trusted, "missing", "deeper"))).toBe(true)
+  })
+
   test("a root declared through a symlink trusts its real location", async () => {
     await using tmp = await tmpdir()
     const real = path.join(tmp.path, "real")
