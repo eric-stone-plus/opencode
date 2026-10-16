@@ -163,7 +163,14 @@ cp cli.json ~/.config/opencode/cli.json   # from the repo root
 
 Opening a repository can execute code at session start with no prompt: `.opencode/plugin/` and `.opencode/plugins/` are imported automatically (discovery walks upward from the session's location directory with no stop boundary — `config/discovery.ts:33-35` — and every `.opencode` found on the way is collected at `:66-69`; the chain is `config/plugin/source.ts:127-133` → `plugin/source-directory.ts:7`, `:21-32` → `plugin/module.ts:120-124`, which imports the module and runs its `effect`/`setup`), a config document's `plugins` array is imported the same way (`config/plugin/source.ts:134-147`), and MCP `command` servers from project config are spawned asynchronously when a Location starts (`config/plugin/mcp.ts:39-56` → `mcp/index.ts:537-559` → `mcp/stdio.ts:84-96`; `disabled: true` opts out). A config `lsp.<name>.command` is the same class of vector: it replaces the server spawn (`fork/lsp/lsp.ts:119-135`) and runs on the first file touch or read warmup. The only veto is the managed policy layer — config `experimental.policies` documents, enforced as `integration.use plugin:<target>` (`plugin/module.ts:52-59`) and through the MCP/skill/provider transforms — which defaults to **allow** when none is configured (`managed-policy.ts:69-77`); the Console organization-statement path has no in-tree producer, and this seat carries no policy.
 
-Escape hatch for untrusted trees: `OPENCODE_CONFIG_PROJECT_DISABLE=1` (alias `OPENCODE_DISABLE_PROJECT_CONFIG`; truthy is `"1"` or case-insensitive `"true"`, and the primary name wins even when falsy — `0` masks the alias — `cli/src/server-process.ts:118-120`) sets `config.project = false` and discovery skips the upward walk entirely. The value is read once when the server process starts, so exporting it later in a client does nothing to an already-running shared server. Trade-offs: it also disables this repo's own `.opencode/` config and upward project instruction discovery (`instruction-discovery.ts:99`), so it is an opt-in for opening foreign repositories, not a wrapper default.
+Escape hatch for untrusted trees: project config is **closed by default** (2026-10-16). `config.project` is
+false unless `OPENCODE_CONFIG_PROJECT_DISABLE` (alias `OPENCODE_DISABLE_PROJECT_CONFIG`) is set to exactly `0`
+or case-insensitive `false`; every other value, including `yes`, `on`, `""`, and `1`, keeps it closed
+(`cli/src/server-process.ts` `projectConfigEnabled`; embedders go through `server/src/routes.ts`
+`project === true`). The value is read once when the server process starts, so exporting it later in a client
+does nothing to an already-running shared server. Trade-offs: this repo's own `.opencode/` config, upward
+project instruction discovery (`instruction-discovery.ts:99`), and the read-triggered nested `AGENTS.md`
+injection (`tool/plugin/read.ts`) now all require the `=0` opt-in.
 
 Permission rule order (pinned, not a deny guarantee): `Permission.evaluate` scans with `Array.findLast` (`permission.ts:87-97`) — the **last** matching rule wins, and no match asks. Rulesets merge flat in load order, and documents load managedPolicies → wellknown → global → explicit → direct → project → content → managedSettings (`config.ts:280-287`; ADR 0008), so a project document can re-allow what a global one denied, while a managed settings document (loaded last) overrides both; document-level permissions are appended to every agent and then `agents.<id>.permissions` append after (`config/plugin/agent.ts:84-92`, `:121-124`), so write the deny last to beat a broader allow. Saved approvals land after configured rules, but a configured deny short-circuits before they are consulted (`permission.ts:165-177`): a saved allow elevates an `ask` and never overrides a `deny`. Pinned by `packages/core/test/permission-precedence.test.ts`; a failure there means a deliberate decision about the ordering is due — do not "fix" `findLast` without an upstream design change.
 
@@ -816,11 +823,11 @@ substitution test, the registry loader paths, and the tool/MCP registration code
 | MCP `command` servers from a project config spawn when a Location starts with the full server environment (`extendEnv: true`), and MCP tools are model-callable with the default allow ruleset | High | `core/src/mcp/index.ts`, `core/src/mcp/stdio.ts`, `core/src/tool/mcp.ts`, `schema/src/agent.ts` | Policy `integration.use` (no producer here); `disabled: true`. Scope reduced here: the service environment carries no provider key |
 | A session ID that arrives from a fetched `session import` payload could name any path for the goal read/write/delete (traversal), because only the `ses` prefix is checked | High (fixed) | `core/src/plugin/fork/files.ts`, `core/src/session/transfer.ts` | Fixed in this audit |
 | The registry allowlist filtered ids only: a poisoned catalog file, KV cache, or fetch could choose the endpoint and the npm transport | High (fixed) | `core/src/models-dev.ts` (`normalize`) | Fixed in this audit |
-| The TUI's tree-sitter downloader is the one ungated silent egress: rendering a code block of an uncached filetype fetches `.wasm`/`.scm` from `github.com` and `raw.githubusercontent.com` | Medium | `tui/src/parsers-config.ts` (34 URLs), `tui/src/routes/session/index.tsx` | None found; cache at `~/.local/share/opentui/tree-sitter`. Upstream-inherited; this fork's only delta is one HTML injections URL (`5c54ee9c79`) |
+| The TUI's tree-sitter downloader was the one ungated silent egress: rendering a code block of an uncached filetype fetched `.wasm`/`.scm` from `github.com` and `raw.githubusercontent.com` | Medium (fixed) | `tui/src/tree-sitter-assets*.ts`, `tui/src/routes/session/index.tsx` | Fixed 2026-10-16: assets are fetched at build time (pinned URLs + sha256 per asset, build fails on drift), embedded in the binary, and materialized to a local directory at runtime; the resolver throws for any URL without a bundled asset |
 | ripgrep is downloaded from GitHub without a hash check | Medium | `core/src/ripgrep/binary.ts` | Only when `rg` is absent |
-| `OPENCODE_CONFIG_PROJECT_DISABLE=yes\|on\|0\|""` silently leaves project config **enabled**, and a falsy primary overrides a truthy alias | Medium | `cli/src/server-process.ts` (`truthy`) | Documentation only |
+| `OPENCODE_CONFIG_PROJECT_DISABLE=yes\|on\|0\|""` silently left project config **enabled**, and a falsy primary overrode a truthy alias | Medium (fixed) | `cli/src/server-process.ts` (`projectConfigEnabled`) | Fixed 2026-10-16: the gate is closed by default and opens only on an explicit `0`/`false`; every other value, empty included, stays closed, and the CLI wiring is pinned by `cli/test/server-process.test.ts` |
 | `install-korean-ime-fix.sh` clones a third-party fork, builds it, and overwrites the installed binary | Medium | `patches/install-korean-ime-fix.sh` | Opt-in; not referenced anywhere else |
-| `x-opencode-*` session metadata (session id, parent id, project id, client name, UA) is sent to whatever provider is configured, ungated | Low (upstream parity) | `core/src/session/model-request.ts` | None; deliberate per ADR 0004, and the lines are byte-identical to upstream |
+| `x-opencode-*` session metadata (session id, parent id, project id, client name) was sent to whatever provider is configured, ungated | Low (fixed) | `core/src/session/model-request.ts` | Removed 2026-10-16 (upstream's affinity pair, the parent session id, and the User-Agent stay; ADR 0004 amended). One upstream header survives on the stateless `Generate.text` path (`generate.ts:70`, fresh random id, not session-, project-, or host-derived) |
 | The local server accepted any `*.opencode.ai` origin in CORS | Low (fixed) | `server/src/cors.ts` | Fixed in this audit |
 | The onboarding card advertised a free tier and 75+ providers | Low (fixed) | `tui/src/feature-plugins/sidebar/footer.tsx` | Fixed in this audit |
 | The wiring gate pinned 2 of 9 fork plugins, so a merge could drop the fail-closed guard silently | Low (fixed) | `script/sync-upstream.ts` | Fixed in this audit |
@@ -871,14 +878,15 @@ substitution test, the registry loader paths, and the tool/MCP registration code
 - The LSP downloader (fork-owned code, no integrity check) is switched off on this seat with
   `OPENCODE_DISABLE_LSP_DOWNLOAD=1`; a config-declared `command` is not covered by that switch.
 
-### Recommended, awaiting the owner
+### The three recommendations, executed (2026-10-16)
 
-- Drop the flat `x-opencode-*` identity headers from `model-request.ts` (keep upstream's affinity pair and
-  the User-Agent): they exist for the vendor gateway this fork removed, and a privacy-motivated removal
-  needs an ADR note because the hunk is upstream's.
-- Pre-bundle the tree-sitter assets at build time to close the last ungated egress.
-- Consider making the project-config trust gate the default for trees outside the operator's own
-  directories; it is the single switch behind the first eight rows.
+- The flat `x-opencode-*` identity headers are gone from `model-request.ts` (upstream's affinity pair, the
+  parent session id, and the User-Agent stay); ADR 0004 carries the amendment.
+- The tree-sitter assets are fetched at build time (pinned URLs plus a sha256 per asset) and embedded in the
+  binary, so the shipped runtime materializes local files and never reaches GitHub for a parser.
+- The project-config trust gate is closed by default: only an explicit `OPENCODE_CONFIG_PROJECT_DISABLE=0`
+  (or case-insensitive `false`) opens it, the CLI and every embedder route go through the same boolean, and
+  the read-triggered nested `AGENTS.md` injection now consults it too.
 
 ### Second pass: the fork-owned LSP surface (independent OCR cross-check)
 
@@ -916,3 +924,60 @@ pass below; it was built from a clean tree at `cee035bdbb`, and a string unique 
 the pending restart; the seat's launcher keeps `OPENCODE_DISABLE_MODELS_FETCH` and `OPENCODE_DISABLE_LSP_DOWNLOAD`
 set. Round-1 and Round-2 reports, the OCR cross-check output, and the working ledger stay in
 `/tmp/opencode/sec-s*/`, `/tmp/opencode/attack-sec-*/`, and `/tmp/opencode/main/`.
+
+### Third pass: the operator's decisions, the registered items, and the 28 functional findings (2026-10-16)
+
+The operator approved the three recommendations, asked for the four registered items to be fixed as well, and
+asked for the 28 medium findings from the OCR scan of the fork-owned LSP surface to get their own pass.
+
+**Security items, now fixed.**
+
+| Item | Where | What changed |
+| --- | --- | --- |
+| LSP downloads carried no integrity check | `core/src/fork/lsp/server.ts` | GitHub release assets are verified against the API's `digest` (fail closed when it is missing or malformed), the partial file is deleted on mismatch, `Content-Length` is compared, a 512 MiB cap applies while streaming, and a spawn failure is no longer collapsed into a plausible exit 127 |
+| Several servers built from mutable upstream revisions | `servers/managed.ts`, `servers/web.ts`, `servers/native.ts` | ElixirLS and ESLint build a pinned commit, gopls/ZLS/Clangd/LuaLS/TexLab/Tinymist/TerraformLS pin release tags, JDTLS pins a dated snapshot and verifies its published `.sha256`, TerraformLS verifies the publisher's `url_shasums`, KotlinLS takes the per-platform `.vsix` named in the release body and verifies its sidecar, and the npm/gem/dotnet installs pin versions read from registry metadata |
+| `<diagnostics>` interpolated a path and diagnostic messages unescaped | `fork/lsp/diagnostic.ts` | Both interpolations are escaped (attribute and text); the `<reference>` block got the same treatment in the same pass |
+| A truncated download counted as success | `fork/lsp/server.ts` | Covered by the integrity row |
+
+**The 28 medium findings** (dead extension entries, the jdtls temp directory, doc comments that promised
+behaviour the code did not implement, prototype-bearing lookups keyed by catalog data, the sweep arithmetic,
+unbounded spawn waits, the `lsp: false` merge, the zero-copy frame buffer, send-after-close, vendor
+special-casing in the client, the Biome package name, the Prisma exclusion marker, the Cargo marker anchoring,
+and the rest) are fixed or recorded as not-a-defect in the same tree; every fix carries a test.
+
+**Round 2 attacked every axis** (five attackers, each instructed to kill). They killed nothing outright but
+narrowed four claims into real defects, all fixed in this tree:
+
+| Attacker finding | Fix |
+| --- | --- |
+| The new gate opened on any non-truthy value, so `=yes`/`=on`/`=""` silently enabled project config | `projectConfigEnabled` is fail-closed: only `0`/`false` opens it, and the CLI wiring is pinned by a test that reads the options `ServerProcess.run` hands `start` |
+| Reading a file still injected that tree's nested `AGENTS.md` with the gate closed | `tool/plugin/read.ts` consults the same `discovery.project` flag the Location-root path uses |
+| The download-host allowlist only checked the initial URL, so a 302 reached an off-list host | The check runs on the final URL after redirects (unset allowlist unchanged) |
+| The same interpolation class was open in the skill index and seven other model-visible blocks | A shared `fork/escape.ts` escapes every site that renders attacker- or remote-controlled text into a tagged block: `<available_skills>`, `<mcp_instructions>`, `<shell>`, `<subagent>`, `<skill_content>`, `<context>`, the checkpoint summary, the `<env>` block, and instruction-discovery narration |
+
+**Registered, not fixed** (with the reason):
+
+- The JDTLS, Terraform, and Kotlin digests come from the same origin as the artifact (trust-on-first-use over
+  TLS), and KotlinLS still selects the `latest` release — the artifact itself is digest-verified.
+- npm, `go install`, `gem install`, and `dotnet tool install` reach their registries outside the host
+  allowlist; versions are pinned, integrity is the registry's.
+- `ripgrep` is still downloaded without a hash check (only when `rg` is absent), and the Korean IME patch
+  script still clones and builds a third-party fork (opt-in, unreferenced).
+- The tree-sitter manifest keeps three upstream URLs pinned by tag rather than commit; the build verifies every
+  asset's sha256, so a moved tag fails the build instead of injecting content. The materializer accepts an
+  existing cache file by size, which is a local-tamper surface, not a fetch path.
+- `generate.ts:70` still sends `x-opencode-session` on the stateless `Generate.text` path: upstream's own
+  attribution header, carrying a fresh random id that is not derived from the session, project, or host.
+- The escaping class is closed for tagged blocks; raw payload channels (`[User]:`, tool results, shell output
+  bodies) stay raw on purpose, because escaping them would corrupt text the model must read literally.
+
+### State after this pass
+
+The rebuilt binary (230,839,776 bytes, sha256
+`d985704310f557c2108432d96088fb734dc061e5093e1b98e203cfddf7b7d407`) is installed atomically at
+`~/.opencode/bin/opencode`, and the service is restarted onto it as the closing step of this pass, so every fix
+above is live. Full gates on this tree: core 6469 tests (6104 pass / 365 skip / 0 fail), tui 1619 (1617 / 2 / 0),
+cli 313 (309 / 4 / 0), server 86 (85 / 1 / 0), root `bun run check` 35/35. Axis evidence lives in
+`/tmp/opencode/a1-treesitter/`, `a3b-gate/`, `a4a-install/`, `a4ab-install/`, `a4b-proto/`, `a5-pricing/`,
+`a6-escape/`, `a7-escape/`, `a8-escape/`, the five attacker reports under `/tmp/opencode/attack-r2-*/`, and the
+gate logs `/tmp/opencode/main/gate*.txt`.
