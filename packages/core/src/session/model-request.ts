@@ -272,15 +272,14 @@ export const layer = Layer.effect(
         model: model.model,
         http: {
           headers: {
-            "x-opencode-session-id": session.id,
-            ...(session.parentID ? { "x-opencode-parent-session-id": session.parentID } : {}),
+            // Outbound requests carry no fork identity on purpose: the flat x-opencode-* headers
+            // upstream added for its own gateway would expose session and project ids to every
+            // model provider, so this fork drops them. Upstream's affinity pair, the parent
+            // session id, and User-Agent remain.
             "x-session-affinity": affinity,
             "X-Session-Id": affinity,
             ...(session.parentID ? { "x-parent-session-id": session.parentID } : {}),
             "User-Agent": App.useragent(app),
-            "x-opencode-project": session.projectID,
-            "x-opencode-session": affinity,
-            "x-opencode-client": app.name,
           },
         },
         // Cache lineage resolves one hop (the immediate source); no shipped provider enables

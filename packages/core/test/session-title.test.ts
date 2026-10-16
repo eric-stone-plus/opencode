@@ -223,15 +223,13 @@ it.effect("generates a title from the sole user message and renames the session"
     yield* title.generate(sessionID)
 
     expect(requests).toHaveLength(1)
-    expect(requests[0]?.http?.headers).toEqual({
-      "x-opencode-session-id": sessionID,
+    const headers = requests[0]?.http?.headers ?? {}
+    expect(headers).toEqual({
       "x-session-affinity": sessionID,
       "X-Session-Id": sessionID,
       "User-Agent": App.useragent(App.make()),
-      "x-opencode-project": Project.ID.global,
-      "x-opencode-session": sessionID,
-      "x-opencode-client": "opencode",
     })
+    expect(Object.keys(headers).filter((name) => name.startsWith("x-opencode-"))).toEqual([])
     expect(requests[0]?.promptCacheKey).toBe(sessionID)
     expect(requests[0]?.tools).toEqual([])
     expect(requests[0]?.system.map((part) => part.text)).toEqual(["You are a title generator."])
