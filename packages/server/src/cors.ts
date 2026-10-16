@@ -1,7 +1,5 @@
 import { Context } from "effect"
 
-const opencodeOrigin = /^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/
-
 export type CorsOptions = { readonly cors?: ReadonlyArray<string> }
 
 export const CorsConfig = Context.Reference<CorsOptions | undefined>("@opencode/ServerCorsConfig", {
@@ -15,7 +13,9 @@ export function isAllowedCorsOrigin(input: string | undefined, opts?: CorsOption
   if (input.startsWith("oc://renderer")) return true
   if (input === "tauri://localhost" || input === "http://tauri.localhost" || input === "https://tauri.localhost")
     return true
-  if (opencodeOrigin.test(input)) return true
+  // This fork serves no vendor-hosted web app and consumes none (ADR 0007 removed the desktop shell, and the
+  // binary is built with --skip-web-ui), so no vendor origin is trusted: the local server answers loopback and
+  // the origins a config names, and nothing else.
   return opts?.cors?.includes(input) ?? false
 }
 
