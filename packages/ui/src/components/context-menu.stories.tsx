@@ -17,7 +17,7 @@ Use \`ItemLabel\` and \`ItemDescription\` for rich items.
 - Opens on context menu gesture over the trigger element.
 
 ### Accessibility
-- TODO: confirm keyboard and focus behavior from Kobalte.
+- Arrow keys move focus through items and wrap at the ends; Home/End jump to the first or last item; typing letters matches an item label; Enter/Space activate; ArrowRight opens a submenu and ArrowLeft closes it; Escape closes and returns focus to the element focused before opening; Tab is suppressed while open.
 
 ### Theming/tokens
 - Uses \`data-component="context-menu"\` and slot attributes for styling.

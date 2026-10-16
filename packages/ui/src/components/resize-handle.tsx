@@ -1,4 +1,5 @@
 import { splitProps, type JSX } from "solid-js"
+import { useI18n } from "../context/i18n"
 
 export interface ResizeHandleProps extends Omit<JSX.HTMLAttributes<HTMLDivElement>, "onResize"> {
   direction: "horizontal" | "vertical"
@@ -14,6 +15,7 @@ export interface ResizeHandleProps extends Omit<JSX.HTMLAttributes<HTMLDivElemen
 }
 
 export function ResizeHandle(props: ResizeHandleProps) {
+  const i18n = useI18n()
   const [local, rest] = splitProps(props, [
     "direction",
     "edge",
@@ -94,9 +96,47 @@ export function ResizeHandle(props: ResizeHandleProps) {
     document.addEventListener("mouseup", onMouseUp)
   }
 
+  const handleKeyDown = (event: KeyboardEvent) => {
+    const edge = local.edge ?? (local.direction === "vertical" ? "start" : "end")
+    const rtl =
+      local.direction === "horizontal" &&
+      event.currentTarget instanceof Element &&
+      getComputedStyle(event.currentTarget).direction === "rtl"
+    // Positive when the pointer moving forward along the axis grows the panel; the drag path
+    // applies the same mapping to `pos - start`, so both stay in step.
+    const forward = local.direction === "vertical" ? edge === "end" : (edge === "start") === rtl
+    const step = 16
+    const posDelta =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? step
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -step
+          : 0
+    const jump = event.key === "Home" ? local.min : event.key === "End" ? local.max : undefined
+    if (posDelta === 0 && jump === undefined) return
+    event.preventDefault()
+    const next = jump ?? local.size + (forward ? posDelta : -posDelta)
+    const clamped = Math.min(local.max, Math.max(local.min, next))
+    const threshold = local.collapseThreshold ?? 0
+    if (threshold > 0 && clamped < threshold) {
+      local.onCollapseChange?.(true)
+      local.onCollapse?.()
+
+      return
+    }
+    local.onResize(clamped)
+  }
+
   return (
     <div
       {...rest}
+      role="separator"
+      aria-orientation={local.direction === "horizontal" ? "vertical" : "horizontal"}
+      aria-label={props["aria-label"] ?? i18n.t("ui.resizeHandle.separator")}
+      aria-valuemin={local.min}
+      aria-valuemax={local.max}
+      aria-valuenow={local.size}
+      tabIndex={0}
       data-component="resize-handle"
       data-direction={local.direction}
       data-edge={local.edge ?? (local.direction === "vertical" ? "start" : "end")}
@@ -105,6 +145,7 @@ export function ResizeHandle(props: ResizeHandleProps) {
         [local.class ?? ""]: !!local.class,
       }}
       onMouseDown={handleMouseDown}
+      onKeyDown={handleKeyDown}
     />
   )
 }

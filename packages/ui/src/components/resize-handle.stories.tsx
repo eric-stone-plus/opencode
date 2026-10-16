@@ -19,7 +19,7 @@ Use alongside resizable panels and split layouts.
 - Drag updates size and calls \`onResize\` with clamped values.
 
 ### Accessibility
-- TODO: provide keyboard resizing guidance if needed.
+- The handle is a focusable separator (\`role="separator"\` with \`aria-valuenow\` and an \`aria-label\` that defaults to "Resize panel"); arrow keys resize by 16 px in the same direction as the drag, and Home/End jump to the minimum or maximum. No consumer passes \`aria-controls\` yet, so the controlled pane is not named.
 
 ### Theming/tokens
 - Uses \`data-component="resize-handle"\` with direction/edge data attributes.

@@ -19,7 +19,7 @@ Use in user lists and headers.
 - Uses grapheme-aware fallback rendering.
 
 ### Accessibility
-- TODO: provide alt text when using images; currently image is decorative.
+- Images are decorative by default (\`alt=""\`); pass \`alt\` when the avatar is the only representation of the user.
 
 ### Theming/tokens
 - Uses \`data-component="avatar"\` with size and image state attributes.
@@ -60,6 +60,7 @@ export const Basic = {}
 export const WithImage = {
   args: {
     src: "https://placehold.co/80x80/png",
+    alt: "Placeholder avatar",
     fallback: "WW",
   },
 }

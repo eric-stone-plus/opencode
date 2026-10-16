@@ -10,7 +10,8 @@
   }
 
   &:hover::after,
-  &:active::after {
+  &:active::after,
+  &:focus-visible::after {
     opacity: 1;
   }
 

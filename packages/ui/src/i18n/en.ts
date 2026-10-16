@@ -54,6 +54,7 @@ const source = {
   "ui.lineComment.contextPlaceholder": "Add context for this change",
   "ui.lineComment.submit": "Comment",
   "ui.lineComment.cancel": "Cancel",
+  "ui.lineComment.button": "Comment",
 
   "ui.sessionTurn.steps.show": "Show steps",
   "ui.sessionTurn.steps.hide": "Hide steps",
@@ -134,8 +135,11 @@ const source = {
   "ui.list.loading": "Loading",
   "ui.list.empty": "No results",
   "ui.list.clearFilter": "Clear filter",
+  "ui.list.search": "Search",
   "ui.list.emptyWithFilter.prefix": "No results for",
   "ui.list.emptyWithFilter.suffix": "",
+
+  "ui.resizeHandle.separator": "Resize panel",
 
   "ui.fileSearch.placeholder": "Find",
   "ui.fileSearch.previousMatch": "Previous match",

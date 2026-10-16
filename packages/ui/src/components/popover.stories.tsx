@@ -19,7 +19,7 @@ Use for small contextual details; avoid long forms.
 - Closes on outside click or Escape by default.
 
 ### Accessibility
-- TODO: confirm focus management from Kobalte.
+- On open, focus moves to the first tabbable element inside the content (or the content itself); on close it returns to the trigger unless the dismissal was an outside interaction. Focus is not trapped because \`modal\` defaults to false.
 
 ### Theming/tokens
 - Uses \`data-component="popover-content"\` and related slots.

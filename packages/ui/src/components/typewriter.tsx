@@ -52,7 +52,7 @@ export const Typewriter = <T extends ValidComponent = "p">(props: { text?: strin
     <Dynamic component={props.as || "p"} class={props.class}>
       {store.displayed}
       <Show when={store.cursor}>
-        <span classList={{ "blinking-cursor": !store.typing }}>│</span>
+        <span aria-hidden="true" classList={{ "blinking-cursor": !store.typing }}>│</span>
       </Show>
     </Dynamic>
   )

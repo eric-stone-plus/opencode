@@ -20,7 +20,7 @@ Use within panels or popovers where keyboard navigation is expected.
 - Keyboard navigation via arrow keys; Enter selects.
 
 ### Accessibility
-- TODO: confirm ARIA roles for list items and search input.
+- The search input is labeled (its placeholder, else a "Search" fallback). Items are native buttons whose active row is rendered visually (\`data-active\`) only: the active item is not yet exposed to assistive technology. With \`search\` enabled the search field keeps Tab for itself, so Tab moves focus through the rows; without it, Tab moves the active row.
 
 ### Theming/tokens
 - Uses \`data-component="list"\` and data slots for structure.
