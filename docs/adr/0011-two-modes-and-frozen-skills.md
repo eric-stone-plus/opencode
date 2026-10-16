@@ -42,3 +42,21 @@ commit.
 - The mode split is behavior, not decoration: it is pinned by the cards, the
   standing cards, and the mode tests, so a later edit that re-merges the two
   contracts has to delete those pins first.
+
+## Known residuals (round-2 adversarial pass, 2026-10-16)
+
+- **The shell cannot be permission-gated for the seat.** The `edit`/`write`
+  tools are denied on `~/.config/opencode/**` in both resource forms (measured),
+  but `shell` sees raw text, not paths, and the operator's install path stays
+  available on purpose. The guardrail there is this document plus `AGENTS.md`.
+- **A subsession can be given a primary profile by an explicit declaration** (an
+  inline command with `subagent: true`, or the session API). The model's own
+  spawn tool is guarded; the two open paths are in `docs/OPEN-QUESTIONS.md`.
+- **`instruction_entry` / `instruction_state` remain upstream mechanisms**: the
+  instruction ledger records what was loaded per step, which is provenance, not
+  free-form learned state. It is out of scope for this decision, and it is
+  reachable only through the HTTP API.
+- **Fidelity cost of the read context block**: `AGENTS.md` content read into a
+  tool result is entity-escaped (`&lt;` becomes `&amp;lt;`) and capped at 12,000
+  bytes across the whole block, so the deepest file can consume the budget of
+  the files above it.
