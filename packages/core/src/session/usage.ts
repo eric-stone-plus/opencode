@@ -18,7 +18,7 @@ export const tokens = (usage: Usage | undefined): TokenUsage.Info => ({
   },
 })
 
-// TODO(#35765): Use Copilot's reported billed amount once billing has a dedicated typed runtime contract.
+// Costs come from token counts and the catalog: this fork ships no provider that reports a billed amount.
 export function calculateCost(costs: Model.Info["cost"], usage: TokenUsage.Info) {
   const context = usage.input + usage.cache.read + usage.cache.write
   const tier = costs

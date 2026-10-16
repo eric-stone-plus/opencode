@@ -1,5 +1,6 @@
-// TODO: Keep additional network capabilities inside Schema and Protocol as the client grows; /effect must never import
-// Core or Server. Preserve these datatype exports so internal model reorganizations do not require caller migrations.
+// Additional network capabilities stay inside Schema and Protocol; /effect never imports Core or Server
+// (pinned by test/import-boundaries.test.ts). These datatype exports stay stable so internal model
+// reorganizations do not require caller migrations.
 import type { Effect } from "effect"
 import type { OpenCode } from "./client.js"
 

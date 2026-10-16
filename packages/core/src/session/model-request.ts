@@ -283,7 +283,8 @@ export const layer = Layer.effect(
             "x-opencode-client": app.name,
           },
         },
-        // TODO: Persist cache lineage so nested forks reuse the root session's cache key.
+        // Cache lineage resolves one hop (the immediate source); no shipped provider enables
+        // `promptCacheKey`, so nested forks reusing the root key is not observable yet.
         promptCacheKey: /^ses_[0-9a-f]{64}$/.test(affinity) ? affinity.slice(4) : affinity,
         system: shaped.system,
         messages: boundImages(unsupportedParts(shaped.messages, model.capabilities)),
