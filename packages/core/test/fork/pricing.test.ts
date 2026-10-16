@@ -56,9 +56,7 @@ describe("ForkPricing.match", () => {
     const ambiguous = {
       q: { models: { "Model-A": { cost: { input: 1, output: 1 } }, "MODEL-A": { cost: { input: 2, output: 2 } } } },
     }
-    const found = ForkPricing.match(ambiguous, { providerID: "q", modelID: "model-a" })
-    const value = found?.cost.input
-    expect(value === 1 || value === 2).toBe(true)
+    expect(ForkPricing.match(ambiguous, { providerID: "q", modelID: "model-a" })?.source).not.toBe("declared")
   })
 
   test("takes the majority terminal and the median on a tie", () => {

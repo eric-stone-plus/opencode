@@ -43,10 +43,10 @@ const biomeStub = (directory: string) =>
   Effect.all([
     write(path.join(directory, "src", "a.ts")),
     write(
-      path.join(directory, "node_modules", "biome", "package.json"),
-      JSON.stringify({ name: "biome", version: "0.0.0", main: "index.js" }),
+      path.join(directory, "node_modules", "@biomejs", "biome", "package.json"),
+      JSON.stringify({ name: "@biomejs/biome", version: "0.0.0", main: "index.js" }),
     ),
-    write(path.join(directory, "node_modules", "biome", "index.js"), "// stub\n"),
+    write(path.join(directory, "node_modules", "@biomejs", "biome", "index.js"), "// stub\n"),
   ])
 
 describe("downloads disabled", () => {
@@ -124,7 +124,7 @@ describe("downloads disabled", () => {
       Effect.gen(function* () {
         yield* biomeStub(h.directory)
         yield* lsp.touchFile(path.join(h.directory, "src", "a.ts"))
-        expect(h.npm).toContain("biome")
+        expect(h.npm).toContain("@biomejs/biome")
       }),
   )
 

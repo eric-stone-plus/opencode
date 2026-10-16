@@ -166,8 +166,13 @@ export const installArchive = (
   },
 ) =>
   Effect.gen(function* () {
-    const archive = path.join(input.directory ?? ctx.bin, input.name)
-    if (!(yield* ctx.install.download(input.url, archive))) return false
+    // `name` can come straight from a release API response, so only its basename may become a local path;
+    // a `../` inside it would otherwise write outside the binary directory.
+    const archive = path.join(input.directory ?? ctx.bin, path.basename(input.name))
+    if (!(yield* ctx.install.download(input.url, archive))) {
+      yield* ctx.fs.remove(archive, { force: true }).pipe(Effect.ignore)
+      return false
+    }
     const unpacked = yield* ctx.install.extract(archive, input.into ?? input.directory ?? ctx.bin, {
       strip: input.strip,
     })
@@ -275,7 +280,7 @@ export const makeContext = (input: {
                         "-NoProfile",
                         "-NonInteractive",
                         "-Command",
-                        `$global:ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path '${archive}' -DestinationPath '${destination}' -Force`,
+                        `$global:ProgressPreference = 'SilentlyContinue'; Expand-Archive -LiteralPath '${archive.replace(/'/g, "''")}' -DestinationPath '${destination.replace(/'/g, "''")}' -Force`,
                       ],
                       {},
                       "10 minutes",

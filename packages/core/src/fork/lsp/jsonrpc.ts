@@ -46,14 +46,31 @@ const encode = (message: unknown) => {
  * buffered, so a large frame arriving in many chunks is not recopied for each of them.
  */
 export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason: string) => void) => {
-  const state = { chunks: [] as Buffer[], size: 0, frame: undefined as { start: number; length: number } | undefined }
+  const state = {
+    chunks: [] as Buffer[],
+    size: 0,
+    frame: undefined as { start: number; length: number } | undefined,
+    broken: false,
+  }
 
   const joined = () => {
     if (state.chunks.length > 1) state.chunks = [Buffer.concat(state.chunks)]
     return state.chunks[0] ?? Buffer.alloc(0)
   }
 
+  // An overflow leaves the stream desynchronised, and the reader only stops on the next chunk (or when the
+  // server exits, which a hostile one need not do): the decoder drops its buffer and refuses further input
+  // instead of re-parsing the same oversized header while the reader keeps appending to it.
+  const fail = (reason: string) => {
+    state.broken = true
+    state.chunks = []
+    state.size = 0
+    state.frame = undefined
+    onOverflow(reason)
+  }
+
   const push = (chunk: Uint8Array) => {
+    if (state.broken) return
     state.chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))
     state.size += chunk.byteLength
     while (true) {
@@ -61,7 +78,7 @@ export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason
         const all = joined()
         const end = all.indexOf("\r\n\r\n")
         if (end === -1) {
-          if (state.size > MAX_HEADER_BYTES) return onOverflow("LSP header exceeded the size limit")
+          if (state.size > MAX_HEADER_BYTES) return fail("LSP header exceeded the size limit")
           return
         }
         const length = Number(contentLength.exec(all.subarray(0, end).toString("ascii"))?.[1])
@@ -71,7 +88,7 @@ export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason
           state.size = state.chunks[0].length
           continue
         }
-        if (length > MAX_FRAME_BYTES) return onOverflow("LSP frame exceeded the size limit")
+        if (length > MAX_FRAME_BYTES) return fail("LSP frame exceeded the size limit")
         state.frame = { start: end + 4, length }
       }
       if (state.size < state.frame.start + state.frame.length) return

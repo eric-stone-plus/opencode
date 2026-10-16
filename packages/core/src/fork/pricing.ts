@@ -48,7 +48,8 @@ function ownRow(models: Record<string, Row>, modelID: string) {
   if (exact) return { key: modelID, row: exact }
   // On a case miss accept a row equal under toLowerCase, but only when exactly
   // one exists: a case-collision pair must not be guessed between.
-  const [variant] = Object.keys(models).filter((key) => key.toLowerCase() === modelID.toLowerCase())
+  const variants = Object.keys(models).filter((key) => key.toLowerCase() === modelID.toLowerCase())
+  const variant = variants.length === 1 ? variants[0] : undefined
   if (variant === undefined) return undefined
   const row = models[variant]
   return row === undefined ? undefined : { key: variant, row }

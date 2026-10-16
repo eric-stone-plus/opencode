@@ -80,8 +80,9 @@ export const ESLint: LSPServer.Info = {
         yield* ctx.fs.remove(installed, { recursive: true, force: true })
         yield* ctx.fs.rename(path.join(ctx.bin, "vscode-eslint-main"), installed)
         const npm = process.platform === "win32" ? "npm.cmd" : "npm"
-        yield* ctx.install.run(npm, ["install"], { cwd: installed })
-        yield* ctx.install.run(npm, ["run", "compile"], { cwd: installed })
+        if (!(yield* ctx.install.run(npm, ["install"], { cwd: installed }))) return undefined
+        if (!(yield* ctx.install.run(npm, ["run", "compile"], { cwd: installed }))) return undefined
+        if (!(yield* ctx.fs.existsSafe(server))) return undefined
       }
       return LSPServer.launch(root, "node", [server, "--stdio"])
     }),
@@ -134,8 +135,10 @@ export const Biome: LSPServer.Info = {
       const local = path.join(root, "node_modules", ".bin", "biome")
       const found = (yield* ctx.fs.existsSafe(local)) ? local : ctx.which("biome")
       if (found) return LSPServer.launch(root, found, ["lsp-proxy", "--stdio"])
-      if (!LSPServer.resolveModule("biome", root)) return undefined
-      const installed = yield* ctx.install.npm("biome")
+      // The CLI package is scoped: a bare `biome` is a different (typo-squattable) registry entry, and real
+      // projects depend on `@biomejs/biome`, so the guard has to look for that name too.
+      if (!LSPServer.resolveModule("@biomejs/biome", root)) return undefined
+      const installed = yield* ctx.install.npm("@biomejs/biome")
       return installed ? LSPServer.launch(root, installed, ["lsp-proxy", "--stdio"]) : undefined
     }),
 }

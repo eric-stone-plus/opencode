@@ -26,9 +26,10 @@ export const ElixirLS: LSPServer.Info = {
         })
         if (!unpacked) return undefined
         const build = { cwd: release, env: { MIX_ENV: "prod" } }
-        yield* ctx.install.run("mix", ["deps.get"], build)
-        yield* ctx.install.run("mix", ["compile"], build)
-        yield* ctx.install.run("mix", ["elixir_ls.release2", "-o", "release"], build)
+        if (!(yield* ctx.install.run("mix", ["deps.get"], build))) return undefined
+        if (!(yield* ctx.install.run("mix", ["compile"], build))) return undefined
+        if (!(yield* ctx.install.run("mix", ["elixir_ls.release2", "-o", "release"], build))) return undefined
+        if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       }
       return LSPServer.launch(root, binary)
     }),
