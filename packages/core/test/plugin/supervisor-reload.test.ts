@@ -15,6 +15,7 @@ import { Database } from "@opencode/core/database/database"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
 import { Instance } from "@opencode/core/instance"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { LocationServiceMap } from "@opencode/core/location-services"
 import { Location } from "@opencode/core/location"
 import { Plugin } from "@opencode/core/plugin"
@@ -66,6 +67,9 @@ const instances = Layer.effect(
     })
     const bindings: LayerNode.Replacements = [
       Global.node.replace(tempGlobalLayer),
+      // The upstream tests exercise project-side discovery, so they declare the historical
+      // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
       ManagedPolicy.node.replace(Layer.succeed(ManagedPolicy.Service, managed)),
       offlineModels,
       Npm.node.replace(npmLayer),

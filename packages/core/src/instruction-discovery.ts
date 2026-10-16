@@ -1,10 +1,11 @@
 export * as InstructionDiscovery from "./instruction-discovery.js"
 
-import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Context, Effect, Layer, Option, Schema, Types } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { createPatch } from "diff"
 import { Bus } from "./bus.js"
 import { Escape } from "./fork/escape.js"
+import { ProjectTrust } from "./fork/project-trust.js"
 import { Instructions } from "./instructions/index.js"
 import { State } from "./state.js"
 
@@ -41,6 +42,9 @@ export interface Interface extends State.Transformable<Editor> {
   // Move it into plugin config once plugins can consume their own options.
   readonly project: boolean
   readonly global: boolean
+  // The operator's trust declaration, exposed per directory so consumers can ask
+  // `trust.allows(path)` instead of relying on the coarse `project` boolean.
+  readonly trust: ProjectTrust.Interface
   readonly list: () => Effect.Effect<File[] | Instructions.Unavailable>
   readonly load: () => Effect.Effect<Instructions.List>
 }
@@ -96,9 +100,17 @@ export const layer = (options?: Options) =>
         return Array.from(current.files.values())
       })
 
+      // The coarse `project: false` escape forces everything closed; otherwise an absent
+      // ProjectTrust service is closed too, so only a real declaration trusts a directory.
+      const trust =
+        options?.project === false
+          ? ProjectTrust.make()
+          : Option.getOrElse(yield* Effect.serviceOption(ProjectTrust.Service), () => ProjectTrust.make())
+
       return Service.of({
         project: options?.project !== false,
         global: options?.global !== false,
+        trust,
         transform: state.transform,
         reload: state.reload,
         list,
@@ -115,7 +127,9 @@ export function configured(options?: Options) {
   return makeLocationNode({
     service: Service,
     layer: layer(options),
-    deps: [Bus.node],
+    // The trust declaration is a host-global dependency, so a replacement node can carry the
+    // operator's roots into this layer without touching every consumer.
+    deps: [Bus.node, ProjectTrust.node],
   })
 }
 

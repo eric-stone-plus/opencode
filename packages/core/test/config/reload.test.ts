@@ -6,6 +6,7 @@ import { Document, Event, Info } from "@opencode/schema/config"
 import { Agent } from "@opencode/core/agent"
 import { Command } from "@opencode/core/command"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { ConfigAgentPlugin } from "@opencode/core/config/plugin/agent"
 import { ConfigCommandPlugin } from "@opencode/core/config/plugin/command"
 import { ConfigProviderPlugin } from "@opencode/core/config/plugin/provider"
@@ -326,6 +327,9 @@ describe("config plugin reloads", () => {
 function liveConfig(directory: string, native?: Watcher.NativeInterface, options: Config.Options = { global: false }) {
   return AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node, Reference.node, Global.node, Location.node]), [
     Config.node.replace(Config.configured(options)),
+    // The upstream tests exercise project-side discovery, so they declare the historical
+    // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
     Location.node.replace(
       Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make(directory) }))),
     ),

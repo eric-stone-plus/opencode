@@ -12,6 +12,7 @@ import { filesystem } from "@opencode/util/effect/app-node-platform"
 import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Environment } from "@opencode/core/environment/index"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
@@ -157,6 +158,9 @@ const replacements = [
   SessionExecution.node.replace(executionNode),
   Permission.node.replace(permission),
   Global.node.replace(tempGlobalLayer),
+  // The upstream tests exercise project-side discovery, so they declare the historical
+  // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+  ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
   offlineModels,
 ] satisfies LayerNode.Replacements
 const productionIt = testEffect(AppNodeBuilder.build(nodes, replacements))
@@ -167,6 +171,9 @@ const permissionIt = testEffect(
   AppNodeBuilder.build(LayerNode.group([nodes, PermissionSaved.node]), [
     SessionExecution.node.replace(executionNode),
     Global.node.replace(tempGlobalLayer),
+    // The upstream tests exercise project-side discovery, so they declare the historical
+    // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
     PluginSupervisor.node.replace(shellPluginSupervisor),
     offlineModels,
   ]),

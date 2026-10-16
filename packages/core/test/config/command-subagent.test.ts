@@ -6,6 +6,7 @@ import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
 import { TestLLM } from "@opencode/ai/testing"
 import { Agent } from "@opencode/core/agent"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { LayerNodePlatform } from "@opencode/core/effect/app-node-platform"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
@@ -27,6 +28,9 @@ const it = testEffect(
     llmLayer,
     AppNodeBuilder.build(LayerNode.group([Session.node, LocationServiceMap.node]), [
       Global.node.replace(tempGlobalLayer),
+      // The upstream tests exercise project-side discovery, so they declare the historical
+      // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
       offlineModels,
       Watcher.node.replace(Watcher.configured({ enabled: false })),
       LayerNodePlatform.llmClient.replace(llmLayer),

@@ -68,6 +68,7 @@ import { SessionStore } from "@opencode/core/session/store"
 import { Instructions } from "@opencode/core/instructions/index"
 import { InstructionBuiltIns } from "@opencode/core/instructions/builtins"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { SkillInstructions } from "@opencode/core/skill/instructions"
 import { ReferenceInstructions } from "@opencode/core/reference/instructions"
 import { McpInstructions } from "@opencode/core/mcp/instructions"
@@ -366,6 +367,7 @@ const layer = Layer.unwrap(
     const instructionContext = Layer.mock(InstructionDiscovery.Service, {
       project: true,
       global: true,
+      trust: ProjectTrust.make(),
       load: () => Effect.succeed(Instructions.empty),
     })
     const skillInstructions = Layer.mock(SkillInstructions.Service, {

@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Effect, Fiber, Layer, Logger, Schema, Stream } from "effect"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { ConfigDiscovery } from "@opencode/core/config/discovery"
 import { Directory, Document, type Entry, Event, Info } from "@opencode/schema/config"
 import { ConfigModel } from "@opencode/schema/config/model"
@@ -67,6 +68,9 @@ function testLayer(
   )
   const built = AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node]), [
     Config.node.replace(Config.configured({ system: false, ...options })),
+    // The upstream tests exercise project-side discovery, so they declare the historical
+    // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
     Location.node.replace(locationLayer),
     Global.node.replace(Global.layerWith({ config: globalDirectory, home: path.join(globalDirectory, "home") })),
     Credential.node.replace(credentialNode),
@@ -502,6 +506,7 @@ describe("Config", () => {
             Effect.provide(
               AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node]), [
                 Config.node.replace(Config.configured({ system: false })),
+                ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
                 Location.node.replace(
                   Layer.succeed(
                     Location.Service,
@@ -726,6 +731,7 @@ describe("Config", () => {
           const instance = () =>
             AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node, WellKnown.node]), [
               Config.node.replace(Config.configured({ system: false })),
+              ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
               Location.node.replace(
                 Layer.succeed(
                   Location.Service,

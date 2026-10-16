@@ -2,11 +2,12 @@ export * as ConfigDiscovery from "./discovery.js"
 
 import os from "os"
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import { Location } from "../location.js"
 import { AbsolutePath } from "../schema.js"
+import { ProjectTrust } from "../fork/project-trust.js"
 import type { Options } from "../config.js"
 
 export const names = ["opencode.json", "opencode.jsonc"]
@@ -74,10 +75,20 @@ export const discover = Effect.fn("ConfigDiscovery.discover")(function* (options
     (item) => fs.resolve(item),
   )
   const current = yield* fs.resolve(location.directory)
+  // The operator's declaration bounds the walk from above: directories above the nearest
+  // declared root are never consulted, and with no declaration nothing project-side is
+  // discovered at all (an absent ProjectTrust service is closed). `all: true` keeps the
+  // historical unbounded walk, and the coarse `project: false` escape stays closed.
+  const trust = Option.getOrElse(yield* Effect.serviceOption(ProjectTrust.Service), () => ProjectTrust.make())
+  const bound = trust.data.all ? undefined : trust.nearestRoot(current)
   const directories =
-    globalRoots.slice(0, configDirectories.length).includes(current) || options?.project === false
+    globalRoots.slice(0, configDirectories.length).includes(current) ||
+    options?.project === false ||
+    (!trust.data.all && bound === undefined)
       ? []
-      : yield* fs.up({ targets: ["."], start: location.directory }).pipe(Effect.orDie)
+      : yield* fs
+          .up({ targets: ["."], start: current, ...(bound === undefined ? {} : { stop: bound }) })
+          .pipe(Effect.orDie)
   const discovered = yield* Effect.forEach(directories, (directory) =>
     Effect.gen(function* () {
       // Resolve the parent too: missing children must honor symlinked global roots.

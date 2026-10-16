@@ -17,6 +17,7 @@ import { ConfigVariable } from "./config/variable.js"
 import { ConfigNormalize } from "./config/normalize.js"
 import { ConfigDiscovery } from "./config/discovery.js"
 import { ConfigWatch } from "./config/watch.js"
+import { ProjectTrust } from "./fork/project-trust.js"
 import { WellKnown } from "./wellknown.js"
 import { AppProcess } from "@opencode/util/process"
 import { ChildProcess } from "effect/process"
@@ -428,6 +429,10 @@ export function configured(options?: Options) {
       Credential.node,
       WellKnown.node,
       AppProcess.node,
+      // Discovery consults the trust declaration, so a host that replaces the trust node (the
+      // server's options carry it) must be visible here: an undeclared dependency is not wired
+      // into this layer and the service would read as absent (closed).
+      ProjectTrust.node,
     ],
   })
 }

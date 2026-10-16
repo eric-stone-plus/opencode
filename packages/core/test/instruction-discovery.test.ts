@@ -6,6 +6,7 @@ import path from "path"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { ConfigInstructionPlugin } from "@opencode/core/config/plugin/instruction"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
@@ -49,6 +50,9 @@ const instructionLayer = (input: {
       ]),
       [
         Config.node.replace(config),
+        // The upstream tests exercise project-side discovery, so they declare the historical
+        // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+        ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
         InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: input.project })),
         Global.node.replace(
           input.config || input.home

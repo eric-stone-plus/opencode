@@ -36,8 +36,17 @@ export const Plugin = define({
       const start = yield* fs.resolve(location.directory)
       const root = yield* fs.resolve(location.project.directory)
       const home = yield* fs.resolve(global.home)
-      const project = discovery.project && FSUtil.contains(root, start)
-      const stop = FSUtil.contains(home, start) ? home : root
+      // The operator's declaration bounds the project walk from above: a directory above the
+      // nearest declared root is never consulted, and with no declaration nothing project-side
+      // is trusted. The existing privacy cap (home or project root) still applies, so trust can
+      // only narrow the walk, never widen it.
+      const trust = discovery.trust
+      const bound = trust.data.all ? undefined : trust.nearestRoot(start)
+      const trusted = trust.data.all || bound !== undefined
+      const project = discovery.project && trusted && FSUtil.contains(root, start)
+      const fallback = FSUtil.contains(home, start) ? home : root
+      const stop = bound === undefined ? fallback : FSUtil.contains(bound, fallback) ? fallback : bound
+      const patternStop = bound === undefined ? root : FSUtil.contains(bound, root) ? root : bound
       const globalFile = yield* fs.resolve(join(global.config, "AGENTS.md"))
       const loaded: { current: Loaded } = { current: { type: "available", files: [] } }
       const configured: { sources: string[]; remote: Map<string, InstructionDiscovery.File> } = {
@@ -94,7 +103,7 @@ export const Plugin = define({
           return yield* fs
             .scan(path.basename(expanded), { ...options, cwd: path.dirname(expanded) })
             .pipe(Effect.orElseSucceed(() => [] as string[]))
-        if (project) return yield* fs.globUp(expanded, start, root)
+        if (project) return yield* fs.globUp(expanded, start, patternStop)
         if (!discovery.global) return []
         return yield* fs
           .scan(expanded, { ...options, cwd: global.config })

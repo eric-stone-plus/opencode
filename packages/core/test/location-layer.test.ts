@@ -32,6 +32,7 @@ import { LocationActivity } from "@opencode/core/location-activity"
 import { Location } from "@opencode/core/location"
 import { LocationWatcher } from "@opencode/core/filesystem/location-watcher"
 import { Plugin } from "@opencode/core/plugin"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Model } from "@opencode/core/model"
 import { Project } from "@opencode/core/project"
 import { Provider } from "@opencode/core/provider"
@@ -53,6 +54,9 @@ import { Tool } from "../src/tool"
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, LocationServiceMap.node]), [
     Global.node.replace(tempGlobalLayer),
+    // The upstream tests exercise project-side discovery, so they declare the historical
+    // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
     offlineModels,
   ]),
 )
@@ -192,6 +196,7 @@ describe("LocationServiceMap", () => {
           const finalized: number[] = []
           const layer = AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, LocationServiceMap.node]), [
             Global.node.replace(tempGlobalLayer),
+            ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
             offlineModels,
             LocationWatcher.node.replace(
               LocationWatcher.node.mapLayer((layer) =>

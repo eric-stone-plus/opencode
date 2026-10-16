@@ -5,6 +5,7 @@ import { Bus } from "@opencode/core/bus"
 import { Database } from "@opencode/core/database/database"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Watcher } from "@opencode/core/filesystem/watcher"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
@@ -25,6 +26,9 @@ const it = testEffect(
     LayerNode.group([Database.node, Bus.node, SessionProjector.node, Session.node, LocationServiceMap.node]),
     [
       Global.node.replace(tempGlobalLayer),
+      // The upstream tests exercise project-side discovery, so they declare the historical
+      // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
       offlineModels,
       Watcher.node.replace(Watcher.configured({ enabled: false })),
       SessionExecution.node.replace(SessionExecution.noopLayer),

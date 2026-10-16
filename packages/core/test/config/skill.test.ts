@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { TestConsole } from "effect/testing"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Directory, Document, type Entry, Info } from "@opencode/schema/config"
 import { ConfigSkillPlugin, shadowed } from "@opencode/core/config/plugin/skill"
 import { ConfigCompatibilityPlugin } from "@opencode/core/config/plugin/compatibility"
@@ -96,6 +97,9 @@ const discover = (directory: string, global: string) =>
   }).pipe(
     Effect.provide(
       AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node]), [
+        // The upstream tests exercise project-side discovery, so they declare the historical
+        // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+        ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
         Location.node.replace(
           Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make(directory) }))),
         ),

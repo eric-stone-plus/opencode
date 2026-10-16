@@ -13,6 +13,7 @@ import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node
 import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Location } from "@opencode/core/location"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
@@ -150,6 +151,9 @@ const nodes = LayerNode.group([
 const replacements = [
   SessionExecution.node.replace(executionNode),
   Global.node.replace(tempGlobalLayer),
+  // The upstream tests exercise project-side discovery, so they declare the historical
+  // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+  ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
   offlineModels,
 ] satisfies LayerNode.Replacements
 const productionIt = testEffect(AppNodeBuilder.build(nodes, replacements))

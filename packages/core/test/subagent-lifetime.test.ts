@@ -7,6 +7,7 @@ import { Agent } from "@opencode/core/agent"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNodePlatform } from "@opencode/core/effect/app-node-platform"
 import { Watcher } from "@opencode/core/filesystem/watcher"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Job } from "@opencode/core/job"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Model } from "@opencode/core/model"
@@ -30,6 +31,9 @@ const it = testEffect(
     llmLayer,
     AppNodeBuilder.build(LayerNode.group([Session.node, Job.node, LocationServiceMap.node]), [
       Global.node.replace(tempGlobalLayer),
+      // The upstream tests exercise project-side discovery, so they declare the historical
+      // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
       offlineModels,
       Watcher.node.replace(Watcher.configured({ enabled: false })),
       LayerNodePlatform.llmClient.replace(llmLayer),

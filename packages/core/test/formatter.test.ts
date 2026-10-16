@@ -4,6 +4,7 @@ import { describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Bus } from "@opencode/core/bus"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Database } from "@opencode/core/database/database"
 import { LocationServiceMap } from "@opencode/core/location-services"
 import { Plugin } from "@opencode/core/plugin"
@@ -22,7 +23,9 @@ import { testEffect } from "./lib/effect"
 const it = testEffect(
   AppNodeBuilder.build(
     LayerNode.group([Database.node, Bus.node, SdkPlugins.node, LocationServiceMap.node, Global.node]),
-    [Global.node.replace(tempGlobalLayer), offlineModels],
+    // The upstream tests exercise project-side discovery, so they declare the historical
+    // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+    [Global.node.replace(tempGlobalLayer), offlineModels, ProjectTrust.node.replace(ProjectTrust.layer({ all: true }))],
   ),
 )
 type ConfigInput = typeof Info.Encoded

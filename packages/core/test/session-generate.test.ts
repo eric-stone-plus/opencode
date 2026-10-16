@@ -19,6 +19,7 @@ import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Bus } from "@opencode/core/bus"
 import { EventTable } from "@opencode/core/event/sql"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Instance } from "@opencode/core/instance/service"
 import { Instructions } from "@opencode/core/instructions/index"
 import { InstructionBuiltIns } from "@opencode/core/instructions/builtins"
@@ -109,6 +110,7 @@ const builtins = Layer.mock(InstructionBuiltIns.Service, {
 const discovery = Layer.mock(InstructionDiscovery.Service, {
   project: true,
   global: true,
+  trust: ProjectTrust.make(),
   load: () => Effect.succeed(Instructions.empty),
 })
 const skills = Layer.mock(SkillInstructions.Service, { load: () => Effect.succeed(Instructions.empty) })

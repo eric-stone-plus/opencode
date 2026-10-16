@@ -6,6 +6,7 @@ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
 import { Config } from "@opencode/core/config"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { Instance } from "@opencode/core/instance"
 import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { LocationServiceMap } from "@opencode/core/location-services"
@@ -48,6 +49,9 @@ const instances = Layer.effect(
     )
     const bindings: LayerNode.Replacements = [
       Global.node.replace(tempGlobalLayer),
+      // The upstream tests exercise project-side discovery, so they declare the historical
+      // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
       offlineModels,
       LocationServiceMap.node.replace(Layer.succeed(LocationServiceMap.Service, map)),
       Instance.node.replace(
