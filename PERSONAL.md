@@ -759,3 +759,132 @@ verified against the code and that log:
 - Do not add a second long-lived branch “to keep things clean”.
 - After overlay code changes, either run `bun run sync-upstream --continue` (if a merge just finished) or rebuild the binary so `~/.opencode/bin/opencode` matches HEAD.
 - Never read a run that executed zero tests as a pass. `bun test` already refuses a filter that matches nothing (exit 1, both for a missing file and for a `-t` pattern that matches no test), so the silent surface is `bun turbo test --affected`, which exits 0 with “No tasks were executed” when nothing was affected. The unit job now tees its output into `script/affected-guard.ts`, which fails that shape whenever a changed workspace declares a `test` script; when adding a new test-bearing workspace, keep its `test` script declared so the guard can see it.
+
+## 2026-10-16: security audit — is the vendor surface gone, and can a request be routed elsewhere?
+
+Owner question: verify that model support other than DeepSeek (especially the vendor's own free tier) is
+removed from the source; assume the tree is untrusted; attack the assumption that a request cannot be
+silently routed to a host the operator did not configure.
+
+### Method
+
+Seven Round-1 axes (provider catalog, silent egress, vendor free tier, transport integrity, extension
+execution, fork-overlay divergence, built artifact), then five Round-2 attackers whose only assignment was
+to kill a finding, by experiment through the installed binary in isolated `HOME`/XDG/DB roots. Reports:
+`/tmp/opencode/sec-s{1..7}/report.md`, `/tmp/opencode/attack-sec-{1..5}/report.md`. Every high-severity
+verdict below was re-derived here rather than relayed: the binary marker counts, the live socket table, the
+service environment key names, the credential table, the CI state, the redirect test, the well-known
+substitution test, the registry loader paths, and the tool/MCP registration code.
+
+### The answer
+
+- **The vendor gateway is absent from the product and the artifact.** `zen/v1`, `opencode.ai/zen`,
+  `api.opencode.ai`, `opencode.ai/inference`, `OPENCODE_API_KEY`, `big-pickle`, `device/code`,
+  `supports_org_scope` count 0 in the installed binary and in both running `/proc/<pid>/exe` images. What
+  remains under `opencode.ai` is documentation links, `$schema` metadata, the `webfetch` User-Agent, the
+  MCP CIMD `client_id`, and the catalog source below.
+- **The seat talks to exactly one host.** Every external socket held by the opencode process tree points at
+  `58.251.127.101:443` (= `api.deepseek.com`); the rest is loopback. The live credential table has exactly
+  one row (`integration_id = deepseek`), the Console account stores are empty, and no KV key mentions a
+  provider, credential, or well-known source.
+- **The registry is DeepSeek-only and now pinned to DeepSeek's own endpoint and transports.** Before the
+  fix the id allowlist was the only filter, so a poisoned catalog row chose the endpoint (`api`, provider
+  and model level) and the npm package imported to speak to it.
+- **The vendor catalog host is one opt-in away, and this seat opts out.** `https://models.opencode.ai` is
+  the default registry source (`src/models-dev.ts`), gated by `OPENCODE_ENABLE_MODELS_FETCH=1`
+  (`cli/src/server-process.ts`). The seat's launcher and the running service carry
+  `OPENCODE_DISABLE_MODELS_FETCH`, so the fetch never happens here.
+- **CI carries no vendor action that can run.** Exactly `check.yml` and `test.yml` are active, 27 workflows
+  are `disabled_manually`, and the fork has **no repository secrets or variables**; only `check` and `test`
+  have ever run.
+- **No reachable path in the shipped runtime sends anything to a vendor host** (Round-2 verdict, re-derived).
+  The outbound surfaces that are *not* the configured provider are the tree-sitter parser download, the
+  `references` git fetch, and the LSP download — all three below.
+
+### Confirmed findings (post-attack severity)
+
+| Finding | Severity | Where | Gate that exists |
+| --- | --- | --- | --- |
+| A project or ancestor `opencode.jsonc` silently re-points `provider.deepseek.options.baseURL`; the picker keeps showing "DeepSeek" and the operator's stored key follows as a bearer token | High | `core/src/config/plugin/provider.ts` (`settings` merge), `core/src/model-resolver.ts` (`prepareProviderSettings`, credential by provider id) | Only `OPENCODE_CONFIG_PROJECT_DISABLE=1`, and it is off here. Measured end-to-end 2026-10-16 (attacker stub received title + prompt, key included; strace shows no other connect) |
+| The same document accepts `provider.<id>.package` (npm, git, `file://`, tarball URL); the module is imported into the server process and receives the provider options, key included | High | `core/src/provider.ts` (`loadPackage`), `core/src/plugin/provider/sdk-factory.ts` | Same single switch; measured end-to-end |
+| Project-local plugins (`.opencode/plugin/*.ts`) execute in-process with no prompt; the global config dir does the same for every project and is **not** covered by the project-disable switch | High | `core/src/config/plugin/source.ts`, `core/src/plugin/module.ts`, `core/src/managed-policy.ts` | `OPENCODE_CONFIG_PROJECT_DISABLE=1` (project walk only) |
+| Config `plugins: [...]` accepts npm and `git+…` specs: install, import, activate, no prompt. A bare `http(s)://…tgz` spec does **not** install (a `path.resolve` cwd bug kills it before `Npm.add`) | High | `core/src/plugin/module.ts` | Same single switch |
+| A cross-origin 307 keeps non-`Authorization` credential headers: `x-api-key` reaches the redirect target, and the prompt body does too | High (latent) | `packages/ai/src/route/executor.ts` → Effect `FetchHttpClient` (no `redirect` option) | None; the seat's DeepSeek uses `Authorization`, which the runtime strips cross-origin. Reproduced here |
+| `{env:NAME}` in a well-known manifest falls back to `process.env`, so a hostile origin the operator added can exfiltrate any environment variable through the manifest's URL or headers | High (gated) | `core/src/wellknown.ts`, `core/src/config/variable.ts` | Requires `opencode auth login <url>` against that origin; no origin is preloaded. Reproduced here |
+| Opening a tree whose config names `references.<name>.repository` makes the server clone/fetch an arbitrary git remote the first time a client requests that project's Location (project **and** global config), with no host allowlist (https, `git://`, ports, scp-like SSH), and renders `name`/`path`/`description` into the instructions unescaped | High | `core/src/reference.ts`, `core/src/repository-cache.ts`, `core/src/repository.ts`, `core/src/reference/instructions.ts` | `OPENCODE_CONFIG_PROJECT_DISABLE=1` for the project document; a global document is not covered |
+| A config-declared `lsp.<name>.command` spawns that executable (no shell, `cwd` = project dir) on the first LSP touch of a matching file — via the read-tool warmup hook or a diagnostics RPC; with `extensions` unset it attaches to every file read | High where enabled | `core/src/fork/lsp/lsp.ts` (`serversFor`, `clientsFor`, `touchFile`), `core/src/plugin/fork/lsp.ts` (`execute.after`) | `OPENCODE_DISABLE_LSP_DOWNLOAD=1` does **not** cover a configured command (proven by experiment) |
+| MCP `command` servers from a project config spawn when a Location starts with the full server environment (`extendEnv: true`), and MCP tools are model-callable with the default allow ruleset | High | `core/src/mcp/index.ts`, `core/src/mcp/stdio.ts`, `core/src/tool/mcp.ts`, `schema/src/agent.ts` | Policy `integration.use` (no producer here); `disabled: true`. Scope reduced here: the service environment carries no provider key |
+| A session ID that arrives from a fetched `session import` payload could name any path for the goal read/write/delete (traversal), because only the `ses` prefix is checked | High (fixed) | `core/src/plugin/fork/files.ts`, `core/src/session/transfer.ts` | Fixed in this audit |
+| The registry allowlist filtered ids only: a poisoned catalog file, KV cache, or fetch could choose the endpoint and the npm transport | High (fixed) | `core/src/models-dev.ts` (`normalize`) | Fixed in this audit |
+| The TUI's tree-sitter downloader is the one ungated silent egress: rendering a code block of an uncached filetype fetches `.wasm`/`.scm` from `github.com` and `raw.githubusercontent.com` | Medium | `tui/src/parsers-config.ts` (34 URLs), `tui/src/routes/session/index.tsx` | None found; cache at `~/.local/share/opentui/tree-sitter`. Upstream-inherited; this fork's only delta is one HTML injections URL (`5c54ee9c79`) |
+| ripgrep is downloaded from GitHub without a hash check | Medium | `core/src/ripgrep/binary.ts` | Only when `rg` is absent |
+| `OPENCODE_CONFIG_PROJECT_DISABLE=yes\|on\|0\|""` silently leaves project config **enabled**, and a falsy primary overrides a truthy alias | Medium | `cli/src/server-process.ts` (`truthy`) | Documentation only |
+| `install-korean-ime-fix.sh` clones a third-party fork, builds it, and overwrites the installed binary | Medium | `patches/install-korean-ime-fix.sh` | Opt-in; not referenced anywhere else |
+| `x-opencode-*` session metadata (session id, parent id, project id, client name, UA) is sent to whatever provider is configured, ungated | Low (upstream parity) | `core/src/session/model-request.ts` | None; deliberate per ADR 0004, and the lines are byte-identical to upstream |
+| The local server accepted any `*.opencode.ai` origin in CORS | Low (fixed) | `server/src/cors.ts` | Fixed in this audit |
+| The onboarding card advertised a free tier and 75+ providers | Low (fixed) | `tui/src/feature-plugins/sidebar/footer.tsx` | Fixed in this audit |
+| The wiring gate pinned 2 of 9 fork plugins, so a merge could drop the fail-closed guard silently | Low (fixed) | `script/sync-upstream.ts` | Fixed in this audit |
+
+### Killed or reduced by attack
+
+- **The tree-sitter registry is upstream-inherited**, not fork-controlled: `anomalyco` is the upstream
+  vendor org, and the fork's only delta is the HTML injections URL named above.
+- **The remote-tarball leg of the config `plugins` spec is dead**: `PluginModule.load` resolves a bare URL
+  as a cwd-relative path and `import()` fails before `Npm.add`, so the spec's host is never dialled. The
+  `provider.<id>.package` path calls `npm.add` directly and does accept a tarball URL.
+- **The catalog cannot re-point the seat's endpoint** once the config declares `baseURL`: the config
+  overlay wins. Measured both ways.
+- **The MCP environment inheritance cannot reach a provider key here**: the service environment carries
+  none.
+- **The web UI, console, and app surfaces are inert in this build**: the embedded app archive is empty
+  (`02 00 00 00 7b 7d` = `{}`) and the live server answers 404 on `/`.
+- **`x-opencode-*` headers are upstream's**, not a fork addition: the fork's diff on that hunk does not
+  touch them.
+
+### Fixes landed in this audit
+
+| Commit | Change |
+| --- | --- |
+| `b61902b225` | `fix(core)`: the registry keeps a row only when its endpoint is DeepSeek's own and every transport it names is mapped |
+| `c5c4d71d75` | `fix(core)`: the same pin for the per-model `provider.api` |
+| `4f0c6f1e1a` | `fix(tui)`: the onboarding card no longer advertises a free tier or 75+ providers |
+| `31f55f2510` | `fix(server)`: CORS trusts loopback, the desktop schemes and configured origins, not `*.opencode.ai` |
+| `bf56e16077` | `docs(script)`: the removed probe id in the transport gate is explained |
+| `240c233c89` | `docs(core)`: the unprompted reference fetch is recorded as a known limitation |
+| `5bed6973e8` | `fix(core)`: a goal path that would leave the goals directory is refused, with a test for hostile ids |
+| `a25a8ac968` | `docs(core)`: the provider-endpoint and remote-instruction vectors are recorded; the fork's instruction plugin no longer claims URLs are not fetched |
+| `f3b2189906` | `fix(script)`: all nine fork plugins are pinned in the wiring gate, with a case for a dropped one |
+
+### Residuals registered, not fixed
+
+- The first eight rows are the fork's project-trust boundary: opening an untrusted tree is equivalent to
+  running its code. The only switch is `OPENCODE_CONFIG_PROJECT_DISABLE=1`, it is off here, and it is
+  server-scoped — a client-side export does nothing when a healthy service is reused, so the durable form
+  is `opencode service set env OPENCODE_CONFIG_PROJECT_DISABLE 1` plus a restart.
+- The redirect header forwarding lives in Effect's `FetchHttpClient`; `redirect: "manual"` cannot be set
+  globally because the LSP and ripgrep downloads rely on cross-origin redirects.
+- The well-known `{env:}` fallback and the `${ENV_VAR}` interpolation in a config `baseURL` are upstream's
+  variable substitution; narrowing them changes config semantics for every document. For credentials the
+  latter is subsumed by the first row (a project that can set `baseURL` already receives the key).
+- The tree-sitter downloader has no gate upstream; pre-bundling the 34 parser assets is a build change, and
+  the cache is already populated.
+- The LSP downloader (fork-owned code, no integrity check) is switched off on this seat with
+  `OPENCODE_DISABLE_LSP_DOWNLOAD=1`; a config-declared `command` is not covered by that switch.
+
+### Recommended, awaiting the owner
+
+- Drop the flat `x-opencode-*` identity headers from `model-request.ts` (keep upstream's affinity pair and
+  the User-Agent): they exist for the vendor gateway this fork removed, and a privacy-motivated removal
+  needs an ADR note because the hunk is upstream's.
+- Pre-bundle the tree-sitter assets at build time to close the last ungated egress.
+- Consider making the project-config trust gate the default for trees outside the operator's own
+  directories; it is the single switch behind the first eight rows.
+
+### State after this audit
+
+The rebuilt binary (`0.0.0-main-202610160151`, sha256 `3804fac8cd49b232c8ed4308c8c29671d58a29a14ad77ba8aad8fac770355df6`,
+169,104,864 bytes) is installed at `~/.opencode/bin/opencode` and carries every fix above (verified by a string
+unique to the traversal fix). The running service still holds the pre-audit inode, so the fixes take effect at
+the pending restart; the seat's launcher keeps `OPENCODE_DISABLE_MODELS_FETCH` and `OPENCODE_DISABLE_LSP_DOWNLOAD`
+set. Round-1 and Round-2 reports, the OCR cross-check output, and the working ledger stay in
+`/tmp/opencode/sec-s*/`, `/tmp/opencode/attack-sec-*/`, and `/tmp/opencode/main/`.
