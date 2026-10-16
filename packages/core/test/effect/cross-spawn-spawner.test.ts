@@ -407,6 +407,28 @@ describe("cross-spawn spawner", () => {
       }),
     )
 
+    fx.live(
+      "bounds a stubborn process at scope exit without forceKillAfter",
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+
+        const started = Date.now()
+        const pid = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* js('process.on("SIGTERM", () => {}); setInterval(() => {}, 10_000)')
+            // Let the child boot and install its SIGTERM handler, otherwise the default disposition
+            // kills it before the release path is exercised.
+            yield* Effect.sleep("1 seconds")
+            return Number(handle.pid)
+          }),
+        )
+        const closeMs = Date.now() - started - 1_000
+
+        expect(yield* Effect.promise(() => gone(pid))).toBe(true)
+        expect(closeMs).toBeLessThan(6_000)
+      }),
+    )
+
     fx.effect(
       "isRunning reflects process state",
       Effect.gen(function* () {

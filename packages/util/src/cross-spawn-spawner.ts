@@ -1,7 +1,7 @@
 import { isArrayNonEmpty } from "effect/Array"
 import * as NodeSink from "@effect/platform-node/NodeSink"
 import * as NodeStream from "@effect/platform-node/NodeStream"
-import { Deferred, Effect, Exit, FileSystem, Layer, Path, PlatformError, Predicate, Sink, Stream } from "effect"
+import { Deferred, Duration, Effect, Exit, FileSystem, Layer, Path, PlatformError, Predicate, Sink, Stream } from "effect"
 import type { Scope } from "effect"
 import { ChildProcess } from "effect/process"
 import {
@@ -96,6 +96,12 @@ export class KilledBySignal extends Error {
 
 type ExitSignal = Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
 type Spawned = readonly [process: NodeChildProcess.ChildProcess, closed: ExitSignal, exited: ExitSignal]
+
+// A child that ignores the kill signal would otherwise block the scope close forever, which hangs
+// graceful shutdown until the client SIGKILLs the service and orphans every child whose release had
+// not run yet. 3 seconds matches the shell and standalone opt-ins and stays inside the client's
+// ~5 second stop window; an explicit `forceKillAfter` still wins.
+const DEFAULT_FORCE_KILL_AFTER = Duration.seconds(3)
 
 const makeCrossSpawnSpawner = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -400,9 +406,8 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
         Effect.asVoid,
       )
     const attempt = terminate(opts?.killSignal ?? "SIGTERM")
-    if (opts?.forceKillAfter === undefined) return attempt
     return Effect.timeoutOrElse(attempt, {
-      duration: opts.forceKillAfter,
+      duration: opts?.forceKillAfter ?? DEFAULT_FORCE_KILL_AFTER,
       orElse: () => terminate("SIGKILL"),
     })
   }
