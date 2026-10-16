@@ -190,8 +190,22 @@ export const FORK_WIRING_ANCHORS: ReadonlyArray<{ file: string; contains: readon
     contains: ["PluginInternal.guarded.has(plugin.id)"],
   },
   {
+    // Every registered fork plugin, and in the `X.Plugin,` form so the pin covers the `post` entry rather
+    // than just the import. `guarded` is derived from this array (`internal.ts`), so a merge that drops a
+    // plugin from `post` also drops it from the guarded set and no test notices; this anchor is the only
+    // thing that fails.
     file: "packages/core/src/plugin/fork/index.ts",
-    contains: ["ForkChildAuthorityPlugin", "ForkAutonomyPlugin"],
+    contains: [
+      "ForkInstructionsPlugin.Plugin,",
+      "ForkModesPlugin.Plugin,",
+      "ForkAutonomyPlugin.Plugin,",
+      "ForkPricingPlugin.Plugin,",
+      "ForkChildAuthorityPlugin.Plugin,",
+      "ForkEnvelopePlugin.Plugin,",
+      "ForkWriteScopePlugin.Plugin,",
+      "ForkSubagentInterruptPlugin.Plugin,",
+      "ForkGuardPlugin.Plugin,",
+    ],
   },
 ]
 

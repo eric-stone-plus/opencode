@@ -200,7 +200,8 @@ describe("fork wiring anchors", () => {
     "packages/core/src/plugin/internal.ts":
       '...ForkPlugin.post\nexport const guarded\n"block-unsafe-kill"\n"secret-path-guard"\n',
     "packages/core/src/plugin/supervisor.ts": "PluginInternal.guarded.has(plugin.id)\n",
-    "packages/core/src/plugin/fork/index.ts": "ForkChildAuthorityPlugin\nForkAutonomyPlugin\n",
+    "packages/core/src/plugin/fork/index.ts":
+      "ForkInstructionsPlugin.Plugin,\nForkModesPlugin.Plugin,\nForkAutonomyPlugin.Plugin,\nForkPricingPlugin.Plugin,\nForkChildAuthorityPlugin.Plugin,\nForkEnvelopePlugin.Plugin,\nForkWriteScopePlugin.Plugin,\nForkSubagentInterruptPlugin.Plugin,\nForkGuardPlugin.Plugin,\n",
   }
 
   async function wired(files: Record<string, string> = {}) {
@@ -242,6 +243,20 @@ describe("fork wiring anchors", () => {
     await rejects(
       assertForkWiring(await wired({ "packages/core/src/plugin/internal.ts": "...ForkPlugin.post\n" })),
       /internal\.ts no longer contains "export const guarded"/,
+    )
+  })
+
+  // `guarded` is derived from `ForkPlugin.post`, so a merge that drops one entry also drops it from the
+  // guarded set and the core test that iterates the same array still passes; this anchor is the only
+  // check that fails.
+  test("rejects a fork plugin dropped from the post chain", async () => {
+    await rejects(
+      assertForkWiring(
+        await wired({
+          "packages/core/src/plugin/fork/index.ts": "ForkInstructionsPlugin.Plugin,\nForkModesPlugin.Plugin,\n",
+        }),
+      ),
+      /fork\/index\.ts no longer contains "ForkGuardPlugin\.Plugin,"/,
     )
   })
 })
