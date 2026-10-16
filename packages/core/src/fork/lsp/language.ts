@@ -1,3 +1,5 @@
+import path from "path"
+
 /** LSP `languageId` values by file extension (or basename for extensionless files). */
 export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ".abap": "abap",
@@ -27,6 +29,8 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ".ex": "elixir",
   ".exs": "elixir",
   ".erl": "erlang",
+  // ArkTS (OpenHarmony) is a TypeScript superset and no ArkTS server ships here, so a TypeScript server
+  // gives partial analysis; an `ets` languageId would match nothing in this map.
   ".ets": "typescript",
   ".hrl": "erlang",
   ".fs": "fsharp",
@@ -119,4 +123,20 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ".nix": "nix",
   ".typ": "typst",
   ".typc": "typst",
+}
+
+/**
+ * The LSP `languageId` for a file path. The longest matching suffix wins, so the compound keys
+ * (`.html.erb`) are reachable instead of being shadowed by their last segment, and an extensionless
+ * name is looked up whole (`Makefile`). Matching is case-insensitive, matching how editors treat
+ * extensions.
+ */
+export const languageIdFor = (file: string) => {
+  const name = path.basename(file).toLowerCase()
+  const parts = name.split(".")
+  for (let index = 1; index < parts.length; index++) {
+    const language = LANGUAGE_EXTENSIONS[`.${parts.slice(index).join(".")}`]
+    if (language) return language
+  }
+  return LANGUAGE_EXTENSIONS[name] ?? "plaintext"
 }

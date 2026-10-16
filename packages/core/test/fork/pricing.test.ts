@@ -59,6 +59,27 @@ describe("ForkPricing.match", () => {
     expect(ForkPricing.match(ambiguous, { providerID: "q", modelID: "model-a" })?.source).not.toBe("declared")
   })
 
+  test("treats inherited object keys as absent instead of rows", () => {
+    // A canonical chain naming a provider key that lives on Object.prototype must
+    // miss: `registry["constructor"]` is a function whose `models` is undefined,
+    // so indexing it as a provider used to throw a TypeError.
+    const chained = {
+      plan: { models: { m: { cost: { input: 0, output: 0 }, canonical_model_id: "constructor/models" } } },
+    }
+    expect(ForkPricing.match(chained, { providerID: "plan", modelID: "m" })).toBeUndefined()
+    const priced = { flagship: { models: { "model-a": { cost: { input: 1, output: 2 } } } } }
+    // An inherited provider id is absent, so the name still resolves through the cascade.
+    expect(ForkPricing.match(priced, { providerID: "constructor", modelID: "model-a" })).toMatchObject({
+      source: "cross-provider",
+      cost: { input: 1, output: 2 },
+    })
+    expect(ForkPricing.match(priced, { providerID: "__proto__", modelID: "model-a" })).toMatchObject({
+      source: "cross-provider",
+    })
+    // An inherited model id is absent, not a row.
+    expect(ForkPricing.match(priced, { providerID: "flagship", modelID: "toString" })).toBeUndefined()
+  })
+
   test("takes the majority terminal and the median on a tie", () => {
     const votes = {
       one: { models: { m: { cost: { input: 1, output: 1 }, canonical_model_id: "target/m" } } },
@@ -119,6 +140,27 @@ describe("ForkPricing against the bundled catalog", () => {
 })
 
 describe("ForkPricing named table", () => {
+  test("a published table keeps answering for the catalog that produced it", () => {
+    const table = ForkPricing.publishNamed(new Map([["plan-pro", [[entry(1.4, 4.4)]]]]))
+    ForkPricing.publishNamed(new Map([["successor", [[entry(9, 9)]]]]))
+    // The handle pins the catalog that produced it...
+    expect(ForkPricing.namedCost("plan-pro", table)?.[0]).toMatchObject({ input: 1.4, output: 4.4 })
+    expect(ForkPricing.namedCost("successor", table)).toBeUndefined()
+    // ...while a read without one answers from the most recent publish.
+    expect(ForkPricing.namedCost("plan-pro")).toBeUndefined()
+    expect(ForkPricing.namedCost("successor")?.[0]).toMatchObject({ input: 9, output: 9 })
+  })
+
+  test("a later publish replaces the table instead of merging catalogs", () => {
+    ForkPricing.publishNamed(new Map([["first", [[entry(1, 1)]]]]))
+    expect(ForkPricing.namedCost("first")?.[0]).toMatchObject({ input: 1, output: 1 })
+    ForkPricing.publishNamed(new Map([["second", [[entry(2, 2)]]]]))
+    expect(ForkPricing.namedCost("first")).toBeUndefined()
+    expect(ForkPricing.namedCost("second")?.[0]).toMatchObject({ input: 2, output: 2 })
+    ForkPricing.publishNamed(new Map())
+    expect(ForkPricing.namedCost("second")).toBeUndefined()
+  })
+
   test("keeps the median across same-named rows and clones on read", () => {
     ForkPricing.publishNamed(
       new Map([

@@ -44,7 +44,9 @@ export const hasPrice = (cost: Cost | undefined): cost is Cost => {
 }
 
 function ownRow(models: Record<string, Row>, modelID: string) {
-  const exact = models[modelID]
+  // Own properties only: a key such as `constructor` or `toString` would otherwise
+  // resolve to an inherited function and be returned as if it were a row.
+  const exact = Object.hasOwn(models, modelID) ? models[modelID] : undefined
   if (exact) return { key: modelID, row: exact }
   // On a case miss accept a row equal under toLowerCase, but only when exactly
   // one exists: a case-collision pair must not be guessed between.
@@ -58,7 +60,13 @@ function ownRow(models: Record<string, Row>, modelID: string) {
 function lookup(registry: Registry, key: string) {
   const split = key.indexOf("/")
   if (split < 0) return undefined
-  const row = registry[key.slice(0, split)]?.models[key.slice(split + 1)]
+  // Own properties only: inherited keys such as `constructor` are functions without
+  // `models`, so indexing through them used to throw instead of missing.
+  const providerID = key.slice(0, split)
+  const modelID = key.slice(split + 1)
+  const provider = Object.hasOwn(registry, providerID) ? registry[providerID] : undefined
+  const row =
+    provider !== undefined && Object.hasOwn(provider.models, modelID) ? provider.models[modelID] : undefined
   return row === undefined ? undefined : { key, row }
 }
 
@@ -140,7 +148,7 @@ export function match(
   registry: Registry,
   input: { readonly providerID: string; readonly modelID: string },
 ): Match | undefined {
-  const provider = registry[input.providerID]
+  const provider = Object.hasOwn(registry, input.providerID) ? registry[input.providerID] : undefined
   const own = provider === undefined ? undefined : ownRow(provider.models, input.modelID)
   if (own !== undefined && hasPrice(own.row.cost)) return { cost: own.row.cost, source: "declared" }
   if (own !== undefined) {
@@ -194,18 +202,28 @@ const cloneModelCost = (cost: Model.Info["cost"]): Model.Info["cost"] =>
 // declared only in config (a token-plan block naming `qwen3.8-max`) create
 // models the catalog never carried, so they cannot resolve through the cascade
 // themselves; this table answers for them by name once every transform ran.
-const named = new Map<string, Model.Info["cost"]>()
+//
+// Contract: one process-wide table, last publish wins. `publishNamed` replaces
+// the table wholesale and returns the snapshot it built, so a caller holding
+// that handle keeps answering for its own catalog after a later publish; a read
+// without a handle answers from the most recent publish, which is the shipped
+// single-catalog process's path. A refresh changes no-handle answers by design.
+export type NamedTable = ReadonlyMap<string, Model.Info["cost"]>
 
-export const publishNamed = (costs: ReadonlyMap<string, readonly Model.Info["cost"][]>) => {
-  named.clear()
+let current: NamedTable = new Map()
+
+export const publishNamed = (costs: ReadonlyMap<string, readonly Model.Info["cost"][]>): NamedTable => {
+  const table = new Map<string, Model.Info["cost"]>()
   for (const [modelID, rows] of costs) {
     const sorted = [...rows].sort((a, b) => (a[0]?.input ?? 0) - (b[0]?.input ?? 0))
     const median = sorted[Math.floor((sorted.length - 1) / 2)]
-    if (median !== undefined) named.set(modelID.toLowerCase(), cloneModelCost(median))
+    if (median !== undefined) table.set(modelID.toLowerCase(), cloneModelCost(median))
   }
+  current = table
+  return table
 }
 
-export const namedCost = (modelID: string): Model.Info["cost"] | undefined => {
-  const found = named.get(modelID.toLowerCase())
+export const namedCost = (modelID: string, table: NamedTable = current): Model.Info["cost"] | undefined => {
+  const found = table.get(modelID.toLowerCase())
   return found === undefined ? undefined : cloneModelCost(found)
 }

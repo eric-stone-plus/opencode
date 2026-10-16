@@ -48,6 +48,8 @@ export interface Options {
   readonly idleTimeToLive?: Duration.Input
   readonly sweepInterval?: Duration.Input
   readonly maxClients?: number
+  /** How long a use waits for an in-flight server start; see `LSP.Options.spawnWaitTimeout`. */
+  readonly spawnWaitTimeout?: Duration.Input
 }
 
 /**
@@ -126,6 +128,7 @@ export const lspLayer = (options: Options = {}) => {
         idleTimeToLive: options.idleTimeToLive,
         sweepInterval: options.sweepInterval,
         maxClients: options.maxClients,
+        spawnWaitTimeout: options.spawnWaitTimeout,
       }).pipe(Layer.provideMerge(base))
     }),
   )

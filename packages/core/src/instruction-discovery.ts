@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Schema, Types } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { createPatch } from "diff"
 import { Bus } from "./bus.js"
+import { Escape } from "./fork/escape.js"
 import { Instructions } from "./instructions/index.js"
 import { State } from "./state.js"
 
@@ -120,8 +121,11 @@ export function configured(options?: Options) {
 
 export const node = configured()
 
+// Paths come from config (a project can name arbitrary files and remote URLs) and from filesystem
+// names, so each path is single-line text-escaped: it must not forge another narrated line or close
+// a surrounding block. The content is the instruction text by design and stays raw.
 function render(files: ReadonlyArray<File>) {
-  return files.map((file) => `Instructions from: ${file.path}\n${file.content}`).join("\n\n")
+  return files.map((file) => `Instructions from: ${Escape.escapeLine(file.path)}\n${file.content}`).join("\n\n")
 }
 
 function renderUpdate(previous: ReadonlyArray<File>, current: ReadonlyArray<File>) {
@@ -132,12 +136,15 @@ function renderUpdate(previous: ReadonlyArray<File>, current: ReadonlyArray<File
     (before, after) => before.content !== after.content,
   )
   return [
-    ...changes.removed.map((file) => `The instructions from ${file.path} no longer apply.`),
+    ...changes.removed.map((file) => `The instructions from ${Escape.escapeLine(file.path)} no longer apply.`),
     ...changes.added.map((file) => `New instructions apply from:\n${render([file])}`),
     ...changes.changed.map(({ previous: before, current: after }) => {
-      const patch = createPatch(after.path, before.content, after.content, "", "", { context: 3 })
+      const path = Escape.escapeLine(after.path)
+      // The escaped path also enters the patch: a path containing `@@` makes the hunk search land
+      // inside the header, which would otherwise leak the raw path into the visible diff.
+      const patch = createPatch(path, before.content, after.content, "", "", { context: 3 })
       const diff = [
-        `The instructions from ${after.path} changed. Here's the diff:`,
+        `The instructions from ${path} changed. Here's the diff:`,
         "```diff",
         patch.slice(patch.indexOf("@@")).trimEnd(),
         "```",

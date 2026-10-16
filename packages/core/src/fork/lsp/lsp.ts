@@ -1,6 +1,6 @@
 export * as LSP from "./lsp.js"
 
-import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Predicate, Scope } from "effect"
+import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Option, Predicate, Scope } from "effect"
 import { HttpClient } from "effect/http"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -65,7 +65,8 @@ const RESTART_MAX_DELAY_MS = 5 * 60_000
 const RESTART_MAX_FAILURES = 8
 const RESTART_HEALTHY_UPTIME_MS = 10 * 60_000
 const WORKSPACE_SYMBOLS_PER_SERVER = 10
-// The symbol kinds `workspaceSymbol` reports; the rest (fields, parameters, keys, ...) are noise at project scale.
+// The symbol kinds `workspaceSymbol` reports: class, function, method, interface, variable, constant,
+// struct, enum. The rest (fields, parameters, keys, ...) are noise at project scale.
 const WORKSPACE_SYMBOL_KINDS = [5, 12, 6, 11, 13, 14, 23, 10]
 // A location with any session activity is never evicted, so a server started once would live as long as the
 // process does. Left idle this long, a server is stopped and the next use starts it again. The cap bounds a
@@ -73,11 +74,46 @@ const WORKSPACE_SYMBOL_KINDS = [5, 12, 6, 11, 13, 14, 23, 10]
 const IDLE_TIME_TO_LIVE = "15 minutes"
 const REAP_SWEEP_INTERVAL = "1 minute"
 const MAX_CLIENTS = 8
+// A start that never resolves (a hung package manager, a stalled download) must not park every use of that
+// server forever: the wait gives up and the start keeps running, so a later use finds it ready. The bound
+// covers the client's 45 s initialize ceiling plus slow process or package resolution.
+const SPAWN_WAIT_TIMEOUT_MS = 60_000
 
 /** The first failure restarts on next use; later ones wait 2s, 4s, ... up to 5 minutes. */
 export function restartDelay(failures: number) {
   if (failures <= 1) return 0
   return Math.min(RESTART_MAX_DELAY_MS, RESTART_BASE_DELAY_MS * Math.pow(2, failures - 2))
+}
+
+/** One client's sweep-relevant state; `reapVictims` decides from this alone. */
+export interface ReapCandidate {
+  readonly alive: boolean
+  readonly inFlight: number
+  readonly lastUsedAt: number
+}
+
+/**
+ * The clients a sweep stops: every idle client past the TTL first, then the least recently used idle ones
+ * that still push the pool past `maxClients`. TTL victims are already collected, so they must not also
+ * count against the cap, or a sweep cuts the pool below `maxClients`.
+ */
+export const reapVictims = <A extends ReapCandidate>(
+  clients: ReadonlyArray<A>,
+  now: number,
+  idleTimeToLive: number,
+  maxClients: number,
+): A[] => {
+  const alive = clients.filter((client) => client.alive)
+  const victims = alive.filter((client) => client.inFlight === 0 && now - client.lastUsedAt >= idleTimeToLive)
+  const over = alive.length - victims.length - maxClients
+  if (over <= 0) return victims
+  return [
+    ...victims,
+    ...alive
+      .filter((client) => client.inFlight === 0 && !victims.includes(client))
+      .toSorted((a, b) => a.lastUsedAt - b.lastUsedAt)
+      .slice(0, over),
+  ]
 }
 
 type Item = {
@@ -88,35 +124,47 @@ type Item = {
   initialization?: Record<string, unknown>
 }
 
+type Resolved = {
+  readonly includeBuiltIns: boolean
+  readonly servers: Record<string, Item>
+}
+
 /**
  * Documents apply from lowest to highest priority. A boolean resets everything before it; an object
- * merges each named server's supplied fields over the same name from earlier objects. Undefined when no
- * document mentions `lsp`, which leaves language servers off.
+ * merges each named server's supplied fields over the same name from earlier objects. An object after a
+ * `false` keeps that reset: its servers are the complete set, with no built-ins re-seeded. Undefined when
+ * no document mentions `lsp`, which leaves language servers off.
  */
 const resolve = (entries: readonly Entry[]) =>
-  entries.reduce<boolean | Record<string, Item> | undefined>((result, entry) => {
+  entries.reduce<boolean | Resolved | undefined>((result, entry) => {
     if (entry.type !== "document" || entry.info.lsp === undefined) return result
     if (typeof entry.info.lsp === "boolean") return entry.info.lsp
-    return Object.entries(entry.info.lsp).reduce<Record<string, Item>>(
-      (merged, [name, item]) => ({
-        ...merged,
-        [name]: { ...merged[name], ...item, env: { ...merged[name]?.env, ...("env" in item ? item.env : undefined) } },
-      }),
-      typeof result === "object" ? result : {},
-    )
+    const previous = typeof result === "object" ? result : undefined
+    return {
+      includeBuiltIns: previous?.includeBuiltIns ?? result !== false,
+      servers: Object.entries(entry.info.lsp).reduce<Record<string, Item>>(
+        (merged, [name, item]) => ({
+          ...merged,
+          [name]: { ...merged[name], ...item, env: { ...merged[name]?.env, ...("env" in item ? item.env : undefined) } },
+        }),
+        previous?.servers ?? {},
+      ),
+    }
   }, undefined)
 
 const serversFor = (
-  configured: boolean | Record<string, Item> | undefined,
+  configured: boolean | Resolved | undefined,
   flags: LSPServer.Flags,
   available: readonly LSPServer.Info[],
 ) => {
   const servers = new Map<string, LSPServer.Info>()
   if (!configured) return servers
-  available.forEach((server) => servers.set(server.id, server))
-  servers.delete(flags.experimentalTy ? "pyright" : "ty")
+  if (configured === true || configured.includeBuiltIns) {
+    available.forEach((server) => servers.set(server.id, server))
+    servers.delete(flags.experimentalTy ? "pyright" : "ty")
+  }
   if (configured === true) return servers
-  for (const [name, item] of Object.entries(configured)) {
+  for (const [name, item] of Object.entries(configured.servers)) {
     const existing = servers.get(name)
     if (item.disabled) {
       servers.delete(name)
@@ -153,6 +201,8 @@ export interface Options {
   readonly sweepInterval?: Duration.Input
   /** Most servers kept per location; above it the least recently used idle server is stopped. */
   readonly maxClients?: number
+  /** How long a use waits for an in-flight server start before continuing without it; the start keeps running. */
+  readonly spawnWaitTimeout?: Duration.Input
 }
 
 type Running = {
@@ -208,6 +258,7 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
   const idleTimeToLive = Duration.toMillis(options.idleTimeToLive ?? IDLE_TIME_TO_LIVE)
   const sweepInterval = options.sweepInterval ?? REAP_SWEEP_INTERVAL
   const maxClients = options.maxClients ?? MAX_CLIENTS
+  const spawnWaitTimeout = Duration.toMillis(options.spawnWaitTimeout ?? SPAWN_WAIT_TIMEOUT_MS)
   // Roots are canonicalized, so a displayed root is relative to the canonical location as well.
   const displayBase = FSUtil.resolve(location.directory)
 
@@ -236,15 +287,23 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
     if (reconfigured) yield* reset
     if (!configured) yield* Effect.logInfo("all LSPs are disabled")
     else yield* Effect.logInfo("enabled LSP servers", { serverIds: [...state.servers.keys()].join(", ") })
-    if (typeof configured === "object")
+    if (configured && typeof configured === "object") {
+      const builtIn = (name: string) => configured.includeBuiltIns && available.some((server) => server.id === name)
+      const starts = (item: Item) => !item.disabled && (item.command?.length ?? 0) > 0
       yield* Effect.forEach(
-        Object.entries(configured).filter(
-          ([name, item]) => !item.disabled && item.command && !item.extensions && !available.some((server) => server.id === name),
+        Object.entries(configured.servers).filter(
+          ([name, item]) => starts(item) && !item.extensions && !builtIn(name),
         ),
         ([name]) =>
           Effect.logWarning("custom LSP entry has no extensions; it will attach to every file read", { "lsp.server": name }),
         { discard: true },
       )
+      yield* Effect.forEach(
+        Object.entries(configured.servers).filter(([, item]) => !item.disabled && (item.command?.length ?? 0) === 0),
+        ([name]) => Effect.logWarning("custom LSP entry has no command; it is ignored", { "lsp.server": name }),
+        { discard: true },
+      )
+    }
     return state.servers
   })
 
@@ -271,7 +330,9 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
       ),
     )
     if (!handle) {
-      state.broken.add(key)
+      // A server that cannot be resolved (not installed, no command) is retried under the same capped
+      // backoff as one that fails to initialize, instead of being marked broken forever.
+      fail(key, startedAt)
       return undefined
     }
     const clientScope = yield* Scope.fork(scope)
@@ -349,7 +410,11 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
         const retryAt = state.cooldown.get(key)
         if (retryAt !== undefined && Date.now() < retryAt) return undefined
         const inflight = state.spawning.get(key)
-        if (inflight) return yield* Deferred.await(inflight)
+        if (inflight)
+          return yield* Deferred.await(inflight).pipe(
+            Effect.timeoutOption(spawnWaitTimeout),
+            Effect.map(Option.getOrUndefined),
+          )
         const task = yield* Deferred.make<LSPClient.Info | undefined>()
         state.spawning.set(key, task)
         // The start continues if the caller stops waiting (an edit gives up on slow servers), so the next use finds it ready.
@@ -362,7 +427,7 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
           ),
           Effect.forkIn(scope),
         )
-        return yield* Deferred.await(task)
+        return yield* Deferred.await(task).pipe(Effect.timeoutOption(spawnWaitTimeout), Effect.map(Option.getOrUndefined))
       }),
       { concurrency: "unbounded" },
     )
@@ -428,17 +493,13 @@ export const make = Effect.fn("LSP.make")(function* (options: Options = {}) {
   // exceeded while more than `maxClients` clients are all in use.
   const reap = Effect.gen(function* () {
     const now = Date.now()
-    const victims = state.clients.filter(
-      (running) => running.client.alive() && running.inFlight === 0 && now - running.lastUsedAt >= idleTimeToLive,
-    )
-    const over = state.clients.filter((running) => running.client.alive()).length - maxClients
-    if (over > 0)
-      victims.push(
-        ...state.clients
-          .filter((running) => running.client.alive() && running.inFlight === 0 && !victims.includes(running))
-          .toSorted((a, b) => a.lastUsedAt - b.lastUsedAt)
-          .slice(0, over),
-      )
+    const candidates = state.clients.map((running) => ({
+      running,
+      alive: running.client.alive(),
+      inFlight: running.inFlight,
+      lastUsedAt: running.lastUsedAt,
+    }))
+    const victims = reapVictims(candidates, now, idleTimeToLive, maxClients).map((candidate) => candidate.running)
     if (victims.length === 0) return
     const reaped = new Set(victims)
     state.clients = state.clients.filter((running) => !reaped.has(running))

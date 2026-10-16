@@ -273,7 +273,12 @@ describe("Session.shell", () => {
           truncated: false,
         })
         expect(completion.payload.description).toBeUndefined()
-        expect(completion.payload.text).toContain(command)
+        // The command sits in an attribute of the <shell> block and is escaped there, so what the
+        // model sees is the escaped form; the block must still carry exactly one open/close pair.
+        const escaped = command.replaceAll("&", "&amp;").replaceAll(">", "&gt;")
+        expect(completion.payload.text).toContain(escaped)
+        expect(completion.payload.text.match(/<shell /g)).toHaveLength(1)
+        expect(completion.payload.text.match(/<\/shell>/g)).toHaveLength(1)
         expect(completion.payload.text).toContain("user output")
         expect(completion.payload.text).toContain("user error")
         if (exit === 0) expect(completion.payload.text).not.toContain("Exited with code")

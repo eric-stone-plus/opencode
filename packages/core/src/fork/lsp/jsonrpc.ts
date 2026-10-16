@@ -6,6 +6,7 @@ import { Deferred, Effect, Option, Schema } from "effect"
 export const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const MAX_HEADER_BYTES = 8 * 1024
 const METHOD_NOT_FOUND = -32601
+const INTERNAL_ERROR = -32603
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 export class RequestError extends Schema.TaggedError<RequestError>()("LSP.RequestError", {
@@ -29,8 +30,9 @@ export interface Connection {
   readonly notify: (method: string, params?: unknown) => void
   /** Handlers run synchronously on the reader and must not throw. One handler per method. */
   readonly onNotification: (method: string, handler: (params: unknown) => void) => void
-  /** The returned value is sent as the response result. One handler per method. */
+  /** The returned value is sent as the response result; it must be synchronous and JSON-serializable. */
   readonly onRequest: (method: string, handler: (params: unknown) => unknown) => void
+  /** Ignored once the connection is closed. */
   readonly feed: (chunk: Uint8Array) => void
   /** Fails every pending request and refuses new ones with `reason`. */
   readonly close: (reason: string) => void
@@ -43,7 +45,8 @@ const encode = (message: unknown) => {
 
 /**
  * Incremental `Content-Length` frame splitter. Chunks are only joined once a complete frame is
- * buffered, so a large frame arriving in many chunks is not recopied for each of them.
+ * buffered, so a large frame arriving in many chunks is not recopied for each of them. Each chunk is
+ * copied on receipt, so the caller owns its memory again the moment `feed` returns.
  */
 export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason: string) => void) => {
   const state = {
@@ -71,7 +74,7 @@ export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason
 
   const push = (chunk: Uint8Array) => {
     if (state.broken) return
-    state.chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))
+    state.chunks.push(Buffer.from(chunk))
     state.size += chunk.byteLength
     while (true) {
       if (state.frame === undefined) {
@@ -81,6 +84,8 @@ export const makeDecoder = (onFrame: (body: string) => void, onOverflow: (reason
           if (state.size > MAX_HEADER_BYTES) return fail("LSP header exceeded the size limit")
           return
         }
+        // The chunked check above cannot see a whole oversized header that arrives in one chunk.
+        if (end > MAX_HEADER_BYTES) return fail("LSP header exceeded the size limit")
         const length = Number(contentLength.exec(all.subarray(0, end).toString("ascii"))?.[1])
         if (!Number.isFinite(length)) {
           // A header block without a usable length cannot be framed; resynchronise after it.
@@ -110,7 +115,8 @@ export interface Options {
   readonly write: (frame: Uint8Array) => void
   /** Names the peer in error messages. */
   readonly label: string
-  readonly onOverflow?: (reason: string) => void
+  /** Called once when the decoder refuses the stream; the connection owner decides what dying means. */
+  readonly onOverflow: (reason: string) => void
 }
 
 export const make = (options: Options): Connection => {
@@ -119,20 +125,46 @@ export const make = (options: Options): Connection => {
   const requests = new Map<string, (params: unknown) => unknown>()
   const state = { id: 0, closed: undefined as string | undefined }
 
-  const send = (message: Record<string, unknown>) => options.write(encode({ jsonrpc: "2.0", ...message }))
+  const send = (message: Record<string, unknown>) => {
+    if (state.closed !== undefined) return
+    options.write(encode({ jsonrpc: "2.0", ...message }))
+  }
 
   const dispatch = (body: string) => {
     const message = Option.getOrUndefined(decodeMessage(body))
     if (!message) return
     if (message.method !== undefined) {
-      if (message.id === undefined) return notifications.get(message.method)?.(message.params)
+      if (message.id === undefined) {
+        // A notification has no reply; swallowing a throwing handler keeps the frames buffered behind
+        // it alive instead of abandoning them on the reader.
+        try {
+          notifications.get(message.method)?.(message.params)
+        } catch {
+          return
+        }
+        return
+      }
       const handler = requests.get(message.method)
       if (!handler)
         return send({
           id: message.id,
           error: { code: METHOD_NOT_FOUND, message: `Method not found: ${message.method}` },
         })
-      return send({ id: message.id, result: handler(message.params) ?? null })
+      let result: unknown
+      try {
+        result = handler(message.params)
+        // A promise would serialize as `{}` and lie to the server about the result.
+        if (result instanceof Promise) throw new Error("handler returned a promise")
+      } catch (error) {
+        return send({
+          id: message.id,
+          error: {
+            code: INTERNAL_ERROR,
+            message: `Handler for ${message.method} failed: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        })
+      }
+      return send({ id: message.id, result: result ?? null })
     }
     if (message.id === undefined) return
     const entry = pending.get(message.id)
@@ -145,6 +177,8 @@ export const make = (options: Options): Connection => {
         : Effect.succeed(message.result ?? null),
     )
   }
+
+  const decoder = makeDecoder(dispatch, options.onOverflow)
 
   const request: Connection["request"] = (method, params, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) =>
     Effect.gen(function* () {
@@ -184,7 +218,12 @@ export const make = (options: Options): Connection => {
     onRequest: (method, handler) => {
       requests.set(method, handler)
     },
-    feed: makeDecoder(dispatch, options.onOverflow ?? (() => {})),
+    // A closed connection is over: frames arriving after it are the peer's (or a pooled reader's)
+    // leftovers and must not reach handlers or the wire.
+    feed: (chunk) => {
+      if (state.closed !== undefined) return
+      decoder(chunk)
+    },
     close: (reason) => {
       if (state.closed !== undefined) return
       state.closed = reason

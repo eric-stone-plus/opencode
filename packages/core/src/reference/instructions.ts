@@ -3,6 +3,9 @@ export * as ReferenceInstructions from "./instructions.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Reference } from "../reference.js"
+// Reference metadata comes from a project's own config or a fetched remote, so `&`, `<`, `>` become
+// entities: a hostile name, path, or description must not close the block or forge another entry.
+import { Escape } from "../fork/escape.js"
 import { Instructions } from "../instructions/index.js"
 
 const Summary = Schema.Struct({
@@ -14,9 +17,11 @@ const Summary = Schema.Struct({
 const entries = (references: ReadonlyArray<typeof Summary.Type>) =>
   references.flatMap((reference) => [
     "  <reference>",
-    `    <name>${reference.name}</name>`,
-    `    <path>${reference.path}</path>`,
-    ...(reference.description === undefined ? [] : [`    <description>${reference.description}</description>`]),
+    `    <name>${Escape.escapeText(reference.name)}</name>`,
+    `    <path>${Escape.escapeText(reference.path)}</path>`,
+    ...(reference.description === undefined
+      ? []
+      : [`    <description>${Escape.escapeText(reference.description)}</description>`]),
     "  </reference>",
   ])
 
@@ -48,7 +53,7 @@ const update = (previous: ReadonlyArray<typeof Summary.Type>, current: ReadonlyA
     ...(diff.removed.length === 0
       ? []
       : [
-          `The following project references are no longer available and must not be used: ${diff.removed.map((reference) => reference.name).join(", ")}.`,
+          `The following project references are no longer available and must not be used: ${diff.removed.map((reference) => Escape.escapeText(reference.name)).join(", ")}.`,
         ]),
   ].join("\n")
 }

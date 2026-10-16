@@ -6,6 +6,7 @@ import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Predicate, Schema } from "effect"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
+import { Escape } from "../../fork/escape.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
 import { Permission } from "../../permission.js"
@@ -259,7 +260,7 @@ export const Plugin = {
                 output,
                 content:
                   output.status === "completed"
-                    ? `<subagent sessionID="${output.sessionID}" state="completed">\n${output.output}\n</subagent>`
+                    ? `<subagent sessionID="${output.sessionID}" state="completed">\n${Escape.escapeText(output.output)}\n</subagent>`
                     : output.output,
                 metadata: { sessionID: output.sessionID, status: output.status },
               })),

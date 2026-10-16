@@ -3,6 +3,7 @@ export * as InstructionBuiltIns from "./builtins.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
 import { Global } from "@opencode/util/global"
+import { Escape } from "../fork/escape.js"
 import { Location } from "../location.js"
 import { Instructions } from "./index.js"
 
@@ -36,8 +37,10 @@ const layer = Layer.effect(
               read: Effect.sync(() =>
                 [
                   "<env>",
-                  `  Working directory: ${location.directory}`,
-                  `  Workspace root folder: ${location.project.directory}`,
+                  // The directory strings are local paths whose components an untrusted tree can name, so
+                  // each value stays on its own line and cannot close the block or forge a sibling line.
+                  `  Working directory: ${Escape.escapeLine(location.directory)}`,
+                  `  Workspace root folder: ${Escape.escapeLine(location.project.directory)}`,
                   `  Is directory a git repo: ${location.vcs?.type === "git" ? "yes" : "no"}`,
                   `  Platform: ${process.platform}`,
                   `  Prefer ${global.tmp} over generic system temporary directories such as /tmp; it is pre-created and approved for external access.`,

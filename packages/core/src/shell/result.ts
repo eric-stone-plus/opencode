@@ -1,6 +1,7 @@
 export * as ShellResult from "./result.js"
 
 import type { Shell } from "@opencode/schema/shell"
+import { Escape } from "../fork/escape.js"
 
 export type Result = {
   info: Shell.Info
@@ -50,8 +51,10 @@ export function notification(input: {
   text: string
   output?: Output
 }) {
+  // The command is caller-supplied and the text is captured process output, so both are untrusted:
+  // the command is attribute-escaped and the output text-escaped, or either can close the block.
   return {
-    text: `<shell id="${input.jobID ?? input.shellID}" state="${input.state}" command="${input.command}">\n${input.text}\n</shell>`,
+    text: `<shell id="${input.jobID ?? input.shellID}" state="${input.state}" command="${Escape.escapeAttribute(input.command)}">\n${Escape.escapeText(input.text)}\n</shell>`,
     metadata: {
       source: "shell",
       shellID: input.shellID,

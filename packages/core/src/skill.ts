@@ -6,6 +6,7 @@ import path from "path"
 import { Context, Effect, Layer, Types } from "effect"
 import { Skill } from "@opencode/schema/skill"
 import { Bus } from "./bus.js"
+import { Escape } from "./fork/escape.js"
 import { Permission } from "./permission.js"
 import { State } from "./state.js"
 
@@ -35,8 +36,10 @@ export const available = (skills: ReadonlyArray<Info>, permissions: Permission.R
 
 export const toModelOutput = (skill: Info, files: ReadonlyArray<string>) => {
   const directory = path.dirname(skill.path)
+  // The name comes from frontmatter and the files from a directory scan, so both are untrusted: the
+  // name is attribute-escaped and each path text-escaped, or either can restructure the block.
   return [
-    `<skill_content name="${skill.name}">`,
+    `<skill_content name="${Escape.escapeAttribute(skill.name)}">`,
     `# Skill: ${skill.name}`,
     "",
     skill.content.trim(),
@@ -46,7 +49,7 @@ export const toModelOutput = (skill: Info, files: ReadonlyArray<string>) => {
     "Note: file list is sampled.",
     "",
     "<skill_files>",
-    ...files.map((file) => `<file>${file}</file>`),
+    ...files.map((file) => `<file>${Escape.escapeText(file)}</file>`),
     "</skill_files>",
     "</skill_content>",
   ].join("\n")

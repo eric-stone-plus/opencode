@@ -2,6 +2,7 @@ export * as SkillInstructions from "./instructions.js"
 
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Layer, Schema } from "effect"
+import { Escape } from "../fork/escape.js"
 import { Permission } from "../permission.js"
 import { Skill } from "../skill.js"
 import { Instructions } from "../instructions/index.js"
@@ -27,16 +28,23 @@ export const INDEX_BUDGET = 12_000
 /** Space held back for the notes below, so a listing that fits the budget stays inside it. */
 const NOTE_RESERVE = 256
 
+// Skill fields come from project, config, and fetched URL sources, so `&`, `<`, `>` become entities:
+// a hostile id, name, or description must not close the index or forge another entry.
 const entry = (skill: Summary, detail: boolean) =>
   detail
     ? [
         "  <skill>",
-        `    <id>${skill.id}</id>`,
-        `    <name>${skill.name}</name>`,
-        `    <description>${skill.description}</description>`,
+        `    <id>${Escape.escapeText(skill.id)}</id>`,
+        `    <name>${Escape.escapeText(skill.name)}</name>`,
+        `    <description>${Escape.escapeText(skill.description)}</description>`,
         "  </skill>",
       ]
-    : ["  <skill>", `    <id>${skill.id}</id>`, `    <name>${skill.name}</name>`, "  </skill>"]
+    : [
+        "  <skill>",
+        `    <id>${Escape.escapeText(skill.id)}</id>`,
+        `    <name>${Escape.escapeText(skill.name)}</name>`,
+        "  </skill>",
+      ]
 
 const entries = (skills: ReadonlyArray<Summary>) => skills.flatMap((skill) => entry(skill, true))
 
@@ -123,7 +131,7 @@ const update = (previous: ReadonlyArray<Summary>, current: ReadonlyArray<Summary
     ...(diff.removed.length === 0
       ? []
       : [
-          `The following skill IDs are no longer available and must not be used: ${diff.removed.map((skill) => skill.id).join(", ")}.`,
+          `The following skill IDs are no longer available and must not be used: ${diff.removed.map((skill) => Escape.escapeText(skill.id)).join(", ")}.`,
         ]),
   ].join("\n")
 }

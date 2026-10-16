@@ -9,7 +9,7 @@ import { FSUtil } from "@opencode/util/fs-util"
 import { Environment } from "../../environment/index.js"
 import { LSPDiagnostic } from "./diagnostic.js"
 import { JsonRpc } from "./jsonrpc.js"
-import { LANGUAGE_EXTENSIONS } from "./language.js"
+import { languageIdFor } from "./language.js"
 import type { LSPServer } from "./server.js"
 
 const DIAGNOSTICS_DEBOUNCE_MS = 150
@@ -192,12 +192,19 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
   const pushDiagnostics = new Map<string, Diagnostic[]>()
   const pullDiagnostics = new Map<string, Diagnostic[]>()
   const published = new Map<string, { at: number; version?: number }>()
+  // Files whose server has not published since the last didOpen/didChange: the first publish of a cycle
+  // is the syntactic one for servers that push twice, and must not wake a wait (see the publish handler).
+  const awaitingPublish = new Set<string>()
+  // Monotonic id per pull batch: slower pulls from an earlier wait keep running after its wait returns,
+  // and must not replace the answer a newer wait already wrote for the same file.
+  let pullWaits = 0
+  const pullWrittenBy = new Map<string, number>()
   const diagnosticRegistrations = new Map<string, typeof Registration.Type>()
   const registrationListeners = new Set<() => void>()
   const diagnosticListeners = new Set<(file: string) => void>()
   // Insertion order doubles as LRU order: touching a document re-inserts it.
   const files = new Map<string, { version: number; text: string }>()
-  const capabilities = { syncKind: undefined as number | undefined, staticPull: false }
+  const capabilities = { syncKind: undefined as number | undefined, staticPull: false, staticWorkspacePull: false }
 
   const mergedDiagnostics = (file: string) => dedupe([...(pushDiagnostics.get(file) ?? []), ...(pullDiagnostics.get(file) ?? [])])
 
@@ -207,13 +214,12 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
     if (!publish || !file) return
     published.set(file, { at: Date.now(), version: publish.version })
     const diagnostics = LSPDiagnostic.parse(publish.diagnostics)
-    // TypeScript's server pushes syntactic findings first and semantic ones in a second publish. The
-    // first is stored without waking waiters, so a wait only completes on the publish that carries the semantic errors.
-    if (serverID === "typescript" && !pushDiagnostics.has(file)) {
-      pushDiagnostics.set(file, diagnostics)
-      return
-    }
+    // TypeScript's server pushes syntactic findings first and semantic ones in a second publish, once per
+    // document change. The first publish of a cycle is stored without waking waiters, so a wait only
+    // completes on the publish that carries the semantic errors.
+    const firstOfCycle = awaitingPublish.delete(file)
     pushDiagnostics.set(file, diagnostics)
+    if (serverID === "typescript" && firstOfCycle) return
     for (const listener of diagnosticListeners) listener(file)
   })
   connection.onRequest("window/workDoneProgress/create", () => null)
@@ -310,6 +316,10 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
   const sync = advertised?.textDocumentSync
   capabilities.syncKind = typeof sync === "number" ? sync : sync?.change
   capabilities.staticPull = Boolean(advertised?.diagnosticProvider)
+  // A static provider that advertises `workspaceDiagnostics` also answers `workspace/diagnostic` without registration.
+  const provider = advertised?.diagnosticProvider
+  capabilities.staticWorkspacePull =
+    Predicate.isObject(provider) && "workspaceDiagnostics" in provider && provider.workspaceDiagnostics === true
   connection.notify("initialized", {})
   if (options.handle.initialization) connection.notify("workspace/didChangeConfiguration", { settings: options.handle.initialization })
 
@@ -321,6 +331,7 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
       pushDiagnostics.delete(oldest)
       pullDiagnostics.delete(oldest)
       published.delete(oldest)
+      awaitingPublish.delete(oldest)
       connection.notify("textDocument/didClose", { textDocument: { uri: pathToFileURL(oldest).href } })
     }
   })
@@ -342,6 +353,7 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
       const next = document.version + 1
       files.delete(target)
       files.set(target, { version: next, text })
+      awaitingPublish.add(target)
       connection.notify("textDocument/didChange", {
         textDocument: { uri, version: next },
         contentChanges:
@@ -354,15 +366,16 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
     connection.notify("workspace/didChangeWatchedFiles", { changes: [{ uri, type: FILE_CHANGE_CREATED }] })
     pushDiagnostics.delete(target)
     pullDiagnostics.delete(target)
+    awaitingPublish.add(target)
     connection.notify("textDocument/didOpen", {
-      textDocument: { uri, languageId: LANGUAGE_EXTENSIONS[path.extname(target)] ?? "plaintext", version: 0, text },
+      textDocument: { uri, languageId: languageIdFor(target), version: 0, text },
     })
     files.set(target, { version: 0, text })
     yield* evictDocuments
     return 0
   })
 
-  const mergeResults = (file: string, results: PullResult[]) => {
+  const mergeResults = (file: string, results: PullResult[], wait: number) => {
     const handled = results.some((result) => result.handled)
     const matched = results.some((result) => result.matched)
     if (!handled) return { handled: false, matched: false }
@@ -370,7 +383,11 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
     for (const result of results)
       for (const [target, items] of result.byFile) merged.set(target, [...(merged.get(target) ?? []), ...items])
     if (matched && !merged.has(file)) merged.set(file, [])
-    for (const [target, items] of merged) pullDiagnostics.set(target, dedupe(items))
+    for (const [target, items] of merged) {
+      if ((pullWrittenBy.get(target) ?? 0) > wait) continue
+      pullWrittenBy.set(target, wait)
+      pullDiagnostics.set(target, dedupe(items))
+    }
     return { handled, matched }
   }
 
@@ -434,7 +451,7 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
     )
     return {
       identifiers: [...new Set(registrations.flatMap((registration) => registration.registerOptions?.identifier ?? []))],
-      supported: registrations.length > 0,
+      supported: capabilities.staticWorkspacePull || registrations.length > 0,
     }
   }
 
@@ -442,11 +459,20 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
   // current file ends the wait. Slower pulls keep merging in the background; never sequence them per
   // identifier and never add a settle delay after a match.
   const requestDocumentDiagnostics = Effect.fnUntraced(function* (file: string) {
+    const wait = ++pullWaits
     const pulls = documentPullState()
     if (!pulls.supported) return { handled: false, matched: false }
     const requests = [requestDiagnosticReport(file), ...pulls.identifiers.map((identifier) => requestDiagnosticReport(file, identifier))]
     const results: PullResult[] = []
     const finished = yield* Deferred.make<{ handled: boolean; matched: boolean }>()
+    let outstanding = requests.length
+    // Every pull exits even when the client scope is closed under it (interrupted), so the wait must not
+    // stay parked on a deferred no pull can complete.
+    const settle = () => {
+      outstanding--
+      if (outstanding > 0) return
+      Deferred.doneUnsafe(finished, Effect.succeed(mergeResults(file, results, wait)))
+    }
     // Forked into the client's scope, not the wait's: the slower pulls keep merging after the wait returns.
     yield* Effect.forEach(
       requests,
@@ -455,11 +481,12 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
           Effect.tap((result) =>
             Effect.sync(() => {
               results.push(result)
-              const merged = mergeResults(file, results)
+              const merged = mergeResults(file, results, wait)
               const current = results.some((item) => (item.byFile.get(file)?.length ?? 0) > 0)
-              if (current || results.length === requests.length) Deferred.doneUnsafe(finished, Effect.succeed(merged))
+              if (current) Deferred.doneUnsafe(finished, Effect.succeed(merged))
             }),
           ),
+          Effect.onExit(() => Effect.sync(settle)),
           Effect.forkIn(scope),
         ),
       { discard: true },
@@ -468,6 +495,7 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
   })
 
   const requestFullDiagnostics = Effect.fnUntraced(function* (file: string) {
+    const wait = ++pullWaits
     const documents = documentPullState()
     const workspace = workspacePullState()
     if (!documents.supported && !workspace.supported) return { handled: false, matched: false }
@@ -482,6 +510,7 @@ export const create = Effect.fn("LSPClient.create")(function* (options: Options)
         ],
         { concurrency: "unbounded" },
       ),
+      wait,
     )
   })
 

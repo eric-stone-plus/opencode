@@ -124,16 +124,42 @@ describe("LSP service spawning", () => {
       }),
   )
 
-  const broken = spy("typescript", [".ts"])
-  test("a server that is not installed is not asked again", { entries: [lspDocument(true)], builtIns: [broken.server] }, (lsp, h) =>
-    Effect.gen(function* () {
-      const file = path.join(h.directory, "a.ts")
-      yield* lsp.touchFile(file)
-      yield* lsp.touchFile(file)
-      yield* lsp.hover({ file, line: 0, character: 0 })
-      expect(broken.calls).toHaveLength(1)
-      expect(yield* lsp.hasClients(file)).toBe(false)
-    }),
+  const unresolved = spy("typescript", [".ts"])
+  test(
+    "a server that fails to resolve is retried once, then backs off instead of respawning in a loop",
+    { entries: [lspDocument(true)], builtIns: [unresolved.server] },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const file = path.join(h.directory, "a.ts")
+        yield* lsp.touchFile(file)
+        yield* lsp.touchFile(file)
+        yield* lsp.touchFile(file)
+        yield* lsp.touchFile(file)
+        // The first failure restarts at once; the second one starts a 2 s cooldown during which nothing is spawned.
+        expect(unresolved.calls).toHaveLength(2)
+        expect(yield* lsp.status()).toEqual([])
+      }),
+  )
+
+  const stalled = { calls: 0 }
+  const stalledServer: LSPServer.Info = {
+    id: "typescript",
+    extensions: [".ts"],
+    root: (_file, ctx) => Effect.succeed(ctx.directory),
+    spawn: () => Effect.sync(() => void stalled.calls++).pipe(Effect.andThen(Effect.never)),
+  }
+  test(
+    "gives up waiting on a start that never resolves instead of parking the use",
+    { entries: [lspDocument(true)], builtIns: [stalledServer], spawnWaitTimeout: "100 millis" },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        const file = path.join(h.directory, "a.ts")
+        yield* write(file)
+        // The spawn starts but never resolves; the use returns with no client once the wait expires, while
+        // the start keeps running in the background.
+        expect(yield* lsp.touchFile(file).pipe(Effect.timeout("3 seconds"))).toBe(0)
+        expect(stalled.calls).toBe(1)
+      }),
   )
 })
 
@@ -221,6 +247,22 @@ describe("LSP service configuration", () => {
         yield* config.setEntries([lspDocument({ fake: { disabled: true } })])
         expect(yield* lsp.hasClients(file)).toBe(false)
         expect(yield* lsp.status()).toHaveLength(0)
+      }),
+  )
+
+  const reset = spy("typescript", [".ts"])
+  test(
+    "an object after a boolean false keeps the reset instead of re-seeding the built-ins",
+    { entries: [lspDocument(false), lspDocument({ fake: fakeEntry([".repro"]) })], builtIns: [reset.server] },
+    (lsp, h) =>
+      Effect.gen(function* () {
+        expect(yield* lsp.hasClients(path.join(h.directory, "a.repro"))).toBe(true)
+        // `false` turned the built-ins off; the later object adds `fake` without bringing them back.
+        expect(yield* lsp.hasClients(path.join(h.directory, "a.ts"))).toBe(false)
+        yield* write(path.join(h.directory, "sample.repro"))
+        yield* lsp.touchFile(path.join(h.directory, "sample.repro"))
+        expect(reset.calls).toHaveLength(0)
+        expect((yield* lsp.status()).map((item) => item.id)).toEqual(["fake"])
       }),
   )
 })
@@ -540,6 +582,21 @@ describe("LSP service reaping", () => {
         expect(yield* eventually(() => count(lsp).pipe(Effect.map((value) => value === 2)))).toBe(true)
         expect((yield* lsp.status()).map((item) => item.id).toSorted()).toEqual(["first", "third"])
       }),
+  )
+
+  test("does not count TTL victims against the pool cap", {}, () =>
+    Effect.sync(() => {
+      const candidate = (lastUsedAt: number) => ({ alive: true, inFlight: 0, lastUsedAt })
+      const now = 10_000
+      const expired = candidate(0)
+      const fresh = [candidate(9_900), candidate(9_950)]
+      // `expired` is a TTL victim; the two fresh clients fit the cap once it is collected, so the sweep must
+      // stop only `expired` instead of also cutting the pool below `maxClients`.
+      expect(LSP.reapVictims([expired, ...fresh], now, 5_000, 2)).toEqual([expired])
+      // A client exactly at the TTL is a victim, and with no TTL victims the cap still stops the least recently used.
+      expect(LSP.reapVictims([candidate(5_000)], now, 5_000, 2)).toEqual([candidate(5_000)])
+      expect(LSP.reapVictims(fresh, now, 5_000, 1)).toEqual([candidate(9_900)])
+    }),
   )
 
   test(

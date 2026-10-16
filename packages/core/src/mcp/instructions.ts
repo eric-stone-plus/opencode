@@ -2,6 +2,7 @@ export * as McpInstructions from "./instructions.js"
 
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Layer, Schema } from "effect"
+import { Escape } from "../fork/escape.js"
 import { Permission } from "../permission.js"
 import { McpTool } from "../tool/mcp.js"
 import { Mcp } from "./index.js"
@@ -14,14 +15,16 @@ const Summary = Schema.Struct({
 })
 type Summary = typeof Summary.Type
 
+// A server name comes from config and its instructions come over the wire, so both are untrusted: the
+// name is attribute-escaped and each instruction line text-escaped, or either can restructure the block.
 const entries = (servers: ReadonlyArray<Summary>) =>
   servers.flatMap((server) => {
-    const result = [`  <server name="${server.server}">`]
+    const result = [`  <server name="${Escape.escapeAttribute(server.server)}">`]
     if (server.codemode !== false)
       result.push(
         `    Use tools from this server through \`execute\` under \`tools[${JSON.stringify(McpTool.namespace(server.server))}]\`.`,
       )
-    result.push(...server.instructions.split("\n").map((line) => `    ${line}`), "  </server>")
+    result.push(...server.instructions.split("\n").map((line) => `    ${Escape.escapeText(line)}`), "  </server>")
     return result
   })
 
@@ -48,7 +51,7 @@ const update = (previous: ReadonlyArray<Summary>, current: ReadonlyArray<Summary
     ...(diff.removed.length === 0
       ? []
       : [
-          `Instructions for the following MCP servers are no longer available: ${diff.removed.map((server) => server.server).join(", ")}.`,
+          `Instructions for the following MCP servers are no longer available: ${diff.removed.map((server) => Escape.escapeText(server.server)).join(", ")}.`,
         ]),
   ].join("\n")
 }

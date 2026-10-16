@@ -22,6 +22,7 @@ import { Context, Effect, Layer, Result, Stream } from "effect"
 import { Agent } from "../agent.js"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
+import { Escape } from "../fork/escape.js"
 import { Token } from "../util/token.js"
 import { WorkingContext } from "../util/working-context.js"
 import { llmClient } from "../effect/app-node-platform.js"
@@ -771,7 +772,7 @@ const messageToText = (message: SessionMessage.Info): string => {
     case "user": {
       const skills =
         message.skills?.flatMap((skill) =>
-          skill.text === undefined ? [] : [`[Skill activated: ${skill.name}]\n${skill.text}`],
+          skill.text === undefined ? [] : [`[Skill activated: ${Escape.escapeLine(skill.name)}]\n${skill.text}`],
         ) ?? []
       const files =
         message.files?.map((file) => {
@@ -782,7 +783,7 @@ const messageToText = (message: SessionMessage.Info): string => {
     }
 
     case "location-switched":
-      return `[User]: The working directory has been changed to ${message.location.directory}.`
+      return `[User]: The working directory has been changed to ${Escape.escapeLine(message.location.directory)}.`
 
     case "assistant":
       return message.content
@@ -804,7 +805,7 @@ const messageToText = (message: SessionMessage.Info): string => {
       return `[Synthetic context]: ${message.text}`
 
     case "skill":
-      return `[Skill activated: ${message.name}]\n${message.text}`
+      return `[Skill activated: ${Escape.escapeLine(message.name)}]\n${message.text}`
 
     case "shell":
       if (message.metadata?.background === true) return ""

@@ -4,6 +4,7 @@ import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm"
 import { Context, Effect, Layer, Schema } from "effect"
 import { InstructionEntry } from "@opencode/schema/instruction-entry"
 import { Database } from "../database/database.js"
+import { Escape } from "../fork/escape.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Instructions } from "../instructions/index.js"
 import { SessionSchema } from "./schema.js"
@@ -82,8 +83,10 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/In
 
 const renderValue = (value: Schema.Json) => (typeof value === "string" ? value : JSON.stringify(value, null, 2))
 
+// The key is schema-constrained to `[a-z0-9._-]`, but the value is arbitrary JSON from the API, so the
+// rendered value is text-escaped: it must not close the block or forge a sibling one.
 const renderBlock = (key: Key, value: Schema.Json) =>
-  [`<context key="${key}">`, renderValue(value), "</context>"].join("\n")
+  [`<context key="${key}">`, Escape.escapeText(renderValue(value)), "</context>"].join("\n")
 
 // Rendering stays mechanism-neutral: the model sees session context, not how
 // it was attached. Only chronological updates and removals carry narration.
