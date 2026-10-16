@@ -1039,3 +1039,38 @@ Mechanical pins: `script/check-drift.ts` grew ABSENT rows (repo and seat side) f
 and compares `AGENTS.md` plus both cards byte-for-byte; `script/skills-freeze.test.ts` fails if any plugin
 regains a git write or a skills-refresh path; `bootstrap/verify.sh` fails on a stale
 `plugin/mpskills-update.ts`, a resurrected instruction file, or an `instructions` key in `opencode.jsonc`.
+
+## 2026-10-16 (later session) — subsession profiles refused; trust roots left closed
+
+Owner call: a subsession must never carry a primary profile, and the refusal must be an explicit error
+rather than a silent rewrite; the seat keeps no `trusted-roots` file. The `13.3M` footer question from
+the same session is answered below.
+
+### What changed
+
+| Surface | Change | Why |
+| --- | --- | --- |
+| `packages/core/src/fork/child-agent.ts` | new: `ChildAgent.assertAllowed` + `Session.ChildAgentError`; waits for plugin activation and resolves once more when the registry is still empty | one refusal helper for every seam; tolerant resolution keeps replaced test harnesses (and session-owned handles) working, and the wait closes the first-create-after-boot race the round-2 regression attack measured |
+| `packages/core/src/session.ts`, `session/session.ts`, `session/transfer.ts` | guard on create (explicit agent), switchAgent (no-op exempt), import | the operator's option A: refuse, never rewrite |
+| `packages/core/src/session/context.ts` | guard at the request build | creation cannot resolve an *omitted* agent without booting the location's service graph (`test/session-remove.test.ts:95` pins an empty `RcMap`), so the omitted case is refused where the runner resolves it |
+| `packages/core/src/session/runner/index.ts`, `session/generate.ts` | `ChildAgentError` joins `RunError` / `SessionGenerate.Error` | those declared unions are the error surfaces the request path checks against |
+| `packages/server/src/handlers/session.ts` | `Session.ChildAgentError` -> 400 `primary_agent_child` | the message reaches the CLI and API verbatim |
+| `packages/core/test/fork/child-agent.test.ts` | new suite: four seams, exemptions, import | pins the invariant |
+| `packages/core/test/config/command-subagent.test.ts`, `test/session-runner.test.ts` | fixtures moved to subagent-mode agents | the old fixtures created children the new invariant forbids |
+| `packages/core/src/plugin/fork/modes.ts` | comment | the standing card's "child resolves to auto" case now describes only rows predating the guard |
+| `packages/tui/src/context/local.tsx` | `agent.current()` resolves the session's own agent against every non-hidden agent, not just the picker list | the round-2 regression attack found that a child session fell back to the first primary, so every submit asked the server to switch it and was refused - the child was unpromptable |
+| `packages/server/test/session-create.test.ts` | new: first child create after a boot with a primary agent -> 400, subagent -> 200 | pins the activation race shut (verified to fail with the wait removed) |
+| `packages/tui/test/context/local-selection.test.tsx`, `packages/tui/test/fixture/local.tsx` | new: a subagent-mode session keeps its own agent; the fixture accepts a mode | pins the TUI resolution (verified to fail with the picker-list fallback) |
+
+### The 13.3M footer figure
+
+`↓ 13.3M` is the denormalized `tokens_output + tokens_reasoning` of the session's whole family (the
+session plus its descendants), read straight from `session_v2` — it includes compaction rows. The stats
+panel's `Output 4.6M` and `Reasoning 8.4M` count assistant rows only, so at the same moment they summed
+to ~13.0M; the difference is the compaction rows' output plus reasoning (49 completed compactions at that
+instant, ~0.294M) plus a ~200-token title residual. The panel's total cost understates the family by
+about $1.04 because the compaction cost compensation only arrives through the `event` table
+(`UsageRecorded`, source `compaction`), which is empty on this seat (`event_sequence` has 1,613 rows;
+the bus persists events only when the server passes `persist: true`, which this local deployment never
+does), while by-model and the footer include compaction. No upstream change was made: a deployment whose
+`event` table is populated would double-count if the panel compensation were moved blindly.

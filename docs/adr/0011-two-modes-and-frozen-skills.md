@@ -49,9 +49,29 @@ commit.
   tools are denied on `~/.config/opencode/**` in both resource forms (measured),
   but `shell` sees raw text, not paths, and the operator's install path stays
   available on purpose. The guardrail there is this document plus `AGENTS.md`.
-- **A subsession can be given a primary profile by an explicit declaration** (an
-  inline command with `subagent: true`, or the session API). The model's own
-  spawn tool is guarded; the two open paths are in `docs/OPEN-QUESTIONS.md`.
+- **A subsession can no longer be given a primary profile** (closed 2026-10-16, option A: refuse,
+  never rewrite). `fork/child-agent.ts` refuses it on `Session.create` (explicit agent),
+  `Session.switchAgent`, `SessionTransfer.import` (when the transcript names an agent), and at the
+  request build
+  (`SessionContext.select`), where an *omitted* agent resolves: creation cannot resolve one without
+  booting the location's service graph, which session creation deliberately avoids
+  (`packages/core/test/session-remove.test.ts:95` pins an empty `RcMap`). When the location's
+  plugin activation has not settled, the guard waits for it and resolves once more, so the first
+  child create after a boot cannot slip through. The refusal is `Session.ChildAgentError` -> HTTP
+  400 `primary_agent_child`, and `packages/core/test/fork/child-agent.test.ts` pins all four seams
+  plus the no-op switch, the unknown-id tolerance, and the import path;
+  `packages/server/test/session-create.test.ts` pins the first-create-after-boot refusal, and the
+  TUI resolves a session's own agent against the full list
+  (`packages/tui/test/context/local-selection.test.tsx`) so a subagent-mode child stays promptable.
+- **Hidden capability agents stay out of the child-profile guard** (title, compaction, summary):
+  they are `mode: "primary"` only so they stay out of the subagent list, they carry no standing
+  card, and compaction must serve child sessions. An explicit title regeneration on a child
+  therefore still runs as the hidden `title` agent, which
+  `packages/core/test/session-title.test.ts` deliberately pins; auto-titling already skips children.
+- **The v1 migration copies `parent_id` and `agent` verbatim** (`database/v1-migration.bun.ts`): a
+  v1 child row carrying a primary profile is imported without an error, and the request-build guard
+  refuses its first run instead. No such row exists on this seat (1414 child sessions, 0 primary
+  profiles), so the residual is theoretical here.
 - **`instruction_entry` / `instruction_state` remain upstream mechanisms**: the
   instruction ledger records what was loaded per step, which is provenance, not
   free-form learned state. It is out of scope for this decision, and it is

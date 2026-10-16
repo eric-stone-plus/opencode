@@ -48,3 +48,35 @@ The set is pinned at `49dd158d1076134a641b33efb035946536778336` (`skills/PROVENA
 update path is explicit: `bun run update-skills --source <checkout>` (fetches nothing, commits
 nothing, validates the source before touching the vendored tree). Nothing is blocked; this is a
 "when the operator wants it" decision.
+
+## 2026-10-16 (later session) — both remaining items resolved
+
+### 1. Project trust: no roots declared (closed default stands)
+
+Operator call: `~/.config/opencode/trusted-roots` stays absent. Work habitually starts in
+`/home/eric`, and that directory holds no project-side config the gate would need to admit
+(`/home/eric/.opencode/` carries only `bin/`, `backups/`, `node_modules/`, and npm metadata — no
+`opencode.jsonc`, no `AGENTS.md`, no plugins, no MCP servers), so the closed default costs nothing.
+Declaring roots only ever widens trust; the file is the switch, and it remains the operator's call.
+
+### 2. Subsessions and primary profiles: refused, never rewritten (option A)
+
+Operator call: a session with `parentID` must not carry a primary profile, and the refusal must be an
+explicit error rather than a silent rewrite. Landed as `packages/core/src/fork/child-agent.ts`
+(`ChildAgent.assertAllowed` + `Session.ChildAgentError`) on four assignment seams:
+
+- `Session.create` when an explicit agent resolves to primary (`packages/core/src/session.ts`);
+- `Session.switchAgent` on a child — re-asserting the current agent is exempt, so rows created
+  before the guard stay switchable (`packages/core/src/session/session.ts`);
+- `SessionTransfer.import` when the transcript's `info.parentID` is set
+  (`packages/core/src/session/transfer.ts`);
+- `SessionContext.select`, the request build (`packages/core/src/session/context.ts`). Creation
+  cannot resolve an *omitted* agent without booting the location's service graph, and session
+  creation deliberately does not (`packages/core/test/session-remove.test.ts:95` pins an empty
+  `RcMap`), so the omitted agent resolves where the runner resolves it, and a primary there is
+  refused the same way.
+
+The server maps the error to `InvalidRequestError` 400 `kind: "primary_agent_child"` on create,
+switchAgent, and import (`packages/server/src/handlers/session.ts`). The invariant, the exemptions,
+and the import path are pinned by `packages/core/test/fork/child-agent.test.ts`; the evidence and
+consequences live in `docs/adr/0011-two-modes-and-frozen-skills.md`.
