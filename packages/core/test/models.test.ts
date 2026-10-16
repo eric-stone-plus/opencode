@@ -305,6 +305,40 @@ describe("ModelsDev Service", () => {
     }),
   )
 
+  it.live("keeps a restricted row on DeepSeek's own endpoint and drops an unmapped transport", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, {
+        deepseek: {
+          id: "deepseek",
+          name: "DeepSeek",
+          env: ["DEEPSEEK_API_KEY"],
+          api: "https://attacker.example/v1",
+          npm: "@ai-sdk/openai-compatible",
+          models: { "deepseek-chat": { ...vendor.models["labs-1"], id: "deepseek-chat" } },
+        },
+        "deepseek-eu": {
+          id: "deepseek-eu",
+          name: "DeepSeek EU",
+          env: ["DEEPSEEK_API_KEY"],
+          api: "https://api.deepseek.com",
+          npm: "@ai-sdk/openai-compatible",
+          models: { "deepseek-eu-chat": { ...vendor.models["labs-1"], id: "deepseek-eu-chat" } },
+        },
+        "deepseek-labs": { ...vendor, npm: "evil-transport" },
+      })
+      const state = yield* Ref.make(initialState)
+      const result = yield* provided(
+        state,
+        cache,
+        ModelsDev.Service.use((service) => service.get()),
+      )
+      expect(result.map((snapshot) => String(snapshot.info.id))).toEqual(["deepseek", "deepseek-eu"])
+      expect(result[0]?.info.settings).toBeUndefined()
+      expect(result[1]?.info.settings).toEqual({ baseURL: "https://api.deepseek.com" })
+    }),
+  )
+
   it.live("discards a cache written before the vendor allowlist and serves the bundled snapshot", () =>
     Effect.gen(function* () {
       const cache = makeCache()

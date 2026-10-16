@@ -88,11 +88,29 @@ function nativePackage(provider: SourceProvider, model?: SourceModel) {
   return AISDKNative.native(npm, { providerID: provider.id, modelID: model?.id }) ?? Provider.aisdk(npm)
 }
 
+// The vendor allowlist filters provider ids, but a row that passes it still names where its prompts go
+// (its endpoint) and which npm package is imported to speak to it. Both arrive in the same untrusted
+// payload as the id - a catalog file, a KV cache, a fetch - so a row is only used when its endpoint is
+// DeepSeek's own and every transport it names is one this fork maps. A custom endpoint belongs in
+// config, which never goes through the catalog.
+const supportedEndpoint = (api: string | undefined) => {
+  if (api === undefined) return undefined
+  const host = URL.parse(api)?.hostname
+  return host === "deepseek.com" || host?.endsWith(".deepseek.com") === true ? api : undefined
+}
+
+const supportedTransports = (row: SourceProvider) =>
+  [row.npm, ...Object.values(row.models).map((model) => model.provider?.npm)].every(
+    (npm) => npm === undefined || AISDKNative.native(npm, { providerID: row.id }) !== undefined,
+  )
+
 function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
   const providers: Snapshot[] = []
   const named = new Map<string, Model.Info["cost"][]>()
   // Every source (file, KV, bundled snapshot, fetch) funnels through here, so the vendor allowlist cannot be bypassed.
   for (const item of Object.values(ModelsDev.restrict(input))) {
+    if (!supportedTransports(item)) continue
+    const api = supportedEndpoint(item.api)
     const providerID = Provider.ID.make(item.id)
     const packageName = nativePackage(item)
     const info = {
@@ -100,7 +118,7 @@ function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
       name: item.name,
       activation: "auto",
       package: packageName,
-      ...(item.api ? { settings: { baseURL: item.api } } : {}),
+      ...(api ? { settings: { baseURL: api } } : {}),
     } satisfies Provider.Info
     const models: Model.Info[] = []
     for (const model of Object.values(item.models)) {
