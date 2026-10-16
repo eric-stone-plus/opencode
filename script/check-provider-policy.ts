@@ -41,8 +41,10 @@ const DROPPED = [
   "cohere",
 ]
 
-// npm transports the seat needs (ADR 0005): the DeepSeek protocol, plus Anthropic messages for the
-// config-declared Bailian endpoint the operator's config block names.
+// npm transports the seat needs (ADR 0005): the DeepSeek protocol bound to its registry row, plus the
+// Anthropic Messages transport, which must stay resolvable for any config-declared provider. The probe
+// id on the second row is a provider ADR 0010 removed on purpose: the mapping must not depend on which
+// provider asks for the transport, and a removed id is the strongest probe for that.
 const REQUIRED_TRANSPORTS: Array<[npm: string, providerID: string, expected: string]> = [
   ["@ai-sdk/openai-compatible", "deepseek", "@opencode/ai/providers/deepseek"],
   ["@ai-sdk/anthropic", "bailian-token-plan-personal", "@opencode/ai/providers/anthropic"],
