@@ -1,4 +1,5 @@
-import type { Config, Path, Project, ProviderAuthResponse } from "@/runtime/server/types"
+import type { Config, LspStatus, Path, Project, ProviderAuthResponse } from "@/runtime/server/types"
+import type { ConfigEntry } from "@opencode/client/promise"
 import { showToast } from "@/shell/notifications/toast"
 import { getFilename } from "@opencode/util/path"
 import { getOwner, onCleanup, untrack } from "solid-js"
@@ -26,22 +27,35 @@ type GlobalStore = {
   path: Path
   project: Project[]
   provider_auth: ProviderAuthResponse
-  config: Config
+  config: ConfigEntry[]
   reload: undefined | "pending" | "complete"
 }
 
-export const loadLspQuery = (scope: ServerScope, directory: string) =>
+async function fetchLspStatus(api: () => ServerApi, directory: string): Promise<LspStatus[]> {
+  // `fork.lsp` is not a PortableDefinition, so the promise client's typed rpc helper rejects
+  // it (the effect client's helper accepts it, which is why the CLI can use the typed path);
+  // call the generic transport instead.
+  const response = await api().rpc.call({
+    rpcID: "fork.lsp",
+    method: "status",
+    input: {},
+    location: { directory },
+  })
+
+  return (response.output ?? []) as LspStatus[]
+}
+
+export const loadLspQuery = (scope: ServerScope, directory: string, fetchStatus: () => Promise<LspStatus[]>) =>
   queryOptions({
     queryKey: [scope, directory, "lsp"] as const,
-    // TODO: Restore LSP status when the V2 client exposes an LSP API.
-    queryFn: async () => [],
+    queryFn: fetchStatus,
   })
 
 function makeQueryOptionsApi(scope: ServerScope, serverAPI: () => ServerApi) {
   return {
-    globalConfig: () => loadGlobalConfigQuery(scope),
+    globalConfig: () => loadGlobalConfigQuery(scope, serverAPI().config),
     path: () => loadPathQuery(scope, null, serverAPI().location),
-    lsp: (directory: PathKey) => loadLspQuery(scope, directory),
+    lsp: (directory: PathKey) => loadLspQuery(scope, directory, () => fetchLspStatus(serverAPI, directory)),
   }
 }
 
@@ -76,9 +90,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK, data: Data) {
       return pathQuery.data ?? EMPTY
     },
     get config() {
-      if (configQuery.isPending) return {}
+      if (configQuery.isPending) return []
 
-      return configQuery.data ?? {}
+      return configQuery.data ?? []
     },
     get reload() {
       return updateConfigMutation.isPending ? "pending" : undefined
@@ -263,7 +277,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK, data: Data) {
     if (!children.children[key]) return
     children.mark(key)
 
-    if (event.type === "config.updated" || event.type === "agent.updated") queue.push(key)
+    if (event.type === "config.updated" || event.type === "agent.updated" || event.type === "lsp.updated") queue.push(key)
   })
 
   onCleanup(unsub)
@@ -288,8 +302,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK, data: Data) {
 
   const updateConfigMutation = useMutation(() => ({
     mutationFn: async (config: Config) => {
-      // TODO: Restore config updates when the V2 client exposes a config API.
-      // await serverSDK.api.config.update({ config })
+      // V2 exposes only the `shell` config write (`PATCH /api/experimental/config`);
+      // config-document writes have no API yet, so refuse instead of silently dropping fields.
       throw new Error(`Config updates are unavailable: ${Object.keys(config).length} fields were not saved`)
     },
     onSuccess: () => {

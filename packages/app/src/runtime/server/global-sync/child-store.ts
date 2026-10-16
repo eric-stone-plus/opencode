@@ -227,7 +227,7 @@ export function createChildStoreManager(input: {
 
               return normalizeProviderList(provider, model)
             },
-            config: {},
+            config: [],
             get path() {
               const location = input.data.location.info({ directory })
 

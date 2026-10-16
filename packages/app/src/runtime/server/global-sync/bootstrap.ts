@@ -1,5 +1,5 @@
-import type { Config, Path, Project, ProviderAuthResponse } from "@/runtime/server/types"
-import type { LocationGetInput, LocationGetOutput, ProjectListOutput } from "@opencode/client/promise"
+import type { Path, Project, ProviderAuthResponse } from "@/runtime/server/types"
+import type { ConfigEntry, LocationGetInput, LocationGetOutput, ProjectListOutput } from "@opencode/client/promise"
 import { showToast } from "@/shell/notifications/toast"
 import { getFilename } from "@opencode/util/path"
 import { retry } from "@opencode/util/retry"
@@ -15,7 +15,7 @@ type GlobalStore = {
   path: Path
   project: Project[]
   provider_auth: ProviderAuthResponse
-  config: Config
+  config: ConfigEntry[]
   reload: undefined | "pending" | "complete"
 }
 
@@ -49,12 +49,15 @@ function runAll(list: Array<() => Promise<unknown>>) {
   return Promise.allSettled(list.map((item) => item()))
 }
 
-export const loadGlobalConfigQuery = (scope: ServerScope) =>
+export const loadGlobalConfigQuery = (scope: ServerScope, api: ConfigApi) =>
   queryOptions({
     queryKey: [scope, "config"],
-    // TODO: Restore config loading when the V2 client exposes a config API.
-    queryFn: async (): Promise<Config> => ({}),
+    queryFn: () => api.get(),
   })
+
+type ConfigApi = {
+  readonly get: () => Promise<ConfigEntry[]>
+}
 
 type ProjectApi = {
   readonly list: () => Promise<ProjectListOutput>
@@ -82,13 +85,14 @@ export async function bootstrapGlobal(input: {
   serverAPI: {
     readonly location: LocationApi
     readonly project: ProjectApi
+    readonly config: ConfigApi
   }
   scope: ServerScope
   setGlobalStore: SetStoreFunction<GlobalStore>
   queryClient: QueryClient
 }) {
   const slow = [
-    () => input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope)),
+    () => input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverAPI.config)),
     () => input.queryClient.fetchQuery(loadPathQuery(input.scope, null, input.serverAPI.location)),
     () =>
       input.queryClient.fetchQuery(loadProjectsQuery(input.scope, input.serverAPI.project)).then((data) =>
@@ -136,7 +140,7 @@ export async function bootstrapDirectory(input: {
   setStore: SetStoreFunction<State>
   translate: (key: string, vars?: Record<string, string | number>) => string
   global: {
-    config: Config
+    config: ConfigEntry[]
     path: Path
     project: Project[]
   }
@@ -147,7 +151,7 @@ export async function bootstrapDirectory(input: {
 
   if (seededProject) input.setStore("project", seededProject)
 
-  if (Object.keys(input.store.config).length === 0 && Object.keys(input.global.config).length > 0) {
+  if (input.store.config.length === 0 && input.global.config.length > 0) {
     input.setStore("config", reconcile(input.global.config, { merge: false }))
   }
 

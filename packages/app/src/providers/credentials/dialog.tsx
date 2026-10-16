@@ -91,7 +91,8 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
     const output = validateCustomProvider({
       form,
       t: language.t,
-      // TODO: Restore disabled-provider validation when V2 exposes config reads.
+      // Denied providers are removed from the V2 catalog, so there is nothing to
+      // exclude here; the validation only sees providers that are still available.
       disabledProviders: [],
       existingProviderIDs: new Set((data.location.provider.list() ?? []).map((provider) => provider.id)),
     })
@@ -107,7 +108,8 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
 
   const saveMutation = useMutation(() => ({
     mutationFn: async (result: NonNullable<ReturnType<typeof validate>>): Promise<typeof result> => {
-      // TODO: Restore custom providers when V2 exposes config and arbitrary credential APIs.
+      // Custom providers need a config-document write for `providers.<id>`, which V2
+      // does not expose yet (only the `shell` key is writable), so refuse.
       throw new Error(language.t("provider.custom.unavailable"))
     },
     onSuccess: (result) => {
