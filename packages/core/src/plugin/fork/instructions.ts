@@ -46,9 +46,11 @@ function capContent(content: string): string {
 }
 
 /**
- * The `instructions` config array has no upstream consumer. Entries are local files or globs: `~/` expands to the
- * home directory, an absolute entry globs its basename inside its directory, and a relative one is searched upward
- * from the location to the project root. URLs are not fetched.
+ * The `instructions` config array also has an upstream consumer: `ConfigInstructionPlugin` (registered in
+ * `../internal.ts`) GETs every `http(s)` entry when config loads, so a project document can make the server
+ * request a URL it names. This plugin adds the local half: `~/` expands to the home directory, an absolute
+ * entry globs its basename inside its directory, and a relative one is searched upward from the location to
+ * the project root. URLs are left to the upstream plugin rather than resolved as paths here.
  */
 export const Plugin = define({
   id: "fork.instructions",
@@ -67,7 +69,9 @@ export const Plugin = define({
     const snapshot: { files: InstructionDiscovery.File[] } = { files: [] }
 
     const resolve = (entry: string) => {
-      if (/^https?:\/\//.test(entry)) return Effect.logWarning("remote instructions are not supported", { entry }).pipe(Effect.as([]))
+      // The upstream instruction plugin owns remote entries and fetches them at config load; this one only
+      // resolves local entries, so a URL is skipped here instead of being read as a path.
+      if (/^https?:\/\//.test(entry)) return Effect.succeed([] as string[])
       const expanded = entry.startsWith("~/") ? path.join(global.home, entry.slice(2)) : entry
       const found = path.isAbsolute(expanded)
         ? fs.scan(path.basename(expanded), { cwd: path.dirname(expanded), absolute: true, include: "file", dot: true })
