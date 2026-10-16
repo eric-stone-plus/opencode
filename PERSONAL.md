@@ -654,6 +654,104 @@ embedded terminal pane, which is a terminal emulator and must interpret sequence
 them. Diffs reach every surface through `component/patch-diff.tsx`, so the sanitizer lives there rather
 than at each caller.
 
+## 2026-10-16: TODO triage across the product surface; spawner release bound; PTY teardown documented
+
+An eight-axis sweep of every `TODO`/`FIXME` the ratchet counts, each axis attacked by a second subagent,
+took the marker count from 43 to 25 (baseline retightened in `script/debt-ratchet.baseline.json`). Every
+remaining marker has a recorded disposition:
+
+- **Retired as stale** (4): the `/effect` boundary note, the affinity hook note, the billed-amount cost
+  note, and the prompt-cache-lineage note each described work the V2 tree already did, or a consumer this
+  fork no longer ships (`packages/client/src/effect/index.ts`,
+  `packages/core/src/session/{affinity,usage,model-request}.ts`).
+- **Fixed** (injections, below), **blocked on a missing V2 API** (session archive ×2, custom-provider
+  config write), **not our surface** (`packages/console/app`; one `TODO(windows)` that needs a Windows
+  run), or **upstream-owned and still true** — those are accurate notes about upstream work, so deleting
+  them would be dishonest.
+
+Adversarial-pass corrections worth keeping: the session-archive markers are genuinely blocked (V2 exposes
+no archive API); `script/duplicate-pr.ts` is upstream-owned rather than "moot" (its workflow is
+`disabled_manually` with zero repo secrets, so no fork action follows); and `fork.lsp` **is** declared with
+`Rpc.define`, but it is not a `PortableDefinition`, so the promise client's typed rpc helper rejects it
+while the effect client's accepts it (`packages/cli/src/commands/handlers/debug/lsp/shared.ts:20`). That is
+why both promise-client call sites call the generic transport — the earlier comment implied no definition
+existed at all.
+
+### The spawner release had no upper bound without `forceKillAfter`
+
+`packages/util/src/cross-spawn-spawner.ts` awaited `closed` unguarded when the caller passed no
+`forceKillAfter`, and only the long-lived children pass one (LSP/MCP/SSH 2 s, shell/standalone 3 s, pdf
+1 s). Measured with the repo's own spawner under `NodeRuntime.runMain`: a direct child that ignores SIGTERM
+hangs the scope close forever, and because scope finalizers run sequentially in reverse registration
+order, every child whose release had not run yet is orphaned when the client SIGKILLs the service at ~5 s
+(`packages/client/src/service-timing.ts`: 100 × 50 ms). The first proposal (a 10 s default) was measured to
+fail its own goal — 10.9 s completes *after* the 5 s SIGKILL — so the landed bound is **3 s**, matching the
+shell and standalone opt-ins and staying inside the stop window; an explicit `forceKillAfter` still wins.
+`packages/core/test/effect/cross-spawn-spawner.test.ts` pins it (that test times out at 30 s without the
+fix, verified). Residual: per-child bounds do not compose — N stubborn children cost up to N × 3 s — so
+the upstream-shaped fix is a global teardown deadline.
+
+### PTY teardown: the classic service is upstream, and the behaviour is POSIX, not a leak
+
+`packages/core/src/pty.ts:117-126` signals only the session leader (`bun-pty` sends SIGHUP to a positive
+pid and never releases the master), so a leader that ignores SIGHUP keeps its whole subtree alive while
+subscribers are told the terminal ended. The proposed escalation was rejected on measurement: it crashes
+on the ordinary path (ESRCH from an unguarded `process.kill`), its unref'd timer never fires at shutdown,
+it fixes one of four survivor classes, and it would kill the deliberate `nohup`/`trap '' HUP` detach class.
+The TUI never uses this service — terminal panes run through persistent-pty, where surviving processes are
+the feature (`packages/tui/src/context/session-terminals.tsx:31,93`). The persistent-pty daemon's
+SIGTERM-only `onError` path was attacked and cleared: 0.2.0 dies on SIGTERM in ~1 ms, and an unowned daemon
+exits on its own in ~5 s.
+
+### Client suite is green again (and now qualifies for CI registration)
+
+`packages/client` passes 230/0. The import-boundary guard had been red since `82f713421f` removed the last
+protocol import: the assertion compared the module set against a single path, so it aborted before the
+core and server guards ran. It now asserts absence, like its sibling. `turbo.json` still carries no
+`@opencode/client#test` entry, so the guard runs by hand only — registering it is one line, but this file's
+own rule registers a package only after a green run in *both* CI legs, and the Windows leg has not been
+exercised yet.
+
+### HTML injections need the opentui patch's second hunk
+
+`packages/tui/src/parsers-config.ts` had the HTML injections query commented out; uncommenting it alone
+changed nothing, because the vendored worker resolved an injected language only from
+`injectionMapping.nodeTypes[capture.node.type]` and ignored the query's `#set! injection.language`. The
+carried `patches/@opentui%2Fcore@0.5.17.patch` gained a 5-line hunk so the directive wins, the query is
+live, and `packages/tui/test/opentui-patch.test.ts` pins the invariant. `bun install` is what applies the
+patch — a stale `node_modules` silently reproduces the old behaviour.
+
+### What a restart does (measured 2026-10-16, including the 01:08 replacement that already ran)
+
+The managed service was already replaced once today — a TUI built 1612 replaced the 1516 service
+(`reason=version-mismatch`); the owner's two older TUIs lost the event stream for ~1.5 s, reconnected
+without replacing anything, and an in-flight session resumed and kept making model requests. The path,
+verified against the code and that log:
+
+- SIGTERM interrupts the main fiber; scope finalizers run inside a ~5 s budget
+  (`packages/client/src/effect/service.ts:182-197`, 100 × 50 ms poll), then the client SIGKILLs. "Graceful"
+  means "fits the budget", not "always clean".
+- The write-ahead execution claim survives (nothing commits on shutdown), and boot's sweep resumes every
+  claimed top-level session with a synthetic "The server restarted… continue" message — at most 10
+  attempts (`packages/core/src/session/execution/restart.ts:33`), then the session fails with
+  `RESUME_EXHAUSTED`. Any interruption that recorded no reason is classified `shutdown`, so an eviction
+  preserves the claim too.
+- The in-flight tool call is durably rewritten as `aborted` ("Tool execution interrupted"); the model
+  decides whether to redo it, and external side effects already performed are never rolled back.
+- **Foreground subagents are not resumed** (`releaseChildClaims` runs at boot, `restart.ts:205`); the
+  parent must re-dispatch them. Background subagent jobs resume from the DB-backed KV, and running
+  background shells are reported cancelled.
+- Durable history, queued prompts, the session's agent, and the goal file survive. Lost: the last
+  unflushed stream deltas, pending permission prompts, and any tool result the process died before
+  recording.
+- `opencode service restart` shuts the persistent PTY daemon down first, so TUI terminal panes die. A
+  version-mismatch *replacement* (launching a newer TUI) hands the daemon over instead.
+- A launch from an **older** binary replaces the service with that older binary — a downgrade plus another
+  restart. Install the new binary first, then restart from the installed path.
+- Never start a second `serve --service --port N` against the same database: the incumbent check probes
+  the new service's own port, so it misses the registered one, sweeps immediately, and double-drains for
+  ~5–7 s until the old service self-evicts.
+
 ## Agent rules for this fork
 
 - Default branch for diffs and PRs against **this** repo is `main`, not `dev`.
