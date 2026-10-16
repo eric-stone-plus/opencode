@@ -33,7 +33,7 @@ it.live(
           }),
         )
       })
-      const server = yield* startServer(path.join(tmp.path, "config"))
+      const server = yield* startServer(path.join(tmp.path, "config"), { project: true })
       const list = (directory: string) =>
         Effect.promise(async () => {
           const url = new URL("/api/fs/list", server.base)

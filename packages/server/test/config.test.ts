@@ -29,7 +29,7 @@ it.live("returns ordered config entries for the requested directory", () =>
         }),
       ),
     )
-    const server = yield* startServer(global)
+    const server = yield* startServer(global, { project: true })
     const url = new URL("/api/config", server.base)
     url.searchParams.set("location[directory]", project)
     const response = yield* Effect.promise(() => fetch(url, { headers: server.headers }))
@@ -56,6 +56,34 @@ it.live("returns ordered config entries for the requested directory", () =>
       throw new Error("Expected an MCP server config")
     expect(mcp["servers"]["docs"]).not.toHaveProperty("headers")
     expect(mcp["servers"]["docs"]).not.toHaveProperty("oauth")
+  }),
+)
+
+it.live("keeps project config undiscovered unless the server opts in", () =>
+  Effect.gen(function* () {
+    const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-config-gate-")))
+    const global = path.join(tmp.path, "global")
+    const project = path.join(tmp.path, "project")
+    const globalConfig = path.join(global, "opencode.json")
+    const projectConfig = path.join(project, "opencode.json")
+    yield* Effect.promise(() =>
+      Promise.all([fs.mkdir(global, { recursive: true }), fs.mkdir(project, { recursive: true })]),
+    )
+    yield* Effect.promise(() =>
+      Promise.all([
+        fs.writeFile(globalConfig, JSON.stringify({ model: "base/default" })),
+        fs.writeFile(projectConfig, JSON.stringify({ model: "project/default" })),
+      ]),
+    )
+    const server = yield* startServer(global)
+    const url = new URL("/api/config", server.base)
+    url.searchParams.set("location[directory]", project)
+    const response = yield* Effect.promise(() => fetch(url, { headers: server.headers }))
+    const entries = Schema.decodeUnknownSync(Schema.Array(Config.Entry))(yield* Effect.promise(() => response.json()))
+
+    expect(response.status).toBe(200)
+    expect(entries.some((entry) => entry.type === "document" && entry.path === globalConfig)).toBe(true)
+    expect(entries.some((entry) => entry.type === "document" && entry.path === projectConfig)).toBe(false)
   }),
 )
 

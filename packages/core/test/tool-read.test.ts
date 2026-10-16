@@ -15,6 +15,7 @@ import { Session } from "@opencode/core/session"
 import { AbsolutePath, RelativePath } from "@opencode/core/schema"
 import { Global } from "@opencode/util/global"
 import { FileAccess } from "@opencode/core/file-access"
+import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { location } from "./fixture/location"
 import { Tool } from "@opencode/core/tool"
 import { ReadTool } from "@opencode/core/tool/plugin/read"
@@ -39,6 +40,7 @@ const readToolNode = makeLocationNode({
     FSUtil.node,
     Location.node,
     Environment.node,
+    InstructionDiscovery.node,
   ],
 })
 

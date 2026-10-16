@@ -36,7 +36,7 @@ AGENTS.md
 
 Keep guidance that applies everywhere in the global file. Put repository-wide guidance at the project root and more specific guidance closer to the code it covers. OpenCode combines the files and does not resolve conflicts between them.
 
-If the workspace is outside the project root, only the global file is loaded. Set `OPENCODE_DISABLE_PROJECT_CONFIG=1` to skip project `AGENTS.md` discovery without disabling the global file.
+If the workspace is outside the project root, only the global file is loaded. Project discovery is off by default; set `OPENCODE_CONFIG_PROJECT_DISABLE=0` or `=false` (or its `OPENCODE_DISABLE_PROJECT_CONFIG` alias) to load project `AGENTS.md` files without disabling the global file. Any other value, including an empty one, keeps project discovery off.
 
 <Callout type="note">
   OpenCode V2 recognizes `AGENTS.md` only. It does not use `CLAUDE.md` as a fallback.
@@ -125,6 +125,6 @@ Configured instructions load after `AGENTS.md` files, in the order they are list
 
 - Local files update like `AGENTS.md` when they change. New files matching a glob load on the next config change.
 - Missing files are skipped. A URL that cannot be fetched is skipped, or keeps its last fetched content.
-- With `OPENCODE_DISABLE_PROJECT_CONFIG=1`, or when the workspace is outside the project, relative entries resolve against the global config directory.
+- With project config disabled (the default; opt in with `OPENCODE_CONFIG_PROJECT_DISABLE=0`), or when the workspace is outside the project, relative entries resolve against the global config directory.
 
 See [Config](/config) for configuration locations and precedence.

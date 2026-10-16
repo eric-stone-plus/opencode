@@ -240,7 +240,7 @@ it.live(
           }),
         )
       })
-      const server = yield* startServer(config)
+      const server = yield* startServer(config, { project: true })
       const api = OpenCode.make({ baseUrl: server.base, headers: server.headers })
       yield* Effect.promise(async () => {
         const a = await api.session.create({ location: { directory: nested } })
@@ -318,7 +318,7 @@ it.live(
           }),
         )
       })
-      const server = yield* startServer(path.join(tmp.path, "config"))
+      const server = yield* startServer(path.join(tmp.path, "config"), { project: true })
       const api = OpenCode.make({ baseUrl: server.base, headers: server.headers })
       yield* Effect.promise(async () => {
         const session = await api.session.create({ location: { directory: source } })

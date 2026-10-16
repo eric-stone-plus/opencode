@@ -7,6 +7,7 @@ import { Effect, Schema } from "effect"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Location } from "../../location.js"
 import { FileAccess } from "../../file-access.js"
+import { InstructionDiscovery } from "../../instruction-discovery.js"
 import { SessionInstructions } from "../../session/instructions.js"
 import { AbsolutePath } from "../../schema.js"
 import { ReadToolFileSystem } from "../read-filesystem.js"
@@ -32,6 +33,7 @@ export const Plugin = {
   effect: Effect.fn("ReadTool.Plugin")(function* (ctx: Context) {
     const reader = yield* ReadToolFileSystem.Service
     const access = yield* FileAccess.Service
+    const discovery = yield* InstructionDiscovery.Service
     const sessionInstructions = yield* SessionInstructions.Service
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
@@ -85,8 +87,11 @@ export const Plugin = {
               // root exclusive and inject them as durable synthetic instructions. For a
               // directory listing the walk starts at the directory itself (so its own AGENTS.md
               // is discovered); for a file it starts at the file's dirname. External reads are
-              // skipped, and discovery failures never fail the read.
+              // skipped, discovery failures never fail the read, and project discovery being
+              // off (the trust gate closed) skips the walk so an untrusted tree cannot place
+              // its AGENTS.md in the model's instruction context.
               yield* Effect.gen(function* () {
+                if (!discovery.project) return
                 if (result.target.externalDirectory !== undefined) return
                 const resolved = yield* fs.resolve(result.target.absolute)
                 const root = yield* fs.resolve(location.directory)

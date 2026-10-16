@@ -4,6 +4,7 @@ import { relative } from "path"
 import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../bus.js"
+import { Escape } from "../fork/escape.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Location } from "../location.js"
 import { SessionEvent } from "./event.js"
@@ -73,7 +74,7 @@ const layer = Layer.effect(
         // ledger atomically, so releasing the claim afterwards cannot readmit the paths.
         yield* bus.publish(SessionEvent.Synthetic, {
           sessionID: input.sessionID,
-          text: readable.map((file) => `Instructions from: ${file.path}\n${file.content}`).join("\n\n"),
+          text: readable.map((file) => `Instructions from: ${Escape.escapeLine(file.path)}\n${file.content}`).join("\n\n"),
           description: `Loaded ${readable.map((file) => describePath(root, file.path)).join(", ")}`,
           metadata: { instruction: { paths: readable.map((file) => file.path) } },
         })

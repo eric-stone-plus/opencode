@@ -127,9 +127,9 @@ export interface Options {
   // AGENTS.md discovery. Wellknown integration config and host-injected values
   // still apply, and a config value that explicitly names something
   // file-backed (a skill path, an MCP command) is a request, not discovery.
-  // Use-triggered behavior also stays: reading a file still injects nested
-  // AGENTS.md instructions — that is session-time context, not boot-time
-  // population.
+  // Use-triggered behavior follows the project flag too: with discovery off,
+  // reading a file no longer injects that tree's nested AGENTS.md, so the
+  // instruction context cannot import a tree the gate did not admit.
   readonly discovery?: boolean
   readonly replacements?: LayerNode.Replacements
 }

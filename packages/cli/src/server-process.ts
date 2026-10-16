@@ -115,9 +115,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           },
           config: {
             directory: process.env.OPENCODE_CONFIG_DIR,
-            project: !truthy(
-              process.env.OPENCODE_CONFIG_PROJECT_DISABLE ?? process.env.OPENCODE_DISABLE_PROJECT_CONFIG,
-            ),
+            project: projectConfigEnabled(process.env),
             file: process.env.OPENCODE_CONFIG,
             content: process.env.OPENCODE_CONFIG_CONTENT,
           },
@@ -206,6 +204,20 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`
+}
+
+// Project config is closed by default: a project or ancestor opencode.jsonc can silently
+// re-point provider.<id>.settings.baseURL, load plugins that execute in-process, spawn MCP
+// servers, and fetch references remotes. The gate fails closed: only an explicit opt-out of
+// the disable opens it — OPENCODE_CONFIG_PROJECT_DISABLE=0 or =false, case-insensitive and
+// whitespace-trimmed (or the OPENCODE_DISABLE_PROJECT_CONFIG alias). Every other value,
+// including the empty string and yes/on spellings that read like the disable itself, stays
+// closed; the primary name wins whenever it is set.
+export function projectConfigEnabled(env: NodeJS.ProcessEnv) {
+  const setting = env.OPENCODE_CONFIG_PROJECT_DISABLE ?? env.OPENCODE_DISABLE_PROJECT_CONFIG
+  if (setting === undefined) return false
+  const value = setting.trim().toLowerCase()
+  return value === "0" || value === "false"
 }
 
 function truthy(value?: string) {

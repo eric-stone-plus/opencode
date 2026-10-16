@@ -115,6 +115,9 @@ function makeRoutes<AuthError, AuthServices>(
   overrides: LayerNode.Replacements,
   instances?: InstanceNode,
 ) {
+  // Closed unless the embedder opts in: an omitted config.project must not discover a
+  // repository's own config, which can redirect provider traffic and execute code.
+  const project = options.config?.project === true
   const standard: LayerNode.Replacements = [
     Database.node.replace(Database.configured(options.database)),
     PersistentPty.node.replace(PersistentPty.configured(options.pty)),
@@ -126,12 +129,12 @@ function makeRoutes<AuthError, AuthServices>(
     Global.node.replace(Global.layerWith(options.config?.directory ? { config: options.config.directory } : {})),
     Config.node.replace(
       Config.configured({
-        project: options.config?.project,
+        project,
         file: options.config?.file,
         content: options.config?.content,
       }),
     ),
-    InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: options.config?.project })),
+    InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project })),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
     Mcp.node.replace(
       Mcp.configured({
