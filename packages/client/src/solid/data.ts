@@ -2020,8 +2020,9 @@ export function createData(config: CreateDataInput) {
         }),
       },
       lspStatus: locationResource("lspStatus", async (location) => {
-        // `fork.lsp` is a plugin-registered effect-schema RPC, so it has no portable
-        // definition for the typed helper; call the generic transport directly.
+        // `fork.lsp` is not a PortableDefinition, so the promise client's typed rpc helper rejects
+        // it (the effect client's helper accepts it, which is why the CLI can use the typed path);
+        // call the generic transport instead.
         const response = await api().rpc.call({
           rpcID: "fork.lsp",
           method: "status",
