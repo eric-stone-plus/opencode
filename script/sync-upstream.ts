@@ -474,16 +474,21 @@ async function previouslyVendored(destination: string): Promise<Set<string>> {
   return new Set([...text.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].flatMap((match) => (match[1] ? [match[1]] : [])))
 }
 
-// Goal-mode config distribution. Managed content (AGENTS.goal.md,
-// autonomy.md) is replaced on every sync. The agent definition is a seed:
-// installed only when absent, so per-machine tuning (e.g. pinned model or
-// variant) survives subsequent syncs. The goal objective is no longer set by a
-// /goal command (removed) — goal mode seeds its own goal file.
+// Mode-card distribution. The two mode cards (`agent/auto.md`, `agent/goal.md`)
+// and the seat rules file (`AGENTS.md`) are MANAGED: they converge on every sync
+// and `check-drift` compares them byte-for-byte against this checkout. They are
+// the single source of the mode architecture (owner decision 2026-10-16), so
+// per-machine tuning does not live in them — pin a model or variant in
+// `opencode.jsonc` (`agent.<id>.model`), which is operator state and never
+// overwritten. The retired instruction documents (`autonomy.md`,
+// `AGENTS.goal.md`) are removed on every sync: their content moved into the
+// cards, and opencode.jsonc no longer lists them.
 export async function installGoalConfig(source: string, configDir: string) {
   const report: string[] = []
   const managed: Array<[string, string]> = [
-    ["AGENTS.goal.md", "AGENTS.goal.md"],
-    ["autonomy.md", "autonomy.md"],
+    ["AGENTS.md", "AGENTS.md"],
+    ["agent/auto.md", "agent/auto.md"],
+    ["agent/goal.md", "agent/goal.md"],
   ]
   for (const [relSrc, relDest] of managed) {
     const src = path.join(source, relSrc)
@@ -494,16 +499,11 @@ export async function installGoalConfig(source: string, configDir: string) {
     await copyFile(src, dest)
     report.push(`installed ${dest}`)
   }
-  const agentSrc = path.join(source, "agent/goal.md")
-  if (existsSync(agentSrc)) {
-    const agentDest = path.join(configDir, "agent/goal.md")
-    await mkdir(path.dirname(agentDest), { recursive: true })
-    if (existsSync(agentDest)) {
-      report.push(`kept existing ${agentDest} (agent definition is a seed)`)
-    } else {
-      await copyFile(agentSrc, agentDest)
-      report.push(`installed ${agentDest}`)
-    }
+  for (const rel of ["AGENTS.goal.md", "autonomy.md"]) {
+    const dest = path.join(configDir, rel)
+    if (!existsSync(dest)) continue
+    await rm(dest, { force: true })
+    report.push(`removed ${dest} (retired; content moved into the mode cards)`)
   }
   return report
 }

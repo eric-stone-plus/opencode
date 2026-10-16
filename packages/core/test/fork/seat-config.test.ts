@@ -84,6 +84,39 @@ describe("fork seat config: two profiles", () => {
     expect((trap.decoded.agents?.build?.request?.body as Record<string, unknown> | undefined)?.disabled).toBe(true)
   })
 
+  test("no tracked config carries the retired instructions array", () => {
+    for (const { text } of copies) {
+      expect(text).not.toMatch(/^\s*"instructions"\s*:/m)
+      expect(text).not.toContain("autonomy.md")
+      expect(text).not.toContain("AGENTS.goal.md")
+    }
+  })
+
+  test("the mode cards are mirrored, managed, and keep the two contracts apart", () => {
+    const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8")
+    for (const card of ["agent/auto.md", "agent/goal.md"]) {
+      const body = read(path.join("bootstrap", card))
+      expect(body).toBe(read(path.join("dotfiles/opencode", card)))
+      expect(body).toContain("# Harness")
+      expect(body).toMatch(/^mode: primary$/m)
+      expect(body).toContain("this file is managed")
+    }
+    expect(read("bootstrap/agent/auto.md")).toContain("no Round-1/Round-2 swarm")
+    expect(read("bootstrap/agent/auto.md")).not.toContain("## Round 2")
+    expect(read("bootstrap/agent/goal.md")).toContain("Round 2")
+  })
+
+  test("the retired instruction documents stay deleted", () => {
+    for (const file of [
+      "bootstrap/autonomy.md",
+      "bootstrap/AGENTS.goal.md",
+      "dotfiles/opencode/autonomy.md",
+      "dotfiles/opencode/AGENTS.goal.md",
+    ]) {
+      expect(fs.existsSync(path.join(root, file))).toBe(false)
+    }
+  })
+
   // The unit assertions above only prove what the config *says*. This one boots the real chain in the
   // registration order of PluginInternal.list() — AgentPlugin and PlanPlugin create the primaries in
   // `pre`, ConfigAgentPlugin removes the disabled ones in `post` — and pins the selectable list, so a

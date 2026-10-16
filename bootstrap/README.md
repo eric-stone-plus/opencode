@@ -76,10 +76,12 @@ chmod 755 ~/.opencode/bin/opencode
 (`installTuiConfig`: V2 migrates `tui.json` once and ignores later edits, so it
 reads the repo-root `cli.json` and seeds the seat copy only when that file is
 absent — the seat keeps its own tuning and `check-drift` reports it as a seed,
-not drift), the vendored `skills/` (`installSkills`, rm+cp), and
-`AGENTS.goal.md` + `autonomy.md` (`installGoalConfig`, rm+copyFile), and seeds
-`agent/goal.md`. It does NOT touch `plugin/`, `opencode.jsonc`, `AGENTS.md`, or
-any other `command/*.md` / `agent/*.md`. Run it if you want its pieces.
+not drift), the vendored `skills/` (`installSkills`, rm+cp), and the mode
+architecture (`installGoalConfig`, rm+copyFile): `AGENTS.md` plus both cards
+`agent/auto.md` and `agent/goal.md`. All three are **managed** — they converge on
+every sync — and the retired `autonomy.md` / `AGENTS.goal.md` are deleted from
+the seat. It does NOT touch `plugin/`, `opencode.jsonc`, or `command/*.md`.
+Run it if you want its pieces.
 
 ### Step 3 — this bundle's installer
 
@@ -145,14 +147,14 @@ a *function*).
 | 5 | `~/.config/agent-hooks/*` (4 files) | copy with `sed s\|/home/eric\|$TARGET_HOME\|` |
 | 5b | hook surfaces: `~/.claude/settings.json`, `~/.zcode/settings.json`, `~/.grok/hooks/block-unsafe-kill.json`, `~/.kimi-code/config.toml` | **only if the target file exists** (never created wholesale); rewrites the guard *path token* to the target home (wrapper command + args survive) / inserts the stanza unless a `PreToolUse` hook command already runs the guard (a bare mention such as a permissions entry does not count); edits are spliced into the original text, so JSONC comments and trailing commas survive, and a file needing no change is not rewritten (if a splice is impossible the re-serialization is announced with a WARN naming the backup); backup first; the destination keeps its own file mode (a 0600 settings.json is never downgraded) |
 | 6 | `skills-extra/` → `~/.config/opencode/skills/` | collision-checked: identical = skip, differing = one timestamped backup + **left in place** (never rm/overwrite; merge by hand) |
-| 7 | `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}` | copies, as-is |
-| 8 | `agent/` goal file, `autonomy.md`, `AGENTS.goal.md` | only those shipped in the bundle; the two `instructions` files (`autonomy.md`, `AGENTS.goal.md`) converge on every run, `agent/goal.md` is a seed (installed only when absent). There is no `command/goal.md`: the `/goal` command was removed |
+| 7 | `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,open-code-review.ts}` | copies, as-is; a stale `plugin/mpskills-update.ts` is backed up and removed (skills freeze, 2026-10-16) |
+| 8 | `AGENTS.md`, `agent/auto.md`, `agent/goal.md` | all three **managed** (converge on every run; `check-drift` compares them byte-for-byte against this bundle). The retired `autonomy.md` / `AGENTS.goal.md` are deleted from the seat, and `opencode.jsonc` carries no `instructions` array. There is no `command/goal.md`: the `/goal` command was removed |
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
 Explicit non-goals (owned by `script/sync-upstream.ts` or by hand):
-`tui.json`, the vendored `skills/` set, `AGENTS.md`, the real binary.
-(`autonomy.md` and `AGENTS.goal.md` are installed by both:
-same content, same replace-in-place policy.)
+`tui.json`, the vendored `skills/` set, the real binary.
+(`AGENTS.md` and both mode cards are installed by both: same content, same
+replace-in-place policy.)
 
 **SYMLINK RULE.** Individual *file* symlinks into a git checkout are safe and
 better (live-edit). *Directory* symlinks for `skills/` and `command/` are
@@ -292,6 +294,31 @@ target home): `~/.claude/settings.json:20`, `~/.zcode/settings.json:8`,
 `~/.kimi-code/config.toml:69-73`, and the fifth surface is the opencode plugin
 port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 
+### Updating the vendored skills
+
+The mattpocock set under `skills/` is **frozen** (owner decision 2026-10-16):
+nothing refreshes it while the agent runs. `skills/PROVENANCE.md` records the
+pinned revision, and `bun run check-drift` compares the installed seat tree
+against this checkout, so a hand-edit or a stray refresh shows up as drift.
+
+Updating is an explicit, operator-run task:
+
+```sh
+git -C ~/.cache/opencode/mattpocock-upstream fetch origin main
+git -C ~/.cache/opencode/mattpocock-upstream checkout <ref>
+bun run update-skills --source ~/.cache/opencode/mattpocock-upstream
+git diff --stat skills                    # review: vendoring is deterministic
+git add skills && git commit -m "chore: vendor mattpocock skills (<ref8>)"
+bun run check-drift                       # seat now matches the new pin
+```
+
+`update-skills` re-vendors `skills/` from the checkout (re-applying the UNFLAG
+and description patches in `script/vendor-skills.ts`), reinstalls it to
+`~/.config/opencode/skills/` with the same rm+cp-per-skill policy the sync uses,
+and prints the revision plus a commit-message suggestion. It never fetches,
+never commits, and never pushes — those are the operator's steps, and
+`script/skills-freeze.test.ts` fails if that changes.
+
 ---
 
 ## 5. Precision boundary
@@ -305,17 +332,24 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
   with the auto/goal colors).
 * The kill-guard battery and its five wirings.
 * Plugin set: `block-unsafe-kill.ts`, `secret-path-guard.ts`, `local-tools.ts`
-  (drawio/marker/planning tools), `skill-hints.ts`, `mpskills-update.ts`,
-  `open-code-review.ts` — all V2-API.
+  (drawio/marker/planning tools), `skill-hints.ts`, `open-code-review.ts` — all
+  V2-API. The vendored-skills auto-updater (`mpskills-update.ts`) was **deleted**
+  on 2026-10-16: the skill set is frozen and updating it is an explicit operator
+  task (§4 "Updating the vendored skills").
 * Orphan skill `longrun-stability-audit`.
-* Goal-mode files `agent/goal.md`, `autonomy.md`,
-  `AGENTS.goal.md` (when shipped — see bundle layout). There is no `/goal`
-  command: goal mode seeds and owns its goal file. The swarm playbook is the
-  default for **both** primaries: goal's prompt body names it, and auto's
-  standing card carries the same mandate, so an auto session fans out instead
-  of working single-threaded. Goal seeding/steering and
-  the mode cards are fork plugins (`packages/core/src/plugin/fork/modes.ts`),
-  so a machine-B build must come from this repo.
+* Mode architecture (owner decision 2026-10-16): two primary cards,
+  `agent/auto.md` (fast problem solving: execute, self-verify with the work's own
+  checks, report terse — no swarm) and `agent/goal.md` (flawless delivery
+  closure: the adversarial swarm playbook, exhaustive discussion, the
+  confirmed/killed/single-source report). The card body **replaces** the harness
+  system prompt (`packages/core/src/session/model-request.ts:117-121`), so each
+  card carries its own `# Harness` section. The seat rules file `AGENTS.md` is
+  now managed too and carries the no-self-evolution rule (the seat is read-only
+  during work; no runtime writers; no auto-commits). There is no `/goal`
+  command: goal mode seeds and owns its goal file. Goal seeding/steering and the
+  mode cards are fork plugins
+  (`packages/core/src/plugin/fork/modes.ts`), so a machine-B build must come
+  from this repo.
 * The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
   machine-A `~/.bashrc` verbatim **except** the egress probe set: since
   2026-10-15 V3 it extracts every `baseURL` from `opencode.jsonc` and probes
@@ -328,13 +362,14 @@ port itself `~/.config/opencode/plugin/block-unsafe-kill.ts`.
 * **Secret values** — re-seed per §3.
 * **fcitx5 IME surface** — needs the pinned input-method env + desktop stack
   (§3); not required for the seat's text semantics.
-* **`plugin/mpskills-update.ts`** — V2 port (2026-10-12), self-contained: on the
-  first `skill` call in a 24h window it fetches the vendored upstream checkout
-  under `${HOME}/.cache/opencode/`, re-runs `vendor-skills`, reinstalls to
-  `~/.config/opencode/skills`, and commits. It resolves the fork checkout from
-  `OPENCODE_FORK_REPO` (default `${HOME}/Documents/Development/private/agent-design/projects/opencode`)
-  and reuses that checkout's configured `http.proxy` for the fetch, so a
-  censored network needs no extra setup beyond the proxy the fork already has.
+* **`plugin/mpskills-update.ts`** — **deleted 2026-10-16** (skills freeze). It was
+  a V2 port (2026-10-12) that, on the first `skill` call in a 24h window, fetched
+  the vendored upstream checkout under `${HOME}/.cache/opencode/`, re-ran
+  `vendor-skills`, reinstalled to `~/.config/opencode/skills`, and committed —
+  agent-driven self-evolution with no operator in the loop. The replacement is
+  the explicit flow in §4 "Updating the vendored skills"
+  (`bun run update-skills --source <checkout>`), which never fetches and never
+  commits.
 * **`plugin/open-code-review.ts`** — V2 port (2026-10-12) of alibaba/open-code-review
   (header carries the upstream SHA and the local modification list). Registers
   `ocr_review`/`ocr_health` tools + `/ocr-review`/`/ocr-health` commands and
@@ -395,11 +430,9 @@ bootstrap/
 │   ├── secret-path-guard.ts      blocks file tools on credential paths (2026-10-06)
 │   ├── local-tools.ts            drawio/marker/planning tools (V2 port, 2026-10-12)
 │   ├── skill-hints.ts            compaction/PDF nudges as system parts (V2 port, 2026-10-12)
-│   ├── mpskills-update.ts        vendored-skills refresh on skill calls (V2 port, 2026-10-12)
 │   └── open-code-review.ts       ocr tools + commands (V2 port, 2026-10-12)
-├── agent/                        goal.md (goal agent definition)
-├── autonomy.md                   autonomous-execution policy (instructions array)
-└── AGENTS.goal.md                swarm playbook — default for auto and goal (instructions array)
+├── agent/                        auto.md + goal.md (mode cards; managed)
+└── AGENTS.md                     seat rules incl. the no-self-evolution rule (managed)
 ```
 
 ---

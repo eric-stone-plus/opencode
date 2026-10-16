@@ -32,10 +32,11 @@
 #      (4 hook configs IF they exist; the opencode plugin port via step 7)
 #   6  skills-extra/ collision-checked copy (never rm's an existing skill)
 #   7  plugin/: block-unsafe-kill.ts + secret-path-guard.ts + local-tools.ts (drawio/
-#      marker/planning tools) + skill-hints.ts + mpskills-update.ts +
-#      open-code-review.ts copies
-#   8  command/ + agent/ goal files (only those shipped in the bundle),
-#      autonomy.md + AGENTS.goal.md (the `instructions` files; managed)
+#      marker/planning tools) + skill-hints.ts + open-code-review.ts copies
+#   8  command/ + agent/ mode cards (managed: agent/auto.md + agent/goal.md) +
+#      AGENTS.md (the seat rules file, managed). The retired instruction files
+#      (autonomy.md, AGENTS.goal.md) are deleted from the seat: their content
+#      moved into the mode cards and opencode.jsonc no longer lists them.
 #   9  shell/bashrc-opencode-block.sh copied to ~/.config/opencode/shell/ and
 #      sourced from that stable seat path (interactive-only; --no-bashrc skips
 #      the ~/.bashrc edit; older bundle-path source lines are rewritten in
@@ -998,41 +999,57 @@ PL="$TARGET_HOME/.config/opencode/plugin"
 # @opencode/plugin resolve through the host's module shim). local-tools.ts is
 # the V2 port of the old dotfiles/opencode/tools trio; its drawio validator
 # lives at lib/drawio.py (script/install-local-tools.ts deploys it).
-for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts mpskills-update.ts open-code-review.ts; do
-  STAGE_SED=""   # shipped as-is: mpskills-update.ts resolves ${HOME} at run time
+for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
+  STAGE_SED=""   # shipped as-is; the plugins resolve ${HOME} at run time
   install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
 done
+# mpskills-update.ts was deleted on 2026-10-16 (skills freeze: no fetch, no
+# re-vendor, no auto-commit). A stale seat copy would keep refreshing the
+# vendored skills behind the operator's back, so the install removes it.
+if [ -e "$PL/mpskills-update.ts" ] || [ -L "$PL/mpskills-update.ts" ]; then
+  if [ "$DRY_RUN" -eq 0 ]; then
+    backup_file "$PL/mpskills-update.ts"
+    rm -f "$PL/mpskills-update.ts"
+  fi
+  act "retired $PL/mpskills-update.ts (skills are frozen; updates are an operator task)"
+fi
 
-# --- 8. goal agent files -----------------------------------------------------
+# --- 8. mode cards + seat rules ----------------------------------------------
 say ""
-say "-- step 8: agent/ goal files + autonomy.md + AGENTS.goal.md shipped in the bundle"
-# agent/goal.md is a SEED (same contract as script/sync-upstream.ts): installed
-# only when absent, so a per-machine model/variant pin in the file survives
-# re-installs. The seed note inside the file promises exactly this. Everything
-# else here is managed content and converges on every run.
+say "-- step 8: agent mode cards (auto/goal) + AGENTS.md; retire the instruction files"
+# Both mode cards are MANAGED (owner decision 2026-10-16: the mode policy has a
+# single source, and the seat must match this checkout). The old agent/goal.md
+# seed contract is gone with it: a per-machine model or variant pin belongs in
+# opencode.jsonc's `agent.<id>.model`, which is operator state and never
+# overwritten.
 for d in command agent; do
   found=0
   for f in "$BOOTSTRAP_DIR/$d"/*; do
     [ -f "$f" ] || continue
     found=1
     STAGE_SED=""
-    if [ "$d" = "agent" ]; then
-      dst="$CFG/$d/$(basename "$f")"
-      if [ -e "$dst" ] || [ -L "$dst" ]; then
-        note "seed kept $dst (agent definition installed only when absent)"
-        continue
-      fi
-    fi
     install_file "$f" "$CFG/$d/$(basename "$f")"
   done
   [ "$found" -eq 1 ] || say "SKIP  bundle $d/ is empty (nothing to install)"
 done
-# The two instruction files opencode.jsonc's `instructions` array loads.
-# Managed (converge on every run), the same contract sync-upstream applies to
-# its dotfiles/opencode copies of both.
+# The seat rules file was untracked operator state until 2026-10-16; it is now
+# the managed single source (mirrors dotfiles/opencode/AGENTS.md), so a drift
+# check can prove the no-self-evolution rules were not edited in place.
+STAGE_SED=""
+install_file "$BOOTSTRAP_DIR/AGENTS.md" "$CFG/AGENTS.md"
+# Retired instruction documents: their content moved into the mode cards, and
+# opencode.jsonc no longer lists them. Remove a stale seat copy so nothing
+# silently re-loads a policy the cards now own.
 for f in autonomy.md AGENTS.goal.md; do
-  STAGE_SED=""
-  install_file "$BOOTSTRAP_DIR/$f" "$CFG/$f"
+  if [ -e "$CFG/$f" ] || [ -L "$CFG/$f" ]; then
+    if [ "$DRY_RUN" -eq 0 ]; then
+      backup_file "$CFG/$f"
+      rm -f "$CFG/$f"
+    fi
+    act "retired $CFG/$f (content moved into the mode cards)"
+  else
+    note "already absent: $CFG/$f"
+  fi
 done
 
 # --- 9. bashrc egress/TTY wrapper -------------------------------------------

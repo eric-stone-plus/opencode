@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { collectDrift, MANAGED_FILES, MIRROR_FILES, SEED_FILES, summarize } from "./check-drift"
+import { ABSENT_FILES, collectDrift, MANAGED_FILES, MIRROR_FILES, SEED_FILES, summarize } from "./check-drift"
 
 const directories: string[] = []
 
@@ -50,7 +50,12 @@ function row(rows: Awaited<ReturnType<typeof collectDrift>>, label: string) {
   return rows.find((entry) => entry.label === label)
 }
 
-const cleanTotals = { ok: MANAGED_FILES.length + SEED_FILES.length + MIRROR_FILES.length + 5, drift: 0, missing: 0, seed: 0 }
+const cleanTotals = {
+  ok: MANAGED_FILES.length + SEED_FILES.length + MIRROR_FILES.length + ABSENT_FILES.length + 5,
+  drift: 0,
+  missing: 0,
+  seed: 0,
+}
 
 describe("collectDrift", () => {
   test("a mirrored seat reports no drift", async () => {
@@ -60,12 +65,12 @@ describe("collectDrift", () => {
 
   test("a managed file that differs is drift", async () => {
     const { root, home } = await mirror()
-    await write(path.join(home, ".config/opencode/autonomy.md"), "edited\n")
+    await write(path.join(home, ".config/opencode/AGENTS.md"), "edited\n")
     const rows = await collectDrift(root, home)
-    expect(row(rows, "dotfiles/opencode/autonomy.md")).toEqual({
-      label: "dotfiles/opencode/autonomy.md",
+    expect(row(rows, "dotfiles/opencode/AGENTS.md")).toEqual({
+      label: "dotfiles/opencode/AGENTS.md",
       status: "drift",
-      detail: "~/.config/opencode/autonomy.md differs",
+      detail: "~/.config/opencode/AGENTS.md differs",
     })
     expect(summarize(rows).drift).toBe(1)
   })
@@ -86,16 +91,27 @@ describe("collectDrift", () => {
     expect(summarize(rows).drift).toBe(0)
   })
 
-  test("a seed file that differs keeps its status and is not drift", async () => {
+  test("a retired seat file that reappears is drift", async () => {
     const { root, home } = await mirror()
-    await write(path.join(home, ".config/opencode/agent/goal.md"), "machine-pinned model\n")
+    await write(path.join(home, ".config/opencode/plugin/mpskills-update.ts"), "resurrected\n")
     const rows = await collectDrift(root, home)
-    expect(row(rows, "dotfiles/opencode/agent/goal.md")).toEqual({
-      label: "dotfiles/opencode/agent/goal.md",
-      status: "seed",
-      detail: "differs (seed keeps local tuning)",
+    expect(row(rows, "~/.config/opencode/plugin/mpskills-update.ts")).toEqual({
+      label: "~/.config/opencode/plugin/mpskills-update.ts",
+      status: "drift",
+      detail: "removed on purpose (2026-10-16); delete it",
     })
-    expect(summarize(rows).drift).toBe(0)
+    expect(summarize(rows).drift).toBe(1)
+  })
+
+  test("a retired repo file that comes back is drift", async () => {
+    const { root, home } = await mirror()
+    await write(path.join(root, "bootstrap/autonomy.md"), "resurrected\n")
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "bootstrap/autonomy.md")).toEqual({
+      label: "bootstrap/autonomy.md",
+      status: "drift",
+      detail: "removed on purpose (2026-10-16); delete it",
+    })
   })
 
   test("a changed file inside a vendored skill is drift", async () => {
@@ -152,9 +168,9 @@ describe("collectDrift", () => {
 
   test("a bundle copy that diverged from its dotfiles mirror is drift", async () => {
     const { root, home } = await mirror()
-    await write(path.join(root, "bootstrap/AGENTS.goal.md"), "edited bundle copy\n")
+    await write(path.join(root, "bootstrap/agent/auto.md"), "edited bundle copy\n")
     const rows = await collectDrift(root, home)
-    expect(row(rows, "bootstrap/AGENTS.goal.md")?.status).toBe("drift")
+    expect(row(rows, "bootstrap/agent/auto.md")?.status).toBe("drift")
     expect(summarize(rows).drift).toBe(1)
   })
 
@@ -191,7 +207,7 @@ describe("collectDrift", () => {
     // A seed that kept local tuning is not drift, so the audit still passes.
     await write(path.join(home, ".config/opencode/cli.json"), "edited\n")
     expect(await run().exited).toBe(0)
-    await write(path.join(home, ".config/opencode/autonomy.md"), "edited\n")
+    await write(path.join(home, ".config/opencode/AGENTS.md"), "edited\n")
     expect(await run().exited).toBe(1)
   })
 })

@@ -533,13 +533,21 @@ fi
 
 # --- 8. plugins --------------------------------------------------------------
 echo "-- plugin/"
-for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts mpskills-update.ts open-code-review.ts; do
+for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
   if [ -f "$CFG/plugin/$f" ]; then
     pass "plugin/$f present"
   else
     fail "plugin/$f missing"
   fi
 done
+# Skills freeze (2026-10-16): the auto-updater is removed on purpose. A stale
+# seat copy would keep fetching, re-vendoring, and committing behind the
+# operator's back.
+if [ -e "$CFG/plugin/mpskills-update.ts" ]; then
+  fail "plugin/mpskills-update.ts present — removed by the skills freeze; delete it"
+else
+  pass "plugin/mpskills-update.ts absent (skills frozen)"
+fi
 # Support file and skills for the local-tools plugin (script/install-local-tools.ts;
 # the drawio tool fails closed without lib/drawio.py, the skills only lose guidance).
 if [ -f "$CFG/lib/drawio.py" ]; then
@@ -580,40 +588,48 @@ else
   # dependency install failed") has no producer left in the V2 tree.
   n=$(grep -cE 'level=(WARN|ERROR).*message="(failed to load plugin|failed to reload plugins|configured plugin watch failed)"([[:space:]]|$)' "$LOG" 2>/dev/null || true)
   if [ "${n:-0}" -gt 0 ]; then
-    warn "swallowed plugin failure x$n in log — a broken plugin file is the usual cause (mpskills-update.ts resolves \${HOME} and skips a missing script itself)"
+    warn "swallowed plugin failure x$n in log — a broken plugin file is the usual cause (check that each file under plugin/ loads standalone)"
   else
     pass "no swallowed plugin failure in log"
   fi
 fi
 
-# --- 11. goal agent + instructions files -------------------------------------
-echo "-- goal agent + instructions files"
-if [ -f "$BOOTSTRAP_DIR/agent/goal.md" ]; then
-  if [ -f "$CFG/agent/goal.md" ]; then
-    pass "agent/goal.md installed"
-  else
-    fail "agent/goal.md shipped in bundle but missing at $CFG/agent/goal.md"
-  fi
-elif [ -f "$CFG/agent/goal.md" ]; then
-  pass "agent/goal.md present at target (not shipped in this bundle revision)"
-else
-  warn "agent/goal.md absent at target and not shipped in bundle"
-fi
-# The `instructions` files opencode.jsonc loads (autonomy.md, AGENTS.goal.md):
-# a listed-but-missing file silently drops that policy from every session.
-for f in autonomy.md AGENTS.goal.md; do
-  if [ -f "$CFG/$f" ]; then
-    if [ -f "$BOOTSTRAP_DIR/$f" ] && ! cmp -s "$BOOTSTRAP_DIR/$f" "$CFG/$f"; then
-      warn "$f differs from the bundle copy (managed file; re-run install.sh step 8)"
+# --- 11. mode cards + seat rules ---------------------------------------------
+echo "-- mode cards + seat rules"
+# Both cards and the rules file are managed: shipped in the bundle and
+# converging on every install. A missing seat copy silently drops that policy.
+for f in agent/auto.md agent/goal.md AGENTS.md; do
+  if [ -f "$BOOTSTRAP_DIR/$f" ]; then
+    if [ ! -f "$CFG/$f" ]; then
+      fail "$f shipped in bundle but missing at $CFG/$f (install.sh step 8)"
+    elif cmp -s "$BOOTSTRAP_DIR/$f" "$CFG/$f"; then
+      pass "$f installed and matches the bundle (managed)"
     else
-      pass "$f installed (opencode.jsonc instructions)"
+      warn "$f differs from the bundle copy (managed; re-run install.sh step 8)"
     fi
-  elif [ -f "$CFG/opencode.jsonc" ] && ! grep -qF "$f" "$CFG/opencode.jsonc"; then
-    info "$f absent and not listed in opencode.jsonc instructions"
+  elif [ -f "$CFG/$f" ]; then
+    pass "$f present at target (not shipped in this bundle revision)"
   else
-    fail "$f missing at $CFG/$f but listed in opencode.jsonc instructions (install.sh step 8)"
+    warn "$f absent at target and not shipped in bundle"
   fi
 done
+# Retired instruction documents (2026-10-16): their content moved into the mode
+# cards. A stale seat copy would silently re-load a policy the cards now own.
+for f in autonomy.md AGENTS.goal.md; do
+  if [ -e "$CFG/$f" ]; then
+    fail "$f present — retired (content moved into agent/auto.md + agent/goal.md); delete it"
+  else
+    pass "$f absent (retired)"
+  fi
+done
+# opencode.jsonc must not carry the retired `instructions` array: it was the one
+# injection path that bypassed the project trust gate (absolute and ~ entries
+# load unconditionally), and the mode cards own that policy now.
+if [ -f "$CFG/opencode.jsonc" ] && grep -qE '^[[:space:]]*"instructions"[[:space:]]*:' "$CFG/opencode.jsonc"; then
+  fail "opencode.jsonc still lists instructions (retired; the mode cards own this policy)"
+else
+  pass "opencode.jsonc has no instructions array (cards own the policy)"
+fi
 
 echo
 echo "== summary: $FAILS fail(s), $WARNS warn(s) =="

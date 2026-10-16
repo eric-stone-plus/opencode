@@ -101,13 +101,12 @@
     "subagent_depth": 100
   },
   "default_agent": "auto",
-  "instructions": ["~/.config/opencode/autonomy.md", "~/.config/opencode/AGENTS.goal.md"],
   "agent": {
     // Two profiles (owner call 2026-10-14): auto (blue) and goal (red).
     // Explicit colors: without them the TUI picks positionally from
     // [secondary, accent, success, warning, primary, error, info].
     "auto": {
-      "description": "Autonomous mode. Never asks, never blocks: adopts the recommended option and runs to completion.",
+      "description": "Auto mode. Fast, light problem-solving: execute directly, verify with the work's own checks, report terse. Never asks, never blocks.",
       "mode": "primary",
       "color": "#5c9cf5",
       // Variant applies via the same-model gate (agent model must equal
@@ -131,7 +130,7 @@
     // declare it in one place. Same no-interrupt surface as auto: the swarm
     // playbook must never be blocked by a prompt mid-run.
     "goal": {
-      "description": "Goal mode. Every message steers the session goal: run the adversarial subagent swarm playbook from AGENTS.goal.md end to end.",
+      "description": "Goal mode. Every message steers one session goal to a flawless delivery closure (adversarial swarm playbook + closure checklist); discussion and report in Chinese.",
       "mode": "primary",
       "color": "#e06c75",
       "model": "deepseek/deepseek-flash",

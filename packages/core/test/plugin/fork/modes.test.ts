@@ -171,6 +171,25 @@ describe("fork modes: standing mode cards", () => {
     }),
   )
 
+  it.effect("keeps the two contracts apart: auto runs no swarm, goal carries the closure contract", () =>
+    Effect.gen(function* () {
+      const auto = yield* run()
+      const autoContext = request("auto", [Message.user("fix the flaky test")])
+      yield* auto.contextHook(autoContext)
+      const autoCard = modeCardText(autoContext)!
+      expect(autoCard).toContain("goal-only")
+      expect(autoCard).toContain("no mandatory todo list")
+      expect(autoCard).toContain("report terse")
+
+      const goal = yield* run()
+      const goalContext = request("goal", [Message.user("close this out")])
+      yield* goal.contextHook(goalContext)
+      const goalCard = modeCardText(goalContext)!
+      expect(goalCard).toContain("closure checklist")
+      expect(goalCard).toContain("swarm playbook")
+    }),
+  )
+
   it.effect("carries the card on every request while the profile stays active", () =>
     Effect.gen(function* () {
       const { contextHook } = yield* run()

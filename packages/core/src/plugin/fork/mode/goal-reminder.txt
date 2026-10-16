@@ -5,4 +5,6 @@ Session goal:
 ${goal}
 
 The goal is stored at ${path}. If the user's latest message conflicts with this goal, surface the conflict explicitly and follow the user's latest message. Do not let unrelated side work drift the session away from the goal.
+
+Under the goal agent, the swarm playbook and the closure checklist that work this goal to closure live in the agent's own definition — read them there, not from a separate file.
 </system-reminder>

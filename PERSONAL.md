@@ -31,7 +31,7 @@ GitHub Actions is **on** (2026-10-13) with exactly two active workflows — `che
 
 All commands run from the repo root — wherever it is checked out on that machine.
 
-**V2 is the runtime (cutover 2026-10-12).** Upstream promoted its V2 rewrite to `dev`: `packages/opencode` is gone; the product is `packages/cli` on core, server, tui, plugin, protocol, schema, ai and util; the scope is `@opencode/*`; bun >= 1.4.2 is required. The overlay was re-implemented per concern (vendors/update/plugins/modes/runtime/tui/keys/LSP), integrated on `sync-v2`, fast-forwarded into `main`, and pushed. `~/.opencode/bin/opencode` is the V2 build (channel `main`, built from `main`); the pin shim and the seat files were converged by `bootstrap/install.sh`; and the real DB finished its in-place v1->v2 migration on the first V2 start (legacy `session`/`message`/`part` tables stay untouched for rollback). The pre-V2 runtime is tagged `legacy-v1-20261012` (`0f469ae6a8`): read old overlay files with `git show legacy-v1-20261012:packages/opencode/src/<path>`, and rebuild that binary from `git worktree add ../oc-legacy legacy-v1-20261012`. **For experiments, never run a V2 binary against the real data outside `script/sandbox.sh`**; the daily path is the pin shim `~/.local/bin/opencode`. New on V2: the forked LSP runtime (`lsp` tool, edit/write/patch diagnostics feedback, `opencode debug lsp status|diagnostics|symbols|document-symbols`; `OPENCODE_DISABLE_LSP_DOWNLOAD=1` keeps it from auto-installing servers); `opencode auth purge` (removes stored credentials and every stale copy of their values; the TUI `/purge-keys` command drives it); the `/usage` dialog with per-model compaction accounting (`session.stats`); subscription-plan price estimation (a config model declared `cost: 0,0` gets catalog pricing through the canonical-provider cascade); and a fully V2-native plugin set — `block-unsafe-kill`, `secret-path-guard`, `local-tools` (`drawio`/`marker`/`planning` tools), `skill-hints`, `mpskills-update`, `open-code-review`, all installed by `bootstrap/install.sh` (the V1-API park at `bootstrap/plugin-v1/` is retired). Ported overlay behaviors beyond the list below: the skill-autonomy contract rides on skill load (`packages/core/src/plugin/fork/autonomy.ts`); the default effort is the variant ladder top (`Variant.effective`, mirrored by the TUI prompt display); advertised 1M contexts compact around the **256k** working window (a per-model `workingContextCap` pin raises it up to the model's own budget); `options.maxOutputTokens` caps the request budget while the catalog `limit.output` stays the capability; DashScope `data_inspection_failed` classifies correctly (`packages/ai/src/provider-error.ts`); and the built-in web-search provider integrations are removed (`2d45fd42a9`) — the integration surface keeps only the supported vendor (DeepSeek; Zhipu/Z.AI went on 2026-10-14 with ADR 0006, and Alibaba plus the Xiaomi plans on 2026-10-15 with ADR 0009), a search provider is opt-in through an external plugin's `ctx.websearch.transform` (firecrawl included), and no Exa/Firecrawl/Parallel/Tavily/TinyFish entry exists anywhere in the source. **Historical notes below that cite `packages/opencode/src/...` paths describe the V1 runtime; treat them as history unless re-ported.**
+**V2 is the runtime (cutover 2026-10-12).** Upstream promoted its V2 rewrite to `dev`: `packages/opencode` is gone; the product is `packages/cli` on core, server, tui, plugin, protocol, schema, ai and util; the scope is `@opencode/*`; bun >= 1.4.2 is required. The overlay was re-implemented per concern (vendors/update/plugins/modes/runtime/tui/keys/LSP), integrated on `sync-v2`, fast-forwarded into `main`, and pushed. `~/.opencode/bin/opencode` is the V2 build (channel `main`, built from `main`); the pin shim and the seat files were converged by `bootstrap/install.sh`; and the real DB finished its in-place v1->v2 migration on the first V2 start (legacy `session`/`message`/`part` tables stay untouched for rollback). The pre-V2 runtime is tagged `legacy-v1-20261012` (`0f469ae6a8`): read old overlay files with `git show legacy-v1-20261012:packages/opencode/src/<path>`, and rebuild that binary from `git worktree add ../oc-legacy legacy-v1-20261012`. **For experiments, never run a V2 binary against the real data outside `script/sandbox.sh`**; the daily path is the pin shim `~/.local/bin/opencode`. New on V2: the forked LSP runtime (`lsp` tool, edit/write/patch diagnostics feedback, `opencode debug lsp status|diagnostics|symbols|document-symbols`; `OPENCODE_DISABLE_LSP_DOWNLOAD=1` keeps it from auto-installing servers); `opencode auth purge` (removes stored credentials and every stale copy of their values; the TUI `/purge-keys` command drives it); the `/usage` dialog with per-model compaction accounting (`session.stats`); subscription-plan price estimation (a config model declared `cost: 0,0` gets catalog pricing through the canonical-provider cascade); and a fully V2-native plugin set — `block-unsafe-kill`, `secret-path-guard`, `local-tools` (`drawio`/`marker`/`planning` tools), `skill-hints`, `open-code-review`, all installed by `bootstrap/install.sh` (the V1-API park at `bootstrap/plugin-v1/` is retired; the `mpskills-update` skills auto-updater was deleted 2026-10-16 — see the two-mode entry at the end of this file). Ported overlay behaviors beyond the list below: the skill-autonomy contract rides on skill load (`packages/core/src/plugin/fork/autonomy.ts`); the default effort is the variant ladder top (`Variant.effective`, mirrored by the TUI prompt display); advertised 1M contexts compact around the **256k** working window (a per-model `workingContextCap` pin raises it up to the model's own budget); `options.maxOutputTokens` caps the request budget while the catalog `limit.output` stays the capability; DashScope `data_inspection_failed` classifies correctly (`packages/ai/src/provider-error.ts`); and the built-in web-search provider integrations are removed (`2d45fd42a9`) — the integration surface keeps only the supported vendor (DeepSeek; Zhipu/Z.AI went on 2026-10-14 with ADR 0006, and Alibaba plus the Xiaomi plans on 2026-10-15 with ADR 0009), a search provider is opt-in through an external plugin's `ctx.websearch.transform` (firecrawl included), and no Exa/Firecrawl/Parallel/Tavily/TinyFish entry exists anywhere in the source. **Historical notes below that cite `packages/opencode/src/...` paths describe the V1 runtime; treat them as history unless re-ported.**
 
 Catch up to official (fetch `upstream/dev`, **merge** into `main` — rerere records recurring conflict resolutions, build, push `origin/main`, install binary):
 
@@ -85,7 +85,7 @@ In the TUI: `/usage` shows per-session and per-model usage with compaction accou
 1. All custom work lands as commits on **`main`**, stacked on top of `upstream/dev`.
 2. Commit prefix for overlay work: `eric: …` (matches existing history).
 3. **Upstream sync is merge-based** (since 2026-09-28): rebases were abandoned in practice — reflog shows merges since Sep 17; a rebase would flatten those conflict resolutions and replay ~45 commits. The script enables `rerere.enabled` so recurring conflicts (e.g. the Zen-provider deletion) auto-resolve after the first manual resolution. Pushes are normal (no force) because merges never rewrite history.
-4. `~/.config/opencode/opencode.jsonc` (provider/model) is local-only. `cli.json` is in the repo; deployment is a separate step — `installTuiConfig` in `sync-upstream` reads the repo-root `cli.json` and seeds the seat copy only when it is absent, so the seat keeps its own tuning and `check-drift` reports the file as a seed rather than drift (closed 2026-10-15; the earlier note described a `dotfiles/opencode/cli.json` that does not exist). Launching from `$HOME` does **not** read the repo-root file. Same for `skills/`: it is in the repo, generated by `bun run vendor-skills`, and `sync-upstream` installs it to `~/.config/opencode/skills/`. Same for goal mode: `dotfiles/opencode/{agent/goal.md,AGENTS.goal.md,autonomy.md}` — `sync-upstream` installs them (AGENTS.goal.md + autonomy.md replace in place; `agent/goal.md` is a seed, installed only when absent so per-machine model pinning survives). There is **no** `command/goal.md` anymore (the `/goal` command was removed 2026-10-06 — goal mode owns its objective; see the reminders entry below). The `instructions` entries pointing at `autonomy.md` and `AGENTS.goal.md` are **one-time manual lines** in the local `opencode.jsonc`.
+4. `~/.config/opencode/opencode.jsonc` (provider/model) is local-only. `cli.json` is in the repo; deployment is a separate step — `installTuiConfig` in `sync-upstream` reads the repo-root `cli.json` and seeds the seat copy only when it is absent, so the seat keeps its own tuning and `check-drift` reports the file as a seed rather than drift (closed 2026-10-15; the earlier note described a `dotfiles/opencode/cli.json` that does not exist). Launching from `$HOME` does **not** read the repo-root file. Same for `skills/`: it is in the repo, generated by `bun run vendor-skills`, and `sync-upstream` installs it to `~/.config/opencode/skills/`. Same for goal mode: `dotfiles/opencode/{agent/auto.md,agent/goal.md,AGENTS.md}` — `sync-upstream` installs all three as **managed** (converge on every run; `AGENTS.md` and both cards are compared byte-for-byte by `check-drift`). The two retired instruction documents (`AGENTS.goal.md`, `autonomy.md`) and the `instructions` array they were loaded through are **gone** (2026-10-16): the mode policy has one source, the cards. There is **no** `command/goal.md` anymore (the `/goal` command was removed 2026-10-06 — goal mode owns its objective; see the reminders entry below).
 
 If a merge conflict hits a file you patched, keep the personal behavior unless the owner says otherwise.
 
@@ -163,14 +163,29 @@ cp cli.json ~/.config/opencode/cli.json   # from the repo root
 
 Opening a repository can execute code at session start with no prompt: `.opencode/plugin/` and `.opencode/plugins/` are imported automatically (discovery walks upward from the session's location directory with no stop boundary — `config/discovery.ts:33-35` — and every `.opencode` found on the way is collected at `:66-69`; the chain is `config/plugin/source.ts:127-133` → `plugin/source-directory.ts:7`, `:21-32` → `plugin/module.ts:120-124`, which imports the module and runs its `effect`/`setup`), a config document's `plugins` array is imported the same way (`config/plugin/source.ts:134-147`), and MCP `command` servers from project config are spawned asynchronously when a Location starts (`config/plugin/mcp.ts:39-56` → `mcp/index.ts:537-559` → `mcp/stdio.ts:84-96`; `disabled: true` opts out). A config `lsp.<name>.command` is the same class of vector: it replaces the server spawn (`fork/lsp/lsp.ts:119-135`) and runs on the first file touch or read warmup. The only veto is the managed policy layer — config `experimental.policies` documents, enforced as `integration.use plugin:<target>` (`plugin/module.ts:52-59`) and through the MCP/skill/provider transforms — which defaults to **allow** when none is configured (`managed-policy.ts:69-77`); the Console organization-statement path has no in-tree producer, and this seat carries no policy.
 
-Escape hatch for untrusted trees: project config is **closed by default** (2026-10-16). `config.project` is
-false unless `OPENCODE_CONFIG_PROJECT_DISABLE` (alias `OPENCODE_DISABLE_PROJECT_CONFIG`) is set to exactly `0`
-or case-insensitive `false`; every other value, including `yes`, `on`, `""`, and `1`, keeps it closed
-(`cli/src/server-process.ts` `projectConfigEnabled`; embedders go through `server/src/routes.ts`
-`project === true`). The value is read once when the server process starts, so exporting it later in a client
-does nothing to an already-running shared server. Trade-offs: this repo's own `.opencode/` config, upward
-project instruction discovery (`instruction-discovery.ts:99`), and the read-triggered nested `AGENTS.md`
-injection (`tool/plugin/read.ts`) now all require the `=0` opt-in.
+Escape hatch for untrusted trees: project config loads only under a **declared** trust (2026-10-16).
+`packages/core/src/fork/project-trust.ts` is the primitive: `{all, roots}`, closed by default, `allows`
+answers a directory, `nearestRoot` bounds an upward walk, and `make()` freezes the declaration so no
+in-process consumer can widen it. The operator declares trust in `<global config dir>/trusted-roots` — one
+absolute path per line, `#` comments, relative/glob/tilde lines ignored with a reason, fail-closed on a read
+error. The CLI reads it once at server start (`packages/cli/src/server-process.ts`), passes
+`config: { project, trust }` to the server, and `packages/server/src/routes.ts:139` installs it with
+`ProjectTrust.node.replace(ProjectTrust.layer(...))`; an absent declaration is the closed service. The
+three-state env override survives as the historical escape hatch: `OPENCODE_CONFIG_PROJECT_DISABLE` (alias
+`OPENCODE_DISABLE_PROJECT_CONFIG`) set to exactly `0` or case-insensitive `false` means `project: true` +
+trust ALL; an explicit disable value means `project: false` hard off; unset means `project: true` + the
+file's declaration. `Config.configured()` declares the ProjectTrust dep, so a host's replacement is visible
+to its layer (missing that dep was the defect that turned 86 tests red on 2026-10-16). The value is read
+once when the server process starts, so exporting it later in a client does nothing to an already-running
+shared server.
+
+Consequences: this repo's own `.opencode/` config, upward project instruction discovery
+(`instruction-discovery.ts:99`), and the read-triggered nested `AGENTS.md` guidance all require a
+declaration. The read path no longer publishes a durable synthetic instruction message — that module
+(`packages/core/src/session/instructions.ts`) is deleted — and instead appends the guidance to the read
+tool's own result as an escaped, size-capped `<context key="read-instructions">` block, walking up only as
+far as the nearest declared root. **This seat declares nothing yet** (`~/.config/opencode/trusted-roots`
+does not exist), so project-side config is closed here; create that file with the checkout roots to opt in.
 
 Permission rule order (pinned, not a deny guarantee): `Permission.evaluate` scans with `Array.findLast` (`permission.ts:87-97`) — the **last** matching rule wins, and no match asks. Rulesets merge flat in load order, and documents load managedPolicies → wellknown → global → explicit → direct → project → content → managedSettings (`config.ts:280-287`; ADR 0008), so a project document can re-allow what a global one denied, while a managed settings document (loaded last) overrides both; document-level permissions are appended to every agent and then `agents.<id>.permissions` append after (`config/plugin/agent.ts:84-92`, `:121-124`), so write the deny last to beat a broader allow. Saved approvals land after configured rules, but a configured deny short-circuits before they are consulted (`permission.ts:165-177`): a saved allow elevates an `ask` and never overrides a `deny`. Pinned by `packages/core/test/permission-precedence.test.ts`; a failure there means a deliberate decision about the ordering is due — do not "fix" `findLast` without an upstream design change.
 
@@ -532,8 +547,8 @@ parameter optimization lands in the same commit.
 | Surface | Change | Why |
 | --- | --- | --- |
 | `packages/core/src/plugin/fork/mode/auto.txt` | standing card gains the swarm mandate | the card is the only per-agent injection point that reaches the wire (`modes.ts:92-103` → `cards.ts:14-16` → `model-request.ts:431-439,245-257,288`); the `instructions` files are session-wide and leak into subagents |
-| `dotfiles/opencode/AGENTS.goal.md:7` | trigger covers `auto` as well as `goal` | the playbook must describe itself the way the cards invoke it |
-| `dotfiles/opencode/autonomy.md:9` | "Research defaults to the swarm" bullet | auto's policy file, and the only part that needs no rebuild |
+| `dotfiles/opencode/AGENTS.goal.md:7` | trigger covers `auto` as well as `goal` | the playbook must describe itself the way the cards invoke it (superseded 2026-10-16: the file is deleted, the two contracts live in `agent/auto.md` + `agent/goal.md`) |
+| `dotfiles/opencode/autonomy.md:9` | "Research defaults to the swarm" bullet | auto's policy file, and the only part that needs no rebuild (superseded 2026-10-16: the file is deleted) |
 | `opencode.jsonc` (3 copies, kept byte-identical — verify with `sha256sum`, never pin the digest in prose) | `experimental.subagent_depth: 100`; `agent.general.permission.task` dropped; `provider.deepseek.options.headerTimeout: 600000` | nesting is allowed for a swarm of swarms, and 100 is "no limit" in practice (the schema is `NonNegativeInt` with no maximum, and no real tree reaches 100 levels — the owner asked for no artificial cap, and fan-out width was never capped either); `general` may fan out while `explore` keeps its read-only surface; DeepSeek queues instead of rejecting and only closes an unstarted request after 10 minutes, so the 300 s default header timeout would give up first |
 | `bootstrap/config/environment.d/20-opencode-http.conf` + install.sh pin | `BUN_CONFIG_MAX_HTTP_REQUESTS=4096` | Bun caps in-flight `fetch` at 256 per process, **globally and for the whole response body including SSE streams**. Measured 2026-10-15: default → 3000 requests peak at 256 in flight, 6019 ms, 11.7 waves; `=4096` → all 3000 in flight, 612 ms (9.8x); N=5000 → peak 4096, no internal clamp below the configured value. 4096 sits **above** DeepSeek's account ceiling on purpose (2500 for `deepseek-flash`), so the client never queues before the provider does |
 | `packages/core/src/plugin/fork/modes.ts:92-100` | comment corrected, behavior unchanged | the standing card keys on the session's agent and is **not** parentID-guarded; only the goal card is. A child session that resolves to `auto` (API `session.create` with `agent`, `switchAgent`, command subagents, or an omitted agent falling back to `default_agent`) keeps its profile framing |
@@ -541,7 +556,8 @@ parameter optimization lands in the same commit.
 
 The card is baked into the binary at compile time, so a seat picks the swarm default up only after
 `bun run sync-upstream` (or a manual rebuild) plus a restart; `autonomy.md` and the config take effect
-without a rebuild.
+without a rebuild. (Superseded 2026-10-16: `auto` no longer carries the swarm default and `autonomy.md` is
+deleted — see the two-mode entry at the end of this file.)
 
 ### Measured (2026-10-15)
 
@@ -981,3 +997,45 @@ cli 313 (309 / 4 / 0), server 86 (85 / 1 / 0), root `bun run check` 35/35. Axis 
 `/tmp/opencode/a1-treesitter/`, `a3b-gate/`, `a4a-install/`, `a4ab-install/`, `a4b-proto/`, `a5-pricing/`,
 `a6-escape/`, `a7-escape/`, `a8-escape/`, the five attacker reports under `/tmp/opencode/attack-r2-*/`, and the
 gate logs `/tmp/opencode/main/gate*.txt`.
+
+## 2026-10-16: two modes (`auto` / `goal`), a frozen skill set, and no self-evolution
+
+Owner call: the swarm playbook was the default for **both** primaries (2026-10-15 entry above), and the
+agent could rewrite its own seat — `mpskills-update.ts` fetched, re-vendored, and committed the skill set
+from inside a session, and the mode policy arrived through three mechanisms with no single source. Three
+things changed in one pass (ADR 0011):
+
+1. **Two contracts, one source each.** `auto` = fast problem solving: execute directly, verify with the
+   work's own checks, report terse; no swarm, no long discussion. `goal` = flawless delivery closure: the
+   adversarial swarm playbook (todo list, Round-1 parallel axes, Round-2 attackers, personal adjudication,
+   full gates, confirmed/killed/single-source report), report in Chinese. The cards
+   (`bootstrap/agent/auto.md`, `bootstrap/agent/goal.md`) are **managed** and are the only source; the
+   `instructions` array and both instruction documents (`autonomy.md`, `AGENTS.goal.md`) are deleted.
+   That array was also the one injection path that bypassed the project trust gate (absolute and `~`
+   entries load unconditionally), so deleting it closes a hole as well as removing a third source.
+
+   A card body **replaces** the harness system prompt
+   (`packages/core/src/session/model-request.ts:117-121`), so each card carries its own `# Harness`
+   section; without it the card would drop the GFM/system-reminder/tool conventions. The goal card is
+   12.3 KB, above the 12 KB instruction budget, which is the mechanical reason the playbook cannot also
+   live in an instruction file.
+
+2. **Skills frozen.** `bootstrap/plugin/mpskills-update.ts` (461 lines: fetch, re-vendor, `git commit`)
+   is deleted, along with its test and every wiring line (`install.sh` step 7, `verify.sh`,
+   `check-drift.ts`, `bootstrap/README.md`). `skills/PROVENANCE.md` records the pin, and the replacement
+   is the explicit operator flow `bun run update-skills --source <checkout>` — re-vendor + install, never
+   fetch, never commit. Re-running it at the same revision reproduced the tree byte-for-byte except the
+   provenance template (27 skills, 52 files), which is the determinism evidence.
+
+3. **No self-evolution.** `~/.config/opencode/AGENTS.md` (10,342 B) had **no tracked copy** in the repo —
+   the one file an agent could rewrite with no drift detection. It is now tracked
+   (`bootstrap/AGENTS.md` ↔ `dotfiles/opencode/AGENTS.md`), managed, and carries a new
+   "## Seat architecture: no self-evolution" section: the seat is read-only during work; no plugin or hook
+   may write instructions, skills, cards, or config at run time; no learned state; no auto-commits (a
+   commit happens only when the operator asks for it in the task at hand); skills frozen — with the single
+   exception of an explicit operator request performed as its own reviewed task.
+
+Mechanical pins: `script/check-drift.ts` grew ABSENT rows (repo and seat side) for the six retired files
+and compares `AGENTS.md` plus both cards byte-for-byte; `script/skills-freeze.test.ts` fails if any plugin
+regains a git write or a skills-refresh path; `bootstrap/verify.sh` fails on a stale
+`plugin/mpskills-update.ts`, a resurrected instruction file, or an `instructions` key in `opencode.jsonc`.

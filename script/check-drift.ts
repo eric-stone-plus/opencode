@@ -7,9 +7,11 @@
 // Usage:
 //   bun run check-drift [--home <path>] [--root <path>]
 //
-// Exit 1 on drift or a missing required file. `agent/goal.md` and the live
-// `cli.json` are seeds: they are required to exist, but content differences are
-// local tuning and not drift.
+// Exit 1 on drift or a missing required file. The live `cli.json` is a seed:
+// it is required to exist, but content differences are local tuning and not
+// drift. The mode cards (`agent/auto.md`, `agent/goal.md`) and `AGENTS.md` are
+// managed, not seeds: the seat must match this checkout byte-for-byte. Retired
+// files (ABSENT_FILES) must stay absent on both sides.
 //
 // File modes and installer-managed extras outside the mappings below are out of
 // scope (verify.sh covers the executable bits it cares about).
@@ -35,8 +37,9 @@ type Mapping = {
 
 // Managed files: the seat copy must be byte-identical to the repo copy.
 export const MANAGED_FILES: Mapping[] = [
-  { source: "dotfiles/opencode/AGENTS.goal.md", destination: ".config/opencode/AGENTS.goal.md" },
-  { source: "dotfiles/opencode/autonomy.md", destination: ".config/opencode/autonomy.md" },
+  { source: "dotfiles/opencode/AGENTS.md", destination: ".config/opencode/AGENTS.md" },
+  { source: "dotfiles/opencode/agent/auto.md", destination: ".config/opencode/agent/auto.md" },
+  { source: "dotfiles/opencode/agent/goal.md", destination: ".config/opencode/agent/goal.md" },
   { source: "bootstrap/agent-hooks/block-unsafe-kill.sh", destination: ".config/agent-hooks/block-unsafe-kill.sh", home: true },
   { source: "bootstrap/agent-hooks/cases.json", destination: ".config/agent-hooks/cases.json", home: true },
   { source: "bootstrap/agent-hooks/run-cases.sh", destination: ".config/agent-hooks/run-cases.sh", home: true },
@@ -45,7 +48,6 @@ export const MANAGED_FILES: Mapping[] = [
   { source: "bootstrap/plugin/secret-path-guard.ts", destination: ".config/opencode/plugin/secret-path-guard.ts" },
   { source: "bootstrap/plugin/local-tools.ts", destination: ".config/opencode/plugin/local-tools.ts" },
   { source: "bootstrap/plugin/skill-hints.ts", destination: ".config/opencode/plugin/skill-hints.ts" },
-  { source: "bootstrap/plugin/mpskills-update.ts", destination: ".config/opencode/plugin/mpskills-update.ts" },
   { source: "bootstrap/plugin/open-code-review.ts", destination: ".config/opencode/plugin/open-code-review.ts" },
   { source: "bootstrap/shell/bashrc-opencode-block.sh", destination: ".config/opencode/shell/bashrc-opencode-block.sh" },
   { source: "bootstrap/config/environment.d/10-opencode-db.conf", destination: ".config/environment.d/10-opencode-db.conf" },
@@ -59,8 +61,8 @@ export const MANAGED_FILES: Mapping[] = [
 // seat paths sync-upstream fills from dotfiles/; the two repo copies must stay
 // byte-identical or the seat flips sources between runs.
 export const MIRROR_FILES: Array<[string, string]> = [
-  ["bootstrap/AGENTS.goal.md", "dotfiles/opencode/AGENTS.goal.md"],
-  ["bootstrap/autonomy.md", "dotfiles/opencode/autonomy.md"],
+  ["bootstrap/AGENTS.md", "dotfiles/opencode/AGENTS.md"],
+  ["bootstrap/agent/auto.md", "dotfiles/opencode/agent/auto.md"],
   ["bootstrap/agent/goal.md", "dotfiles/opencode/agent/goal.md"],
 ]
 
@@ -68,9 +70,23 @@ export const MIRROR_FILES: Array<[string, string]> = [
 // live `cli.json` is the CLI's own config: V2 migrates tui.json and kv.json into
 // it once and rewrites it as settings change, so the live file legitimately
 // carries client-written keys and byte equality is not a contract.
-export const SEED_FILES: Mapping[] = [
-  { source: "cli.json", destination: ".config/opencode/cli.json" },
-  { source: "dotfiles/opencode/agent/goal.md", destination: ".config/opencode/agent/goal.md" },
+export const SEED_FILES: Mapping[] = [{ source: "cli.json", destination: ".config/opencode/cli.json" }]
+
+// Retired on 2026-10-16. The two instruction documents moved into the mode cards
+// (`agent/auto.md` + `agent/goal.md`) and the skill auto-updater was deleted
+// (skills are frozen at the PROVENANCE revision; updates are an explicit
+// operator task). A row here must stay absent on both sides: the repo growing
+// one back, or the seat keeping one, is drift.
+export const ABSENT_FILES: Array<{ root: "repo" | "seat"; path: string }> = [
+  { root: "repo", path: "bootstrap/plugin/mpskills-update.ts" },
+  { root: "repo", path: "script/mpskills-update.test.ts" },
+  { root: "repo", path: "bootstrap/AGENTS.goal.md" },
+  { root: "repo", path: "bootstrap/autonomy.md" },
+  { root: "repo", path: "dotfiles/opencode/AGENTS.goal.md" },
+  { root: "repo", path: "dotfiles/opencode/autonomy.md" },
+  { root: "seat", path: ".config/opencode/plugin/mpskills-update.ts" },
+  { root: "seat", path: ".config/opencode/AGENTS.goal.md" },
+  { root: "seat", path: ".config/opencode/autonomy.md" },
 ]
 
 async function sameContent(left: string, right: string) {
@@ -139,6 +155,16 @@ async function mirrorRow(root: string, left: string, right: string): Promise<Row
     return { label: left, status: "drift", detail: `differs from ${right}` }
   }
   return { label: left, status: "ok" }
+}
+
+// A retired file: absent is the pass, present is drift on whichever side it
+// reappeared (the repo growing it back, or the seat keeping a stale copy).
+async function absentRow(repo: string, seat: string, entry: { root: "repo" | "seat"; path: string }): Promise<Row> {
+  const target = path.join(entry.root === "repo" ? repo : seat, entry.path)
+  const label = entry.root === "repo" ? entry.path : `~/${entry.path}`
+  return existsSync(target)
+    ? { label, status: "drift", detail: "removed on purpose (2026-10-16); delete it" }
+    : { label, status: "ok" }
 }
 
 async function dirRow(root: string, home: string, source: string, destination: string): Promise<Row> {
@@ -211,6 +237,7 @@ export async function collectDrift(root: string, home: string): Promise<Row[]> {
   return [
     ...(await Promise.all(MANAGED_FILES.map((mapping) => guard(mapping.source, () => fileRow(root, seat, mapping))))),
     ...(await Promise.all(SEED_FILES.map((mapping) => guard(mapping.source, () => fileRow(root, seat, mapping, true))))),
+    ...(await Promise.all(ABSENT_FILES.map((entry) => guard(entry.path, () => absentRow(root, seat, entry))))),
     ...(await Promise.all(MIRROR_FILES.map(([left, right]) => guard(left, () => mirrorRow(root, left, right))))),
     await guard("bootstrap/config/opencode.jsonc", () => configSnapshotRow(root, seat)),
     ...(await skillRows(root, seat)),
