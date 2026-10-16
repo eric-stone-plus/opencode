@@ -880,11 +880,39 @@ substitution test, the registry loader paths, and the tool/MCP registration code
 - Consider making the project-config trust gate the default for trees outside the operator's own
   directories; it is the single switch behind the first eight rows.
 
+### Second pass: the fork-owned LSP surface (independent OCR cross-check)
+
+An OCR scan over `packages/core/src/fork` (11 files, 52 comments: 1 critical, 8 high) plus a code re-read
+found five defects in code this fork owns. All five are fixed in `cee035bdbb`:
+
+| Defect | Why it mattered |
+| --- | --- |
+| `installArchive` joined a release-API `asset.name` into a local path (`servers/managed.ts` → `lsp/server.ts`) | A crafted name with `../` (the `.zip`/`.tar.xz` suffix check still passed) wrote outside the binary directory, and the same name reached the Windows PowerShell command line |
+| The PowerShell extract interpolated both paths into a single-quoted `-Command` string | A path containing `'` (or a backtick) broke out of the quoting; now `-LiteralPath` with doubled quotes |
+| ElixirLS and the ESLint server discarded `Install.run`'s boolean and launched binaries that may not exist | A failed `mix`/`npm` build produced a spawn of a missing file instead of a clear "no server" result |
+| The Biome entry resolved and installed the unscoped `biome` package | Real projects depend on `@biomejs/biome`, so the guard never matched and the installer would have fetched a different (typo-squattable) registry entry |
+| The frame decoder kept buffering after an overflow | A hostile server could declare a frame past the limit and keep writing: the reader only stops on a later chunk (or on server exit, which a hostile one need not do), so the buffer grew without bound. The decoder now marks itself broken and drops the buffer |
+| `pricing.ts` took the first case-insensitive row when two collided | Its own comment and test title state the contract ("only when exactly one matches"), and the lookup guessed between them; the test now pins the refusal |
+
+Regression tests: `test/fork/lsp-jsonrpc.test.ts` (split frames, overflow refusal), the Biome flow and the
+case-collision case in the existing suites, and the whole core suite stays green (6011 pass, 0 fail).
+
+Registered from the same scan, not fixed: downloads still carry no integrity check and several servers build
+from mutable upstream revisions (`refs/heads/master.zip`, `@latest`), which is the same finding the axis reports
+already recorded; the `<diagnostics>` block interpolates a file path and diagnostic messages unescaped (the
+same class as the reference instruction interpolation, and tool results are untrusted by construction); a
+truncated download counts as success when it wrote any bytes. The remaining 28 medium comments are functional
+and robustness defects (dead extension entries, an unremoved jdtls temp directory, doc comments promising
+behaviour the code does not implement, a prototype-bearing lookup keyed by catalog data) and belong to their
+own pass rather than this audit.
+
 ### State after this audit
 
-The rebuilt binary (`0.0.0-main-202610160151`, sha256 `3804fac8cd49b232c8ed4308c8c29671d58a29a14ad77ba8aad8fac770355df6`,
-169,104,864 bytes) is installed at `~/.opencode/bin/opencode` and carries every fix above (verified by a string
-unique to the traversal fix). The running service still holds the pre-audit inode, so the fixes take effect at
+The rebuilt binary (`0.0.0-main-202610160211`, sha256 `9b7293f3a86dd28ceb586a4c1e23ec2c021694763d17e717e918523967f73c30`,
+169,104,864 bytes) is installed at `~/.opencode/bin/opencode` and carries every fix above, including the second
+pass below; it was built from a clean tree at `cee035bdbb`, and a string unique to the traversal fix is present
+(the Windows-only branch of the archive extractor is folded away by the bundler on a Linux target, so the
+`-LiteralPath` change cannot be seen in this artifact). The running service still holds the pre-audit inode, so the fixes take effect at
 the pending restart; the seat's launcher keeps `OPENCODE_DISABLE_MODELS_FETCH` and `OPENCODE_DISABLE_LSP_DOWNLOAD`
 set. Round-1 and Round-2 reports, the OCR cross-check output, and the working ledger stay in
 `/tmp/opencode/sec-s*/`, `/tmp/opencode/attack-sec-*/`, and `/tmp/opencode/main/`.
