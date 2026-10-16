@@ -1,6 +1,6 @@
 import { useFilteredList } from "@opencode/ui/hooks"
 import { getDirectory, getFilename } from "@opencode/util/path"
-import { createSignal, For, onMount, Show, splitProps, type JSX } from "solid-js"
+import { createSignal, createUniqueId, For, onMount, Show, splitProps, type JSX } from "solid-js"
 import { Button } from "@opencode/ui/button"
 import { FileIcon } from "@opencode/ui/file-icon"
 import { Icon } from "@opencode/ui/icon"
@@ -48,6 +48,7 @@ export type LineCommentAnchorProps = {
 }
 
 export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
+  const i18n = useI18n()
   const hidden = () => !props.inline && props.top === undefined
   const variant = () => props.variant ?? "default"
   const icon = () => props.icon ?? "comment"
@@ -80,7 +81,7 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
           <>
             <button
               type="button"
-              aria-label={props.buttonLabel}
+              aria-label={props.buttonLabel ?? i18n.t("ui.lineComment.button")}
               data-slot="line-comment-button"
               onMouseDown={(event) => event.stopPropagation()}
               onMouseUp={(event) => event.stopPropagation()}
@@ -174,6 +175,7 @@ export type LineCommentEditorProps = Omit<LineCommentAnchorProps, "children" | "
 
 export const LineCommentEditor = (props: LineCommentEditorProps) => {
   const i18n = useI18n()
+  const labelId = createUniqueId()
 
   const [split, rest] = splitProps(props, [
     "value",
@@ -313,6 +315,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
           data-slot="line-comment-textarea"
           dir="auto"
           rows={split.rows ?? 3}
+          aria-labelledby={labelId}
           placeholder={split.placeholder ?? i18n.t("ui.lineComment.placeholder")}
           value={split.value}
           style={{ "unicode-bidi": "plaintext", "text-align": "start" }}
@@ -403,7 +406,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
           </div>
         </Show>
         <div data-slot="line-comment-actions">
-          <div data-slot="line-comment-editor-label">
+          <div data-slot="line-comment-editor-label" id={labelId}>
             {i18n.t("ui.lineComment.editorLabel.prefix")}
             {split.selection}
             {i18n.t("ui.lineComment.editorLabel.suffix")}
