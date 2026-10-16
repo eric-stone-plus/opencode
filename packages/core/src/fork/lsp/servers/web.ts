@@ -2,6 +2,9 @@ import { Effect } from "effect"
 import path from "path"
 import { LSPServer } from "../server.js"
 
+// Every npm package below is pinned 2026-10-16 to the version the registry published then; a bare name
+// resolves the mutable `latest` dist-tag at install time. Bump deliberately after reviewing the diff.
+
 /** A server shipped as an npm package: a binary already on PATH wins, otherwise the package is installed. */
 const npmServer = (input: {
   readonly id: string
@@ -25,6 +28,12 @@ const npmServer = (input: {
 
 const JS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]
 
+/**
+ * The launcher suffix npm writes into `node_modules/.bin` on Windows. Spawning the extensionless sh
+ * shim fails there, so every local `.bin` lookup has to name the `.cmd` wrapper instead.
+ */
+export const binSuffix = (platform: NodeJS.Platform) => (platform === "win32" ? ".cmd" : "")
+
 export const Deno: LSPServer.Info = {
   id: "deno",
   extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
@@ -45,7 +54,7 @@ export const Typescript: LSPServer.Info = {
       const tsserver = LSPServer.resolveModule("typescript/lib/tsserver.js", ctx.directory)
       if (!tsserver) return undefined
       // A hand-installed server is preferred; with downloads disabled it is the only source.
-      const binary = ctx.which("typescript-language-server") ?? (yield* ctx.install.npm("typescript-language-server"))
+      const binary = ctx.which("typescript-language-server") ?? (yield* ctx.install.npm("typescript-language-server@6.0.2"))
       if (!binary) return undefined
       return LSPServer.launch(root, binary, ["--stdio"], { initialization: { tsserver: { path: tsserver } } })
     }),
@@ -56,7 +65,7 @@ export const Vue = npmServer({
   extensions: [".vue"],
   root: LSPServer.nearestRoot(LSPServer.JAVASCRIPT_LOCKFILES),
   command: "vue-language-server",
-  pkg: "@vue/language-server",
+  pkg: "@vue/language-server@3.3.13",
   args: ["--stdio"],
   // Left empty on purpose: the server detects the workspace's TypeScript itself.
   initialization: {},
@@ -71,14 +80,24 @@ export const ESLint: LSPServer.Info = {
       if (!LSPServer.resolveModule("eslint", ctx.directory)) return undefined
       const server = path.join(ctx.bin, "vscode-eslint", "server", "out", "eslintServer.js")
       if (!(yield* ctx.fs.existsSafe(server))) {
+        // Pinned 2026-10-16 to the commit of release/3.0.34, the release that was latest then; a branch
+        // archive would run whatever upstream published that day. The source archive has no published
+        // digest, so the commit is the integrity boundary; `npm install` then installs per the archive's
+        // lockfile. Bump deliberately after reviewing the upstream diff.
+        const staging = path.join(ctx.bin, "vscode-eslint-staging")
+        yield* ctx.fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)
         const unpacked = yield* LSPServer.installArchive(ctx, {
-          url: "https://github.com/microsoft/vscode-eslint/archive/refs/heads/main.zip",
+          url: "https://github.com/microsoft/vscode-eslint/archive/de46ae7016bc1682b6f1e0bd18262501b0e202ca.zip",
           name: "vscode-eslint.zip",
+          into: staging,
         })
         if (!unpacked) return undefined
+        const extracted = (yield* ctx.fs.readDirectory(staging).pipe(Effect.orElseSucceed(() => [] as string[])))[0]
+        if (!extracted) return undefined
         const installed = path.join(ctx.bin, "vscode-eslint")
         yield* ctx.fs.remove(installed, { recursive: true, force: true })
-        yield* ctx.fs.rename(path.join(ctx.bin, "vscode-eslint-main"), installed)
+        yield* ctx.fs.rename(path.join(staging, extracted), installed)
+        yield* ctx.fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)
         const npm = process.platform === "win32" ? "npm.cmd" : "npm"
         if (!(yield* ctx.install.run(npm, ["install"], { cwd: installed }))) return undefined
         if (!(yield* ctx.install.run(npm, ["run", "compile"], { cwd: installed }))) return undefined
@@ -97,7 +116,7 @@ export const Oxlint: LSPServer.Info = {
   root: LSPServer.nearestRoot([".oxlintrc.json", ...LSPServer.JAVASCRIPT_LOCKFILES]),
   spawn: (root, ctx) =>
     Effect.gen(function* () {
-      const suffix = process.platform === "win32" ? ".cmd" : ""
+      const suffix = binSuffix(process.platform)
       // A project-local binary first, then one in an ancestor up to the worktree, then PATH.
       const resolve = (name: string) =>
         Effect.gen(function* () {
@@ -132,13 +151,15 @@ export const Biome: LSPServer.Info = {
   root: LSPServer.nearestRoot(["biome.json", "biome.jsonc", ...LSPServer.JAVASCRIPT_LOCKFILES]),
   spawn: (root, ctx) =>
     Effect.gen(function* () {
-      const local = path.join(root, "node_modules", ".bin", "biome")
+      // The project's own root, not the instance directory: Biome resolves the toolchain from the package
+      // that declares the lockfile, which is also where its `node_modules/.bin` wrapper lives.
+      const local = path.join(root, "node_modules", ".bin", `biome${binSuffix(process.platform)}`)
       const found = (yield* ctx.fs.existsSafe(local)) ? local : ctx.which("biome")
       if (found) return LSPServer.launch(root, found, ["lsp-proxy", "--stdio"])
       // The CLI package is scoped: a bare `biome` is a different (typo-squattable) registry entry, and real
       // projects depend on `@biomejs/biome`, so the guard has to look for that name too.
       if (!LSPServer.resolveModule("@biomejs/biome", root)) return undefined
-      const installed = yield* ctx.install.npm("@biomejs/biome")
+      const installed = yield* ctx.install.npm("@biomejs/biome@2.5.15")
       return installed ? LSPServer.launch(root, installed, ["lsp-proxy", "--stdio"]) : undefined
     }),
 }
@@ -148,7 +169,7 @@ export const Svelte = npmServer({
   extensions: [".svelte"],
   root: LSPServer.nearestRoot(LSPServer.JAVASCRIPT_LOCKFILES),
   command: "svelteserver",
-  pkg: "svelte-language-server",
+  pkg: "svelte-language-server@0.18.4",
   args: ["--stdio"],
   initialization: {},
 })
@@ -161,7 +182,7 @@ export const Astro: LSPServer.Info = {
     Effect.gen(function* () {
       const tsserver = LSPServer.resolveModule("typescript/lib/tsserver.js", ctx.directory)
       if (!tsserver) return undefined
-      const binary = ctx.which("astro-ls") ?? (yield* ctx.install.npm("@astrojs/language-server"))
+      const binary = ctx.which("astro-ls") ?? (yield* ctx.install.npm("@astrojs/language-server@2.17.2"))
       if (!binary) return undefined
       return LSPServer.launch(root, binary, ["--stdio"], { initialization: { typescript: { tsdk: path.dirname(tsserver) } } })
     }),
@@ -172,7 +193,7 @@ export const YamlLS = npmServer({
   extensions: [".yaml", ".yml"],
   root: LSPServer.nearestRoot(LSPServer.JAVASCRIPT_LOCKFILES),
   command: "yaml-language-server",
-  pkg: "yaml-language-server",
+  pkg: "yaml-language-server@2.0.0",
   args: ["--stdio"],
 })
 
@@ -181,7 +202,7 @@ export const PHPIntelephense = npmServer({
   extensions: [".php"],
   root: LSPServer.nearestRoot(["composer.json", "composer.lock", ".php-version"]),
   command: "intelephense",
-  pkg: "intelephense",
+  pkg: "intelephense@1.18.5",
   args: ["--stdio"],
   initialization: { telemetry: { enabled: false } },
 })
@@ -189,7 +210,9 @@ export const PHPIntelephense = npmServer({
 export const Prisma: LSPServer.Info = {
   id: "prisma",
   extensions: [".prisma"],
-  root: LSPServer.nearestRoot(["schema.prisma", "prisma/schema.prisma", "prisma"], ["package.json"]),
+  // No `package.json` exclusion: every Node project has one, so excluding it disabled the server for all of
+  // them, schema present or not. The `.prisma` extension plus the schema markers already scope this server.
+  root: LSPServer.nearestRoot(["schema.prisma", "prisma/schema.prisma", "prisma"]),
   spawn: (root, ctx) =>
     Effect.sync(() => {
       const prisma = ctx.which("prisma")
@@ -202,15 +225,17 @@ export const BashLS = npmServer({
   extensions: [".sh", ".bash", ".zsh", ".ksh"],
   root: (_file, ctx) => Effect.succeed(ctx.directory),
   command: "bash-language-server",
-  pkg: "bash-language-server",
+  pkg: "bash-language-server@5.8.1",
   args: ["start"],
 })
 
 export const DockerfileLS = npmServer({
   id: "dockerfile",
-  extensions: [".dockerfile", "Dockerfile"],
+  // A bare "Dockerfile" entry can never match: the matcher compares `path.parse(file).ext || file`, which is
+  // the full path for extensionless files. Basename matching would have to live in lsp.ts.
+  extensions: [".dockerfile"],
   root: (_file, ctx) => Effect.succeed(ctx.directory),
   command: "docker-langserver",
-  pkg: "dockerfile-language-server-nodejs",
+  pkg: "dockerfile-language-server-nodejs@0.15.0",
   args: ["--stdio"],
 })

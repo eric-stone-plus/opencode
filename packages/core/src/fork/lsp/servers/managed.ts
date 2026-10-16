@@ -1,4 +1,5 @@
 import { Effect, Option, Schema } from "effect"
+import { createHash } from "node:crypto"
 import path from "path"
 import { LSPServer } from "../server.js"
 
@@ -8,6 +9,20 @@ import { LSPServer } from "../server.js"
 const arch = (names: Record<string, string>) => names[process.arch] ?? process.arch
 const platform = (names: Record<string, string>) => names[process.platform] ?? process.platform
 
+/** The sha256 a `.sha256` sidecar publishes, or undefined when it holds no 64-hex digest. */
+const sidecarSha256 = (document: string) => /([0-9a-f]{64})\b/i.exec(document)?.[1]?.toLowerCase()
+
+/** The sha256 `list` publishes for the file `url` names, or undefined when no line matches. */
+const checksumSha256 = (list: string, url: string) => {
+  const name = url.split("/").pop()
+  const line = list.split("\n").find((entry) => entry.trim().split(/\s+/).at(-1)?.replace(/^\*/, "") === name)
+  return line ? sidecarSha256(line) : undefined
+}
+
+/** The upstream architecture token for `architecture`, or undefined when upstream publishes no build for it. */
+export const releaseArch = (architecture: NodeJS.Architecture, names: { readonly x64: string; readonly arm64: string }) =>
+  architecture === "x64" ? names.x64 : architecture === "arm64" ? names.arm64 : undefined
+
 export const ElixirLS: LSPServer.Info = {
   id: "elixir-ls",
   extensions: [".ex", ".exs"],
@@ -16,16 +31,29 @@ export const ElixirLS: LSPServer.Info = {
     Effect.gen(function* () {
       const found = ctx.which("elixir-ls")
       if (found) return LSPServer.launch(root, found)
-      const release = path.join(ctx.bin, "elixir-ls-master")
-      const binary = path.join(release, "release", process.platform === "win32" ? "language_server.bat" : "language_server.sh")
+      const source = path.join(ctx.bin, "elixir-ls-source")
+      const binary = path.join(source, "release", process.platform === "win32" ? "language_server.bat" : "language_server.sh")
       if (!(yield* ctx.fs.existsSafe(binary))) {
         if (!ctx.which("elixir")) return undefined
+        // Pinned 2026-10-16 to the commit behind v0.31.1, the release that was latest then; a tag ref can
+        // be force-pushed to different content, so the archive names the commit itself. A branch archive
+        // would build and run whatever upstream published that day. The source archive has no published
+        // digest, so the commit is the integrity boundary here; `mix deps.get` then verifies each
+        // dependency against the archive's mix.lock. Bump deliberately after reviewing the upstream diff.
+        const staging = path.join(ctx.bin, "elixir-ls-staging")
+        yield* ctx.fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)
         const unpacked = yield* LSPServer.installArchive(ctx, {
-          url: "https://github.com/elixir-lsp/elixir-ls/archive/refs/heads/master.zip",
+          url: "https://github.com/elixir-lsp/elixir-ls/archive/256ec7787dc14fa666817199ec6aa5dc64787e37.zip",
           name: "elixir-ls.zip",
+          into: staging,
         })
         if (!unpacked) return undefined
-        const build = { cwd: release, env: { MIX_ENV: "prod" } }
+        const extracted = (yield* ctx.fs.readDirectory(staging).pipe(Effect.orElseSucceed(() => [] as string[])))[0]
+        if (!extracted) return undefined
+        yield* ctx.fs.remove(source, { recursive: true, force: true }).pipe(Effect.ignore)
+        yield* ctx.fs.rename(path.join(staging, extracted), source)
+        yield* ctx.fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)
+        const build = { cwd: source, env: { MIX_ENV: "prod" } }
         if (!(yield* ctx.install.run("mix", ["deps.get"], build))) return undefined
         if (!(yield* ctx.install.run("mix", ["compile"], build))) return undefined
         if (!(yield* ctx.install.run("mix", ["elixir_ls.release2", "-o", "release"], build))) return undefined
@@ -46,6 +74,9 @@ const ZLS_ASSETS = [
   "zls-x86-windows.zip",
 ]
 
+// Pinned 2026-10-16 to the release that was latest then; bump deliberately after reviewing the upstream diff.
+const ZLS_RELEASE = "0.16.0"
+
 export const Zls: LSPServer.Info = {
   id: "zls",
   extensions: [".zig", ".zon"],
@@ -57,8 +88,9 @@ export const Zls: LSPServer.Info = {
       if (!ctx.which("zig")) return undefined
       const name = `zls-${arch({ arm64: "aarch64", x64: "x86_64", ia32: "x86" })}-${platform({ darwin: "macos", win32: "windows" })}.${process.platform === "win32" ? "zip" : "tar.xz"}`
       if (!ZLS_ASSETS.includes(name)) return undefined
-      const url = LSPServer.assetUrl(yield* LSPServer.latestRelease(ctx, "zigtools/zls"), name)
-      if (!url || !(yield* LSPServer.installArchive(ctx, { url, name }))) return undefined
+      const release = yield* LSPServer.releaseByTag(ctx, "zigtools/zls", ZLS_RELEASE)
+      const asset = yield* LSPServer.releaseAsset(release, name)
+      if (!asset || !(yield* LSPServer.installArchive(ctx, { url: asset.url, name, digest: asset.digest }))) return undefined
       const binary = path.join(ctx.bin, `zls${LSPServer.EXE}`)
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)
@@ -78,7 +110,16 @@ const roslyn = (ctx: LSPServer.Context) =>
     )
     if (yield* ctx.fs.existsSafe(global)) return global
     if (!ctx.which("dotnet")) return undefined
-    const installed = yield* ctx.install.run("dotnet", ["tool", "install", "--global", "roslyn-language-server", "--prerelease"])
+    // Pinned 2026-10-16 to the version the feed published then; `--prerelease` would install whatever the
+    // feed serves that day. Bump deliberately after reviewing the upstream diff.
+    const installed = yield* ctx.install.run("dotnet", [
+      "tool",
+      "install",
+      "--global",
+      "roslyn-language-server",
+      "--version",
+      "5.13.0-1.26514.10",
+    ])
     if (!installed) return undefined
     return ctx.which("roslyn-language-server") ?? ((yield* ctx.fs.existsSafe(global)) ? global : undefined)
   })
@@ -96,7 +137,7 @@ export const CSharp: LSPServer.Info = {
     }),
 }
 
-/** The Razor tooling bundled with the VS Code C# extension, newest installation first. */
+/** The Razor tooling bundled with the VS Code C# extension, newest installation across every root. */
 const razorExtension = (ctx: LSPServer.Context) =>
   Effect.gen(function* () {
     const home = ctx.home
@@ -107,30 +148,38 @@ const razorExtension = (ctx: LSPServer.Context) =>
       path.join(home, ".vscode-server", "extensions"),
       path.join(home, ".vscode-server-insiders", "extensions"),
     ].filter((item): item is string => item !== undefined)
-    for (const root of new Set(roots)) {
-      const entries = yield* ctx.fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as string[]))
-      const installations = yield* Effect.forEach(
-        entries.filter((entry) => entry.startsWith("ms-dotnettools.csharp-")),
-        (entry) =>
-          ctx.fs.stat(path.join(root, entry)).pipe(
-            Effect.map((info) => ({ entry, modified: Option.getOrElse(info.mtime, () => new Date(0)).getTime() })),
-            Effect.orElseSucceed(() => ({ entry, modified: 0 })),
-          ),
-      )
-      for (const { entry } of installations.toSorted((a, b) => b.modified - a.modified)) {
-        const extension = path.join(root, entry, ".razorExtension")
-        const found = {
-          compiler: path.join(extension, "Microsoft.CodeAnalysis.Razor.Compiler.dll"),
-          targets: path.join(extension, "Targets", "Microsoft.NET.Sdk.Razor.DesignTime.targets"),
-          extension: path.join(extension, "Microsoft.VisualStudioCode.RazorExtension.dll"),
-        }
-        if (
-          (yield* ctx.fs.existsSafe(found.compiler)) &&
-          (yield* ctx.fs.existsSafe(found.targets)) &&
-          (yield* ctx.fs.existsSafe(found.extension))
+    // Collect every installation from every root first: sorting inside one root would let an older
+    // install in an earlier root shadow a newer one in a later root.
+    const installations = yield* Effect.forEach(new Set(roots), (root) =>
+      Effect.gen(function* () {
+        const entries = yield* ctx.fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as string[]))
+        return yield* Effect.forEach(
+          entries.filter((entry) => entry.startsWith("ms-dotnettools.csharp-")),
+          (entry) =>
+            ctx.fs.stat(path.join(root, entry)).pipe(
+              Effect.map((info) => ({
+                root,
+                entry,
+                modified: Option.getOrElse(info.mtime, () => new Date(0)).getTime(),
+              })),
+              Effect.orElseSucceed(() => ({ root, entry, modified: 0 })),
+            ),
         )
-          return found
+      }),
+    )
+    for (const { root, entry } of installations.flat().toSorted((a, b) => b.modified - a.modified)) {
+      const extension = path.join(root, entry, ".razorExtension")
+      const found = {
+        compiler: path.join(extension, "Microsoft.CodeAnalysis.Razor.Compiler.dll"),
+        targets: path.join(extension, "Targets", "Microsoft.NET.Sdk.Razor.DesignTime.targets"),
+        extension: path.join(extension, "Microsoft.VisualStudioCode.RazorExtension.dll"),
       }
+      if (
+        (yield* ctx.fs.existsSafe(found.compiler)) &&
+        (yield* ctx.fs.existsSafe(found.targets)) &&
+        (yield* ctx.fs.existsSafe(found.extension))
+      )
+        return found
     }
     return undefined
   })
@@ -165,13 +214,18 @@ export const FSharp: LSPServer.Info = {
       const found = ctx.which("fsautocomplete")
       if (found) return LSPServer.launch(root, found)
       if (!ctx.which("dotnet")) return undefined
-      const installed = yield* ctx.install.run("dotnet", ["tool", "install", "fsautocomplete", "--tool-path", ctx.bin])
-      return installed ? LSPServer.launch(root, path.join(ctx.bin, `fsautocomplete${LSPServer.EXE}`)) : undefined
+      // Pinned 2026-10-16 to the version the feed published then; a bare name would install whatever
+      // `dotnet tool install` resolves that day. Bump deliberately after reviewing the upstream diff.
+      const installed = yield* ctx.install.run("dotnet", ["tool", "install", "fsautocomplete", "--version", "0.85.4", "--tool-path", ctx.bin])
+      const binary = path.join(ctx.bin, `fsautocomplete${LSPServer.EXE}`)
+      return installed && (yield* ctx.fs.existsSafe(binary)) ? LSPServer.launch(root, binary) : undefined
     }),
 }
 
 const CLANGD_ARGS = ["--background-index", "--clang-tidy"]
 const CLANGD_PLATFORMS: Record<string, string> = { darwin: "mac", linux: "linux", win32: "windows" }
+// Pinned 2026-10-16 to the release that was latest then; bump deliberately after reviewing the upstream diff.
+const CLANGD_RELEASE = "23.1.0"
 
 export const Clangd: LSPServer.Info = {
   id: "clangd",
@@ -194,7 +248,7 @@ export const Clangd: LSPServer.Info = {
       ])
       if (installed) return LSPServer.launch(root, installed, CLANGD_ARGS)
 
-      const release = yield* LSPServer.latestRelease(ctx, "clangd/clangd")
+      const release = yield* LSPServer.releaseByTag(ctx, "clangd/clangd", CLANGD_RELEASE)
       const tag = release?.tag_name
       const token = CLANGD_PLATFORMS[process.platform]
       if (!tag || !token) return undefined
@@ -205,7 +259,9 @@ export const Clangd: LSPServer.Info = {
         matching.find((item) => item.name?.endsWith(".zip")) ?? matching.find((item) => item.name?.endsWith(".tar.xz")) ?? matching[0]
       if (!asset?.name || !asset.browser_download_url) return undefined
       if (!asset.name.endsWith(".zip") && !asset.name.endsWith(".tar.xz")) return undefined
-      if (!(yield* LSPServer.installArchive(ctx, { url: asset.browser_download_url, name: asset.name }))) return undefined
+      const verified = yield* LSPServer.releaseAsset(release, asset.name)
+      if (!verified || !(yield* LSPServer.installArchive(ctx, { url: verified.url, name: asset.name, digest: verified.digest })))
+        return undefined
       const binary = path.join(ctx.bin, `clangd_${tag}`, "bin", `clangd${LSPServer.EXE}`)
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)
@@ -240,6 +296,10 @@ const mavenRoot = (ctx: LSPServer.Context, root: string, parents: readonly strin
   })
 
 const JDTLS_CONFIGURATIONS: Record<string, string> = { darwin: "config_mac", linux: "config_linux", win32: "config_win" }
+// Pinned 2026-10-16 to the snapshot that was newest then; eclipse.org keeps every dated snapshot, so this
+// URL never moves (unlike `jdt-language-server-latest.tar.gz`). The `.sha256` sidecar published next to it
+// is the integrity boundary. Bump deliberately after reviewing the upstream changelog.
+const JDTLS_SNAPSHOT = "jdt-language-server-1.63.0-202610151832.tar.gz"
 
 export const JDTLS: LSPServer.Info = {
   id: "jdtls",
@@ -261,17 +321,34 @@ export const JDTLS: LSPServer.Info = {
     Effect.gen(function* () {
       if (!ctx.which("java")) return undefined
       const version = yield* ctx.probe("java", ["-version"])
-      const major = /"(\d+)\.\d+\.\d+"/.exec(version.stderr)?.[1]
-      if (major === undefined || Number.parseInt(major) < 21) return undefined
+      // GA JDKs print two components (`openjdk version "21"`); 8 prints the legacy `1.8.0_x` form.
+      const parsed = /"(\d+)(?:\.(\d+))?(?:\.(\d+))?"/.exec(version.stderr)
+      const major = parsed ? (parsed[1] === "1" && parsed[2] ? Number.parseInt(parsed[2]) : Number.parseInt(parsed[1])) : undefined
+      if (major === undefined || major < 21) return undefined
       const distribution = path.join(ctx.bin, "jdtls")
       const plugins = path.join(distribution, "plugins")
+      // The index is per project root, in the install directory rather than a temp dir: jdtls reuses it
+      // across restarts instead of re-indexing, and the directory does not accumulate on disk.
+      const data = path.join(distribution, "data", createHash("sha256").update(root).digest("hex").slice(0, 16))
       if (!(yield* ctx.fs.existsSafe(plugins))) {
+        const url = `https://download.eclipse.org/jdtls/snapshots/${JDTLS_SNAPSHOT}`
+        // The snapshot name is pinned, but a corrupted or substituted download would still be unpacked and
+        // executed; the sidecar is what makes the archive verifiable, so refuse to install without it.
+        const sidecar = yield* ctx.install.text(`${url}.sha256`)
+        const digest = sidecar ? sidecarSha256(sidecar) : undefined
+        if (!digest) {
+          yield* Effect.logWarning("jdtls snapshot has no published checksum; refusing to install it", { url })
+          return undefined
+        }
         const unpacked = yield* LSPServer.installArchive(ctx, {
-          url: "https://www.eclipse.org/downloads/download.php?file=/jdtls/snapshots/jdt-language-server-latest.tar.gz",
+          url,
           name: "release.tar.gz",
           directory: distribution,
+          digest: `sha256:${digest}`,
         })
         if (!unpacked) return undefined
+        // A reinstalled distribution may not match the old index for this root.
+        yield* ctx.fs.remove(data, { recursive: true, force: true }).pipe(Effect.ignore)
       }
       const launcher = (yield* ctx.fs.readDirectory(plugins).pipe(Effect.orElseSucceed(() => [] as string[]))).find((item) =>
         /^org\.eclipse\.equinox\.launcher_.*\.jar$/.test(item),
@@ -281,7 +358,7 @@ export const JDTLS: LSPServer.Info = {
         distribution,
         JDTLS_CONFIGURATIONS[process.platform] ?? "config_linux",
       )
-      const data = yield* ctx.fs.makeTempDirectory({ prefix: "opencode-jdtls-data" })
+      yield* ctx.fs.makeDirectory(data, { recursive: true }).pipe(Effect.ignore)
       return LSPServer.launch(root, "java", [
         "-jar",
         path.join(plugins, launcher),
@@ -320,23 +397,54 @@ export const KotlinLS: LSPServer.Info = {
   spawn: (root, ctx) =>
     Effect.gen(function* () {
       const distribution = path.join(ctx.bin, "kotlin-ls")
-      const launcher = path.join(distribution, process.platform === "win32" ? "kotlin-lsp.cmd" : "kotlin-lsp.sh")
+      // The vsix lays the server out under `extension/server`, and `bin/intellij-server` is the entry the
+      // bundled `kotlin-lsp.sh` shim itself execs (that shim warns that it is deprecated).
+      const launcher = path.join(
+        distribution,
+        "extension",
+        "server",
+        "bin",
+        process.platform === "win32" ? "intellij-server.exe" : "intellij-server",
+      )
       if (!(yield* ctx.fs.existsSafe(launcher))) {
-        const version = (yield* LSPServer.latestRelease(ctx, "Kotlin/kotlin-lsp"))?.name?.replace(/^v/, "")
-        const combo = `${platform({ darwin: "mac", win32: "win" })}-${arch({ arm64: "aarch64" })}`
-        if (!version || !["mac-x64", "mac-aarch64", "linux-x64", "linux-aarch64", "win-x64", "win-aarch64"].includes(combo))
+        const release = yield* LSPServer.latestRelease(ctx, "Kotlin/kotlin-lsp")
+        const build = release?.name?.replace(/^v/, "")
+        const token = `${platform({ darwin: "mac", win32: "win" })}-${arch({ x64: "amd64", arm64: "aarch64" })}`
+        if (!build || !["mac-amd64", "mac-aarch64", "linux-amd64", "linux-aarch64", "win-amd64", "win-aarch64"].includes(token))
           return undefined
+        // The artifact name embeds an extension version the tag does not carry, so the publisher's own link
+        // for this platform is the only coherent source. Requiring the release's build in the path keeps a
+        // stale link from a previous release from being used.
+        const links = [
+          ...(release?.body ?? "").matchAll(
+            /https:\/\/download\.jetbrains\.com\/language-server\/kotlin-server\/[^\s)"']+\.vsix(?![.\w])/g,
+          ),
+        ].map((match) => match[0])
+        const url = links.find((link) => link.includes(`/kotlin-server/${build}/`) && link.endsWith(`-${token}.vsix`))
+        if (!url) return undefined
+        const sidecar = yield* ctx.install.text(`${url}.sha256`)
+        const digest = sidecar ? sidecarSha256(sidecar) : undefined
+        if (!digest) {
+          yield* Effect.logWarning("kotlin-ls artifact has no published checksum; refusing to install it", { url })
+          return undefined
+        }
+        // A vsix is a zip; the local name only selects the extractor.
         const unpacked = yield* LSPServer.installArchive(ctx, {
-          url: `https://download-cdn.jetbrains.com/kotlin-lsp/${version}/kotlin-lsp-${version}-${combo}.zip`,
+          url,
           name: "kotlin-ls.zip",
           directory: distribution,
+          digest: `sha256:${digest}`,
         })
         if (!unpacked) return undefined
+        if (!(yield* ctx.fs.existsSafe(launcher))) return undefined
         yield* LSPServer.markExecutable(ctx, launcher)
       }
       return (yield* ctx.fs.existsSafe(launcher)) ? LSPServer.launch(root, launcher, ["--stdio"]) : undefined
     }),
 }
+
+// Pinned 2026-10-16 to the release that was latest then; bump deliberately after reviewing the upstream diff.
+const LUA_LS_RELEASE = "3.19.2"
 
 export const LuaLS: LSPServer.Info = {
   id: "lua-ls",
@@ -360,12 +468,12 @@ export const LuaLS: LSPServer.Info = {
       const binary = path.join(installation, "bin", `lua-language-server${LSPServer.EXE}`)
       if (yield* ctx.fs.existsSafe(binary)) return LSPServer.launch(root, binary)
       if (!["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64", "win32-ia32"].includes(target)) return undefined
-      const release = yield* LSPServer.latestRelease(ctx, "LuaLS/lua-language-server")
+      const release = yield* LSPServer.releaseByTag(ctx, "LuaLS/lua-language-server", LUA_LS_RELEASE)
       const name = `lua-language-server-${release?.tag_name}-${target}.${process.platform === "win32" ? "zip" : "tar.gz"}`
-      const url = LSPServer.assetUrl(release, name)
-      if (!url) return undefined
+      const asset = yield* LSPServer.releaseAsset(release, name)
+      if (!asset) return undefined
       yield* ctx.fs.remove(installation, { recursive: true, force: true }).pipe(Effect.ignore)
-      if (!(yield* LSPServer.installArchive(ctx, { url, name, into: installation }))) return undefined
+      if (!(yield* LSPServer.installArchive(ctx, { url: asset.url, name, digest: asset.digest, into: installation }))) return undefined
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)
       return LSPServer.launch(root, binary)
@@ -373,6 +481,7 @@ export const LuaLS: LSPServer.Info = {
 }
 
 const TerraformRelease = Schema.Struct({
+  url_shasums: Schema.optionalKey(Schema.String),
   builds: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -395,18 +504,34 @@ export const TerraformLS: LSPServer.Info = {
       const found = ctx.which("terraform-ls")
       if (found) return LSPServer.launch(root, found, ["serve"], { initialization })
       const release = Option.getOrUndefined(
-        decodeTerraformRelease(yield* ctx.install.json("https://api.releases.hashicorp.com/v1/releases/terraform-ls/latest")),
+        // Pinned 2026-10-16 to the release that was latest then; the version in this URL is the pin, and
+        // the response's `url_shasums` list is the integrity boundary for the archive it names.
+        decodeTerraformRelease(yield* ctx.install.json("https://api.releases.hashicorp.com/v1/releases/terraform-ls/0.39.0")),
       )
+      const architecture = releaseArch(process.arch, { x64: "amd64", arm64: "arm64" })
+      if (!architecture) return undefined
       const url = release?.builds?.find(
-        (build) => build.arch === (process.arch === "arm64" ? "arm64" : "amd64") && build.os === platform({ win32: "windows" }),
+        (build) => build.arch === architecture && build.os === platform({ win32: "windows" }),
       )?.url
-      if (!url || !(yield* LSPServer.installArchive(ctx, { url, name: "terraform-ls.zip" }))) return undefined
+      if (!url) return undefined
+      // HashiCorp publishes no digest for the archive itself, only this list; without a matching line the
+      // install must not proceed, or the checksum check would silently disappear whenever the list is absent.
+      const sums = release?.url_shasums ? yield* ctx.install.text(release.url_shasums) : undefined
+      const digest = sums ? checksumSha256(sums, url) : undefined
+      if (!digest) {
+        yield* Effect.logWarning("terraform-ls archive has no published checksum; refusing to install it", { url })
+        return undefined
+      }
+      if (!(yield* LSPServer.installArchive(ctx, { url, name: "terraform-ls.zip", digest: `sha256:${digest}` }))) return undefined
       const binary = path.join(ctx.bin, `terraform-ls${LSPServer.EXE}`)
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)
       return LSPServer.launch(root, binary, ["serve"], { initialization })
     }),
 }
+
+// Pinned 2026-10-16 to the release that was latest then; bump deliberately after reviewing the upstream diff.
+const TEXLAB_RELEASE = "v5.26.0"
 
 export const TexLab: LSPServer.Info = {
   id: "texlab",
@@ -416,17 +541,22 @@ export const TexLab: LSPServer.Info = {
     Effect.gen(function* () {
       const found = ctx.which("texlab")
       if (found) return LSPServer.launch(root, found)
-      const release = yield* LSPServer.latestRelease(ctx, "latex-lsp/texlab")
+      const release = yield* LSPServer.releaseByTag(ctx, "latex-lsp/texlab", TEXLAB_RELEASE)
       if (!release?.tag_name) return undefined
-      const name = `texlab-${process.arch === "arm64" ? "aarch64" : "x86_64"}-${platform({ darwin: "macos", win32: "windows", linux: "linux" })}.${process.platform === "win32" ? "zip" : "tar.gz"}`
-      const url = LSPServer.assetUrl(release, name)
-      if (!url || !(yield* LSPServer.installArchive(ctx, { url, name }))) return undefined
+      const architecture = releaseArch(process.arch, { x64: "x86_64", arm64: "aarch64" })
+      if (!architecture) return undefined
+      const name = `texlab-${architecture}-${platform({ darwin: "macos", win32: "windows", linux: "linux" })}.${process.platform === "win32" ? "zip" : "tar.gz"}`
+      const asset = yield* LSPServer.releaseAsset(release, name)
+      if (!asset || !(yield* LSPServer.installArchive(ctx, { url: asset.url, name, digest: asset.digest }))) return undefined
       const binary = path.join(ctx.bin, `texlab${LSPServer.EXE}`)
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)
       return LSPServer.launch(root, binary)
     }),
 }
+
+// Pinned 2026-10-16 to the release that was latest then; bump deliberately after reviewing the upstream diff.
+const TINYMIST_RELEASE = "v0.15.8"
 
 export const Tinymist: LSPServer.Info = {
   id: "tinymist",
@@ -436,13 +566,16 @@ export const Tinymist: LSPServer.Info = {
     Effect.gen(function* () {
       const found = ctx.which("tinymist")
       if (found) return LSPServer.launch(root, found)
-      const release = yield* LSPServer.latestRelease(ctx, "Myriad-Dreamin/tinymist")
+      const release = yield* LSPServer.releaseByTag(ctx, "Myriad-Dreamin/tinymist", TINYMIST_RELEASE)
       if (!release) return undefined
       const triple = platform({ darwin: "apple-darwin", win32: "pc-windows-msvc", linux: "unknown-linux-gnu" })
       const extension = process.platform === "win32" ? "zip" : "tar.gz"
-      const name = `tinymist-${process.arch === "arm64" ? "aarch64" : "x86_64"}-${triple}.${extension}`
-      const url = LSPServer.assetUrl(release, name)
-      if (!url || !(yield* LSPServer.installArchive(ctx, { url, name, strip: extension === "zip" ? undefined : 1 }))) return undefined
+      const architecture = releaseArch(process.arch, { x64: "x86_64", arm64: "aarch64" })
+      if (!architecture) return undefined
+      const name = `tinymist-${architecture}-${triple}.${extension}`
+      const asset = yield* LSPServer.releaseAsset(release, name)
+      if (!asset || !(yield* LSPServer.installArchive(ctx, { url: asset.url, name, digest: asset.digest, strip: extension === "zip" ? undefined : 1 })))
+        return undefined
       const binary = path.join(ctx.bin, `tinymist${LSPServer.EXE}`)
       if (!(yield* ctx.fs.existsSafe(binary))) return undefined
       yield* LSPServer.markExecutable(ctx, binary)

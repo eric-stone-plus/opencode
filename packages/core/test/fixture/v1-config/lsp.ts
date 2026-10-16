@@ -27,7 +27,7 @@ export const builtinServerIds = [
   "oxlint",
   "biome",
   "gopls",
-  "ruby-lsp",
+  "rubocop",
   "ty",
   "pyright",
   "elixir-ls",
