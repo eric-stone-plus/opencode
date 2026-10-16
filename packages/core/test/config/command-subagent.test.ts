@@ -60,16 +60,16 @@ describe("command subagents", () => {
     {
       name: "native JSON",
       format: "json",
-      command: { subagent: true, agent: "build", model: "test/override" },
-      agent: "build",
+      command: { subagent: true, agent: "reviewer", model: "test/override" },
+      agent: "reviewer",
       model: "override",
     },
     {
       name: "legacy Markdown",
       format: "markdown",
-      command: { subtask: true, agent: "build" },
-      agent: "build",
-      model: "parent",
+      command: { subtask: true, agent: "reviewer" },
+      agent: "reviewer",
+      model: "child",
     },
     {
       name: "subagent mode by default",
@@ -109,6 +109,16 @@ describe("command subagents", () => {
       }),
     )
   }
+
+  it.live("refuses a primary agent on a subagent command and creates no child", () =>
+    Effect.gen(function* () {
+      const parent = yield* project({ subagent: true, agent: "build" }, "json")
+      const sessions = yield* Session.Service
+      yield* sessions.command({ sessionID: parent.id, command: "review", text: "changes" }).pipe(Effect.exit)
+      yield* sessions.wait(parent.id)
+      expect((yield* sessions.list({ parentID: parent.id })).data).toEqual([])
+    }),
+  )
 
   it.live("subagent: false overrides subagent mode and the legacy alias", () =>
     Effect.gen(function* () {

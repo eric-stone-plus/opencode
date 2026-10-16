@@ -58,6 +58,7 @@ import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
+import { ChildAgent } from "./fork/child-agent.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import type { EventLog } from "@opencode/schema/event-log"
 import type { FileDiff } from "@opencode/schema/file-diff"
@@ -119,7 +120,7 @@ export interface Interface {
   readonly list: (input?: ListInput) => Effect.Effect<{
     readonly data: SessionSchema.Info[]
   }>
-  readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info, NotFoundError>
+  readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info, NotFoundError | ChildAgent.ChildAgentError>
   readonly fork: (
     input: ForkInput,
   ) => Effect.Effect<SessionSchema.Info, NotFoundError | MessageNotFoundError | ForkEmptyError>
@@ -171,7 +172,10 @@ export interface Interface {
     after?: number
     follow?: boolean
   }) => Stream.Stream<SessionEvent.DurableEvent | EventLog.Synced, NotFoundError>
-  readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: Agent.ID }) => Effect.Effect<void, NotFoundError>
+  readonly switchAgent: (input: {
+    sessionID: SessionSchema.ID
+    agent: Agent.ID
+  }) => Effect.Effect<void, NotFoundError | ChildAgent.ChildAgentError>
   readonly switchModel: (input: { sessionID: SessionSchema.ID; model: Model.Ref }) => Effect.Effect<void, NotFoundError>
   readonly rename: (input: { sessionID: SessionSchema.ID; title: string }) => Effect.Effect<void, NotFoundError>
   readonly setMetadata: (input: {
@@ -268,6 +272,8 @@ const layer = Layer.effect(
         const location = parent?.location ?? input.location
         if (location === undefined)
           return yield* Effect.die(new Error("Session.create requires either location or an existing parentID"))
+        if (input.parentID !== undefined && input.agent !== undefined)
+          yield* ChildAgent.assertAllowed({ sessionID, location, agent: input.agent, locations })
         const project = yield* projects.resolve(location.directory)
         const projected = yield* bus
           .publish(

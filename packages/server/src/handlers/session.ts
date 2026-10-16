@@ -140,7 +140,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                   ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
                   : { parentID: ctx.payload.parentID }),
               })
-              .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchTag(
+                  "Session.ChildAgentError",
+                  (error) => new InvalidRequestError({ message: error.message, kind: "primary_agent_child" }),
+                ),
+              ),
           }
         }),
       )
@@ -162,6 +168,10 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                       message: `Session already exists: ${error.sessionID}`,
                       resource: error.sessionID,
                     }),
+                ),
+                Effect.catchTag(
+                  "Session.ChildAgentError",
+                  (error) => new InvalidRequestError({ message: error.message, kind: "primary_agent_child" }),
                 ),
               ),
           }
@@ -244,7 +254,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         Effect.fn(function* (ctx) {
           yield* session
             .switchAgent({ sessionID: ctx.params.sessionID, agent: ctx.payload.agent })
-            .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag(
+                "Session.ChildAgentError",
+                (error) => new InvalidRequestError({ message: error.message, kind: "primary_agent_child" }),
+              ),
+            )
           return HttpApiSchema.NoContent.make()
         }),
       )

@@ -130,12 +130,12 @@ export function model(id: string, variants: string[] = []): ModelInfo {
   }
 }
 
-export function agent(id: string, selected?: AgentInfo["model"]): AgentInfo {
+export function agent(id: string, selected?: AgentInfo["model"], mode: AgentInfo["mode"] = "primary"): AgentInfo {
   return {
     id,
     name: id,
     model: selected,
-    mode: "primary",
+    mode,
     hidden: false,
     permissions: [],
     request: { settings: {}, headers: {}, body: {} },

@@ -9,6 +9,7 @@ import { Plugin } from "../plugin/service.js"
 import type { Instructions } from "../instructions/index.js"
 import { SessionContext } from "./context.js"
 import type { AgentNotFoundError } from "./error.js"
+import type { ChildAgentError } from "../fork/child-agent.js"
 import { SessionHistory } from "./history.js"
 import { SessionProviderContext } from "./provider-context.js"
 import { SessionModelRequest } from "./model-request.js"
@@ -17,6 +18,7 @@ import type { SessionSchema } from "./schema.js"
 
 export type Error =
   | AgentNotFoundError
+  | ChildAgentError
   | Instructions.InitializationBlocked
   | SessionRunnerModel.Error
   | AIError

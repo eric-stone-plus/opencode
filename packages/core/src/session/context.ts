@@ -6,6 +6,7 @@ import { Context, Effect, Layer } from "effect"
 import { Agent } from "../agent.js"
 import { CodeModeInstructions } from "../codemode/instructions.js"
 import { Database } from "../database/database.js"
+import { ChildAgent } from "../fork/child-agent.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { InstructionDiscovery } from "../instruction-discovery.js"
 import { Instructions } from "../instructions/index.js"
@@ -50,7 +51,7 @@ export interface Loaded {
  */
 export interface Interface {
   /** Selects the Session, agent, instructions, and tools used by subsequent work. */
-  readonly select: (sessionID: SessionSchema.ID) => Effect.Effect<Selection, AgentNotFoundError>
+  readonly select: (sessionID: SessionSchema.ID) => Effect.Effect<Selection, AgentNotFoundError | ChildAgent.ChildAgentError>
   /** Resolves the model and active history for that selection. */
   readonly load: (selection: Selection) => Effect.Effect<Loaded, SessionRunnerModel.Error>
   readonly resolveModel: (
@@ -127,6 +128,14 @@ const layer = Layer.effect(
       yield* mcpTools.flush
       const agent = yield* agents.select(session.agent)
       if (!agent.info) return yield* new AgentNotFoundError({ sessionID: session.id, agent: session.agent ?? agent.id })
+      // Fork policy (docs/adr/0011): a child session must never run on a primary profile. Creation
+      // refuses an explicit primary (fork/child-agent.ts), but an omitted agent only resolves here -
+      // resolving it at creation would boot the location's service graph, which session creation
+      // deliberately avoids. Refusing at the request build covers every way a child reaches a run on
+      // its own profile; the hidden capability agents (title, compaction) are out of scope by design:
+      // they are primary only to stay out of the subagent list, and compaction must serve children.
+      if (session.parentID !== undefined && agent.info.mode === "primary")
+        return yield* new ChildAgent.ChildAgentError({ sessionID: session.id, agent: agent.id })
       // Session permissions narrow discovery the same way they narrow the tool snapshot.
       const permissions = Permission.merge(agent.info.permissions, session.permissions ?? [])
       const loaded = yield* Effect.all(

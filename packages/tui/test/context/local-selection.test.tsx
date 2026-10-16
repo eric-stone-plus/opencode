@@ -162,6 +162,20 @@ test("same-model agent switches clear drafts without a model acknowledgment", as
   expect(setup.local.model.current()?.modelID).toBe("second")
 })
 
+test("keeps a session whose agent is subagent-mode on that agent", async () => {
+  await using setup = await renderLocal({
+    models: [model("first"), model("second")],
+    agents: [agent("build"), agent("general", { providerID: "provider", id: "second" }, "subagent")],
+    sessions: [session("ses_child", { providerID: "provider", id: "second" }, "general")],
+  })
+  await setup.data.session.sync("ses_child")
+  setup.route.navigate({ type: "session", sessionID: "ses_child" })
+  // The picker list filters subagent-mode agents out; resolving the session's own agent must not
+  // fall back to the first primary, or the submit path would ask the server to switch a child to a
+  // primary profile and every prompt would be refused (docs/adr/0011).
+  expect(setup.local.agent.current()?.id).toBe("general")
+})
+
 async function publishSelection(
   setup: Awaited<ReturnType<typeof renderLocal>>,
   agent: string,

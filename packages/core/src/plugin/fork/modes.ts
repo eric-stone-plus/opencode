@@ -95,6 +95,8 @@ export const Plugin = define({
         const wanted: string[] = []
         // The standing card keys on the session's agent, not on parentage: a child session that resolves to auto or
         // goal keeps its profile framing, while a child running as general/explore gets none (no STANDING entry).
+        // New child sessions can neither be assigned nor run as a primary agent (fork/child-agent.ts), so the
+        // first case is reachable only for rows that predate that guard.
         const card = STANDING[event.agent]
         if (card !== undefined) wanted.push(card)
         // The goal, unlike the card, belongs to the top-level session that owns it, so child sessions never carry it.

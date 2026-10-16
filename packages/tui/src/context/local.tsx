@@ -93,7 +93,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
                 data.session.get(route.data.sessionID)?.agent ??
                 agentStore.current)
               : agentStore.current
-          return agents().find((agent) => agent.id === selected) ?? agents().at(0)
+          // Resolve against every non-hidden agent, not just the picker list: a child session's
+          // agent is subagent-mode (filtered out of `agents()`), and falling back to the first
+          // primary would make the submit path ask the server to switch a child to a primary
+          // profile, which the server refuses (docs/adr/0011) - leaving the child unpromptable.
+          return visibleAgents().find((agent) => agent.id === selected) ?? agents().at(0)
         },
         set(id: string) {
           if (!agents().some((agent) => agent.id === id))

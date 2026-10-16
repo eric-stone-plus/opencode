@@ -4646,9 +4646,18 @@ describe("SessionRunnerLLM", () => {
   scenario("uses parent cache affinity for child model requests", function* (s) {
     const parentID = Session.ID.make("ses_runner_parent")
 
+    // A child must never run as a primary agent (ADR 0011); this test is about the parent's cache
+    // affinity, not the profile, so the child gets a subagent-mode agent.
+    const agents = yield* Agent.Service
+    yield* agents.transform((editor) => {
+      editor.update(Agent.ID.make("general"), (agent) => {
+        agent.mode = "subagent"
+      })
+    })
+
     yield* s.db
       .update(SessionTable)
-      .set({ parent_id: parentID })
+      .set({ parent_id: parentID, agent: "general" })
       .where(eq(SessionTable.id, sessionID))
       .run()
       .pipe(Effect.orDie)

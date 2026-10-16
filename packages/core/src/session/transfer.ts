@@ -12,7 +12,9 @@ import { stripTerminalControl } from "@opencode/util/terminal-text"
 import { App } from "../app.js"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
+import { ChildAgent } from "../fork/child-agent.js"
 import { Location } from "../location.js"
+import { LocationServiceMap } from "../location-service-map.js"
 import { Project } from "../project.js"
 import { upsertProject } from "../project/sql.js"
 import { AbsolutePath, RelativePath } from "../schema.js"
@@ -39,7 +41,7 @@ export interface Interface {
   readonly import: (input: {
     data: Data
     location: Location.Ref
-  }) => Effect.Effect<Session.Info, ImportConflictError | Session.NotFoundError>
+  }) => Effect.Effect<Session.Info, ImportConflictError | Session.NotFoundError | ChildAgent.ChildAgentError>
 }
 
 /**
@@ -65,6 +67,7 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
     const projects = yield* Project.Service
     const sessions = yield* Session.Service
+    const locations = yield* LocationServiceMap.Service
     const encodeMessage = Schema.encodeSync(SessionMessage.Info)
 
     return Service.of({
@@ -85,6 +88,16 @@ const layer = Layer.effect(
           .pipe(Effect.orDie)
         if (recorded) return yield* new ImportConflictError({ sessionID })
         if (input.data.info.parentID) yield* sessions.get(input.data.info.parentID)
+        // Explicit assignments are checked at assignment; an omitted agent resolves the way the
+        // runner resolves it (and is refused there when it resolves to a primary). Same rule as
+        // Session.create, so importing a transcript that names no agent stays a data operation.
+        if (input.data.info.parentID !== undefined && input.data.info.agent !== undefined)
+          yield* ChildAgent.assertAllowed({
+            sessionID,
+            location: input.location,
+            agent: input.data.info.agent,
+            locations,
+          })
         const project = yield* projects.resolve(input.location.directory)
         yield* upsertProject(db, project).pipe(Effect.orDie)
         const importedAt = yield* Clock.currentTimeMillis
@@ -174,7 +187,7 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [App.node, Bus.node, Database.node, Project.node, Session.node],
+  deps: [App.node, Bus.node, Database.node, LocationServiceMap.node, Project.node, Session.node],
 })
 
 function isSettled(message: SessionMessage.Info) {

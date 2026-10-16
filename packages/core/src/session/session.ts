@@ -1,14 +1,16 @@
 export * as Session from "./session.js"
 
-import { DateTime, Effect, Fiber, Scope } from "effect"
+import { DateTime, Effect, Fiber, Option, Scope } from "effect"
 import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Permission } from "@opencode/schema/permission"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
+import { ChildAgent } from "../fork/child-agent.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { LocationServiceMap } from "../location-service-map.js"
 import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
 import {
@@ -48,6 +50,9 @@ export const make = Effect.fn("Session.make")(function* () {
   const admission = yield* SessionInbox.Service
   const fs = yield* FSUtil.Service
   const scope = yield* Scope.Scope
+  // Optional on purpose: session-owned handles must not acquire location services, so the child
+  // guard skips where they are absent instead of widening this handle's requirements.
+  const locations = yield* Effect.serviceOption(LocationServiceMap.Service)
 
   const get = Effect.fn("Session.get")(function* (sessionID: SessionSchema.ID) {
     const session = yield* store.get(sessionID)
@@ -91,6 +96,13 @@ export const make = Effect.fn("Session.make")(function* () {
     input: { agent: Agent.ID },
   ) {
     const session = yield* get(sessionID)
+    if (session.parentID !== undefined && session.agent !== input.agent)
+      yield* ChildAgent.assertAllowed({
+        sessionID,
+        location: session.location,
+        agent: input.agent,
+        locations: Option.getOrUndefined(locations),
+      })
     yield* bus.publish(SessionEvent.AgentSelected, { sessionID, agent: input.agent, previous: session.agent })
   })
   const switchModel = Effect.fn("Session.switchModel")(function* (
