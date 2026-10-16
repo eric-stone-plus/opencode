@@ -29,7 +29,9 @@ it.live("returns ordered config entries for the requested directory", () =>
         }),
       ),
     )
-    const server = yield* startServer(global, { project: true })
+    // Project discovery is opt-in twice over: the server must enable it and the host must declare
+    // the root as trusted.
+    const server = yield* startServer(global, { project: true, trust: { all: false, roots: [project] } })
     const url = new URL("/api/config", server.base)
     url.searchParams.set("location[directory]", project)
     const response = yield* Effect.promise(() => fetch(url, { headers: server.headers }))
@@ -59,7 +61,7 @@ it.live("returns ordered config entries for the requested directory", () =>
   }),
 )
 
-it.live("keeps project config undiscovered unless the server opts in", () =>
+it.live("keeps project config undiscovered until the server opts in and declares trust", () =>
   Effect.gen(function* () {
     const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-config-gate-")))
     const global = path.join(tmp.path, "global")
@@ -75,15 +77,30 @@ it.live("keeps project config undiscovered unless the server opts in", () =>
         fs.writeFile(projectConfig, JSON.stringify({ model: "project/default" })),
       ]),
     )
-    const server = yield* startServer(global)
-    const url = new URL("/api/config", server.base)
-    url.searchParams.set("location[directory]", project)
-    const response = yield* Effect.promise(() => fetch(url, { headers: server.headers }))
-    const entries = Schema.decodeUnknownSync(Schema.Array(Config.Entry))(yield* Effect.promise(() => response.json()))
+    const closed = yield* startServer(global)
+    const closedUrl = new URL("/api/config", closed.base)
+    closedUrl.searchParams.set("location[directory]", project)
+    const closedResponse = yield* Effect.promise(() => fetch(closedUrl, { headers: closed.headers }))
+    const closedEntries = Schema.decodeUnknownSync(Schema.Array(Config.Entry))(
+      yield* Effect.promise(() => closedResponse.json()),
+    )
 
-    expect(response.status).toBe(200)
-    expect(entries.some((entry) => entry.type === "document" && entry.path === globalConfig)).toBe(true)
-    expect(entries.some((entry) => entry.type === "document" && entry.path === projectConfig)).toBe(false)
+    expect(closedResponse.status).toBe(200)
+    expect(closedEntries.some((entry) => entry.type === "document" && entry.path === globalConfig)).toBe(true)
+    expect(closedEntries.some((entry) => entry.type === "document" && entry.path === projectConfig)).toBe(false)
+
+    // `project: true` alone is not an opt-in: without a trust declaration the walk stays closed, so
+    // an omitted declaration can never expose a project's own config.
+    const untrusted = yield* startServer(global, { project: true })
+    const untrustedUrl = new URL("/api/config", untrusted.base)
+    untrustedUrl.searchParams.set("location[directory]", project)
+    const untrustedResponse = yield* Effect.promise(() => fetch(untrustedUrl, { headers: untrusted.headers }))
+    const untrustedEntries = Schema.decodeUnknownSync(Schema.Array(Config.Entry))(
+      yield* Effect.promise(() => untrustedResponse.json()),
+    )
+
+    expect(untrustedResponse.status).toBe(200)
+    expect(untrustedEntries.some((entry) => entry.type === "document" && entry.path === projectConfig)).toBe(false)
   }),
 )
 

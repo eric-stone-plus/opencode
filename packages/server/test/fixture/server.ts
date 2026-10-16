@@ -2,7 +2,13 @@ import { Effect } from "effect"
 import { HttpServer } from "effect/http"
 import { ServerProcess } from "../../src/process"
 
-export const startServer = Effect.fnUntraced(function* (directory: string, options?: { readonly project?: boolean }) {
+export const startServer = Effect.fnUntraced(function* (
+  directory: string,
+  options?: {
+    readonly project?: boolean
+    readonly trust?: { readonly all: boolean; readonly roots: string[] }
+  },
+) {
   const server = yield* ServerProcess.start<never, never>({
     hostname: "127.0.0.1",
     port: 0,

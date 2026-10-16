@@ -99,7 +99,7 @@ const discover = (directory: string, global: string) =>
       AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node]), [
         // The upstream tests exercise project-side discovery, so they declare the historical
         // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-        ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+        ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
         Location.node.replace(
           Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make(directory) }))),
         ),

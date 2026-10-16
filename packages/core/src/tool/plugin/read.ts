@@ -7,8 +7,8 @@ import { Effect, Schema } from "effect"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Location } from "../../location.js"
 import { FileAccess } from "../../file-access.js"
+import { Escape } from "../../fork/escape.js"
 import { InstructionDiscovery } from "../../instruction-discovery.js"
-import { SessionInstructions } from "../../session/instructions.js"
 import { AbsolutePath } from "../../schema.js"
 import { ReadToolFileSystem } from "../read-filesystem.js"
 import { Environment } from "../../environment/index.js"
@@ -16,6 +16,14 @@ import { ForkPdfText } from "../fork/pdf-text.js"
 
 export const name = "read"
 const FILENAME = "AGENTS.md"
+// Read-triggered guidance is model-visible context on THIS tool result, not session state:
+// nothing is published and nothing persists, so a read cannot drift the session's instruction
+// context. The envelope mirrors the instruction-entry block, and every path and body is escaped
+// because an AGENTS.md is project-controlled and must not forge a tag or close the envelope.
+const CONTEXT_KEY = "read-instructions"
+// The body budget mirrors the fork's per-file instruction budget (plugin/fork/instructions.ts,
+// MAX_INSTRUCTION_BYTES = 12000): a read must never balloon its result with a tree's AGENTS.md.
+const MAX_CONTEXT_BYTES = 12_000
 const LocationInput = Schema.Struct({
   path: Schema.String.annotate({ description: "File or directory to read" }),
   offset: ReadToolFileSystem.PageInput.fields.offset.annotate({
@@ -34,7 +42,6 @@ export const Plugin = {
     const reader = yield* ReadToolFileSystem.Service
     const access = yield* FileAccess.Service
     const discovery = yield* InstructionDiscovery.Service
-    const sessionInstructions = yield* SessionInstructions.Service
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
     const environment = yield* Environment.Service
@@ -83,41 +90,53 @@ export const Plugin = {
                     }),
                 ),
               )
-              // After a successful read, discover nearby AGENTS.md walking up to the Location
-              // root exclusive and inject them as durable synthetic instructions. For a
-              // directory listing the walk starts at the directory itself (so its own AGENTS.md
-              // is discovered); for a file it starts at the file's dirname. External reads are
-              // skipped, discovery failures never fail the read, and project discovery being
-              // off (the trust gate closed) skips the walk so an untrusted tree cannot place
-              // its AGENTS.md in the model's instruction context.
-              yield* Effect.gen(function* () {
-                if (!discovery.project) return
+              // After a successful read, discover nearby AGENTS.md and append them to THIS result as
+              // model-visible context. The walk starts at the read directory (a directory listing's
+              // own AGENTS.md included); it is bounded by the nearest declared root, so an AGENTS.md
+              // above the declaration is never consulted, and with no declaration covering the
+              // target nothing is injected at all. External reads are skipped, the read file itself
+              // is never repeated, the Location root's already-supplied ancestors are excluded, and
+              // discovery failures never fail the read.
+              const instructionContext = yield* Effect.gen(function* () {
                 if (result.target.externalDirectory !== undefined) return
+                const trust = discovery.trust
                 const resolved = yield* fs.resolve(result.target.absolute)
+                const start = result.content.type === "list-page" ? resolved : dirname(resolved)
                 const root = yield* fs.resolve(location.directory)
+                const bound = trust.data.all ? root : trust.nearestRoot(start)
+                if (bound === undefined) return
+                const discovered = yield* fs.up({ targets: [FILENAME], start, stop: bound, type: "file" })
                 // The Location and its ancestors are already supplied by initial instructions,
                 // even when an upward walk from elsewhere in the project cannot reach root.
-                const discovered = yield* fs.up({
-                  targets: [FILENAME],
-                  start: result.content.type === "list-page" ? resolved : dirname(resolved),
-                  stop: root,
-                  type: "file",
-                })
                 const candidates = (yield* Effect.forEach(discovered, fs.resolve)).filter(
                   (file) => !FSUtil.contains(dirname(file), root) && file !== resolved,
                 )
                 if (candidates.length === 0) return
-                yield* sessionInstructions.load({ sessionID: context.sessionID, paths: candidates })
+                const files = yield* Effect.forEach(
+                  candidates,
+                  (path) =>
+                    fs
+                      .readFileStringSafe(path)
+                      .pipe(Effect.map((content) => (content === undefined ? undefined : { path, content }))),
+                  { concurrency: "unbounded" },
+                )
+                const readable = files.filter((file): file is { path: string; content: string } => file !== undefined)
+                if (readable.length === 0) return
+                return renderInstructionContext(readable)
               }).pipe(
-                Effect.catch(() => Effect.void),
-                Effect.catchDefect(() => Effect.void),
+                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.catchDefect(() => Effect.succeed(undefined)),
               )
               // PDFs are read as text and never attached: inline media is dead weight for text-only models and is
               // persisted with the session.
               if (result.content.type === "file" && result.content.mime === "application/pdf") {
                 const text = yield* ForkPdfText.extract(environment.spawner, result.target.absolute)
                 if (text === undefined) return yield* new ToolFailure({ message: ForkPdfText.unreadable(result.path) })
-                return { output: { ...result.content, content: text, encoding: "utf8" as const }, path: result.path }
+                return {
+                  output: { ...result.content, content: text, encoding: "utf8" as const },
+                  path: result.path,
+                  context: instructionContext,
+                }
               }
               if (
                 result.content.type === "file" &&
@@ -125,13 +144,21 @@ export const Plugin = {
                 !ReadToolFileSystem.MEDIA_MIMES.has(result.content.mime)
               )
                 return yield* Effect.fail(new ReadToolFileSystem.BinaryFileError({ resource: result.target.resource }))
-              return { output: result.content, path: result.path }
+              return { output: result.content, path: result.path, context: instructionContext }
             }).pipe(
-              Effect.map((result) => ({
-                output: result.output,
-                content: toModelContent(result.path, input.offset, result.output),
-                metadata: { truncated: result.output.type === "file" ? false : result.output.truncated },
-              })),
+              Effect.map((result) => {
+                const content = toModelContent(result.path, input.offset, result.output)
+                return {
+                  output: result.output,
+                  content:
+                    result.context === undefined
+                      ? content
+                      : typeof content === "string"
+                        ? `${content}\n\n${result.context}`
+                        : [...content, { type: "text" as const, text: result.context }],
+                  metadata: { truncated: result.output.type === "file" ? false : result.output.truncated },
+                }
+              }),
               Effect.mapError((error) => {
                 if (error instanceof ToolFailure) return error
                 const message =
@@ -222,4 +249,25 @@ export const toModelContent = (path: string, offset: number | undefined, output:
   if (output.type === "text-page" && output.truncated && output.next !== undefined)
     content.push(`[Output truncated. Continue reading with offset: ${output.next}]`)
   return content.join("\n")
+}
+
+// The envelope and both escaping layers are part of the trust boundary: `Instructions from:`
+// labels each file's source, the body is text-escaped, and a byte cut drops a half-written
+// entity so the escaped body stays parseable.
+const renderInstructionContext = (files: ReadonlyArray<{ readonly path: string; readonly content: string }>) => {
+  const body = files
+    .map((file) => `Instructions from: ${Escape.escapeLine(file.path)}\n${Escape.escapeText(file.content)}`)
+    .join("\n\n")
+  return [`<context key="${CONTEXT_KEY}">`, capContextBody(body), "</context>"].join("\n")
+}
+
+const capContextBody = (body: string) => {
+  const size = Buffer.byteLength(body, "utf8")
+  if (size <= MAX_CONTEXT_BYTES) return body
+  const head = Buffer.from(body, "utf8")
+    .subarray(0, MAX_CONTEXT_BYTES)
+    .toString("utf8")
+    .replace(/\uFFFD+$/, "")
+  const kept = head.replace(/&[a-z]*$/i, "")
+  return `${kept}\n\n[... ${size - Buffer.byteLength(kept, "utf8")} bytes omitted: context budget]`
 }

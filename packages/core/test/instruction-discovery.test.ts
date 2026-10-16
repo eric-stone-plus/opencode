@@ -52,7 +52,7 @@ const instructionLayer = (input: {
         Config.node.replace(config),
         // The upstream tests exercise project-side discovery, so they declare the historical
         // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-        ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+        ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
         InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: input.project })),
         Global.node.replace(
           input.config || input.home

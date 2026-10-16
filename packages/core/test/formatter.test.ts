@@ -25,7 +25,7 @@ const it = testEffect(
     LayerNode.group([Database.node, Bus.node, SdkPlugins.node, LocationServiceMap.node, Global.node]),
     // The upstream tests exercise project-side discovery, so they declare the historical
     // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-    [Global.node.replace(tempGlobalLayer), offlineModels, ProjectTrust.node.replace(ProjectTrust.layer({ all: true }))],
+    [Global.node.replace(tempGlobalLayer), offlineModels, ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] }))],
   ),
 )
 type ConfigInput = typeof Info.Encoded

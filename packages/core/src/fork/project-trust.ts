@@ -148,11 +148,16 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/ProjectTrust") {}
 
 /** The service value for a declaration; `make()` is closed, which is also the absent-service answer. */
-export const make = (data: Data = closed): Interface => ({
-  data,
-  allows: (directory) => allows(data, directory),
-  nearestRoot: (directory) => nearestRoot(data, directory),
-})
+export const make = (data: Data = closed): Interface => {
+  // Frozen: a plugin or any other in-process consumer that reaches the service must not be able to
+  // widen the declaration at run time. Trust is a startup fact (the host sets it), not mutable state.
+  const declaration: Data = Object.freeze({ all: data.all, roots: Object.freeze([...data.roots]) })
+  return {
+    data: declaration,
+    allows: (directory) => allows(declaration, directory),
+    nearestRoot: (directory) => nearestRoot(declaration, directory),
+  }
+}
 
 /** An absent declaration (or an absent `data` argument) provides the closed service. */
 export const layer = (data?: Data) => Layer.succeed(Service, make(data))

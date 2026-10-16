@@ -56,7 +56,7 @@ const it = testEffect(
     Global.node.replace(tempGlobalLayer),
     // The upstream tests exercise project-side discovery, so they declare the historical
     // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
     offlineModels,
   ]),
 )
@@ -196,7 +196,7 @@ describe("LocationServiceMap", () => {
           const finalized: number[] = []
           const layer = AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, LocationServiceMap.node]), [
             Global.node.replace(tempGlobalLayer),
-            ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+            ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
             offlineModels,
             LocationWatcher.node.replace(
               LocationWatcher.node.mapLayer((layer) =>

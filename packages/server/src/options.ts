@@ -1,4 +1,5 @@
 import { Database } from "@opencode/core/database/database"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { ModelsDev } from "@opencode/core/models-dev"
 import { PersistentPty } from "@opencode/core/persistent-pty"
 import { Schema } from "effect"
@@ -28,6 +29,15 @@ export const ServerOptions = Schema.Struct({
     Schema.Struct({
       directory: Schema.optional(Schema.String),
       project: Schema.optional(Schema.Boolean),
+      // The operator's trust declaration for project-side discovery. Host data only: it arrives
+      // through these options and is never derived from a project's own files; an omitted value
+      // is closed.
+      trust: Schema.optional(
+        Schema.Struct({
+          all: Schema.Boolean,
+          roots: Schema.Array(Schema.String),
+        }),
+      ),
       file: Schema.optional(Schema.String),
       content: Schema.optional(Schema.String),
     }),
@@ -45,3 +55,14 @@ export const ServerOptions = Schema.Struct({
   ),
 })
 export type ServerOptions = typeof ServerOptions.Type
+
+/**
+ * Parses the operator's `trusted-roots` declaration with Core's parser. Exported here because
+ * `packages/cli` may not import Core directly (packages/cli/test/import-boundaries.test.ts), while
+ * the CLI must build `config.trust` from the same deterministic parser the server trusts: one
+ * absolute path per line, `#` comments and blank lines skipped, and relative, glob-shaped, or
+ * `~`-prefixed lines reported in `ignored` with a reason instead of being expanded.
+ */
+export function parseTrustDeclaration(text: string | undefined) {
+  return ProjectTrust.parseRoots(text)
+}

@@ -18,6 +18,9 @@ import { ServiceRegistration } from "./services/service-registration"
 import { RemoteTunnel } from "./services/remote-tunnel"
 import { WebUi } from "./services/web-ui"
 import { databasePath } from "./database-path"
+import { parseTrustDeclaration } from "@opencode/server/options"
+import { readFile } from "fs/promises"
+import path from "path"
 
 export type Mode = "default" | "service" | "stdio"
 
@@ -59,6 +62,18 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
         )
   const global = yield* Global.Service
   if (options.mode === "service") yield* Effect.sync(() => process.chdir(global.home))
+  // The operator's trust declaration lives beside the global config, so a project can never write
+  // it. A missing or unreadable file is absent data, which the gate treats as closed.
+  const declarationPath = path.join(global.config, "trusted-roots")
+  const declaration = yield* Effect.tryPromise(() => readFile(declarationPath, "utf8")).pipe(
+    Effect.orElseSucceed(() => undefined),
+  )
+  const gate = projectConfigGate(process.env, declaration)
+  if (gate.ignored.length > 0)
+    yield* Effect.logWarning("trusted-roots declaration lines ignored", {
+      path: declarationPath,
+      ignored: gate.ignored,
+    })
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const foreground = options.mode === "default"
@@ -115,7 +130,8 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           },
           config: {
             directory: process.env.OPENCODE_CONFIG_DIR,
-            project: projectConfigEnabled(process.env),
+            project: gate.project,
+            trust: gate.trust,
             file: process.env.OPENCODE_CONFIG,
             content: process.env.OPENCODE_CONFIG_CONTENT,
           },
@@ -208,16 +224,36 @@ function serviceURL(hostname: string, port: number) {
 
 // Project config is closed by default: a project or ancestor opencode.jsonc can silently
 // re-point provider.<id>.settings.baseURL, load plugins that execute in-process, spawn MCP
-// servers, and fetch references remotes. The gate fails closed: only an explicit opt-out of
-// the disable opens it — OPENCODE_CONFIG_PROJECT_DISABLE=0 or =false, case-insensitive and
-// whitespace-trimmed (or the OPENCODE_DISABLE_PROJECT_CONFIG alias). Every other value,
-// including the empty string and yes/on spellings that read like the disable itself, stays
-// closed; the primary name wins whenever it is set.
-export function projectConfigEnabled(env: NodeJS.ProcessEnv) {
+// servers, and fetch references remotes. The gate is tri-state:
+//
+// - an explicit disable value (anything but 0/false after trim and lowercase, including the
+//   empty string and yes/on spellings that read like the disable itself) hard-closes discovery;
+// - an explicit 0/false opens the historical unbounded behavior — the documented escape hatch;
+// - an unset variable trusts exactly the roots declared in the operator's `trusted-roots` file,
+//   and an absent or empty declaration is closed, so project-side discovery opens only where the
+//   operator named it.
+//
+// The primary name wins whenever it is set (the OPENCODE_DISABLE_PROJECT_CONFIG alias applies only
+// when the primary is unset).
+export type TrustDeclaration = { readonly all: boolean; readonly roots: ReadonlyArray<string> }
+export type IgnoredDeclarationLine = { readonly line: number; readonly reason: string }
+export type ProjectGate = {
+  readonly project: boolean
+  readonly trust: TrustDeclaration
+  readonly ignored: ReadonlyArray<IgnoredDeclarationLine>
+}
+
+const closed: TrustDeclaration = { all: false, roots: [] }
+
+export function projectConfigGate(env: NodeJS.ProcessEnv, declaration?: string): ProjectGate {
   const setting = env.OPENCODE_CONFIG_PROJECT_DISABLE ?? env.OPENCODE_DISABLE_PROJECT_CONFIG
-  if (setting === undefined) return false
-  const value = setting.trim().toLowerCase()
-  return value === "0" || value === "false"
+  if (setting !== undefined) {
+    const value = setting.trim().toLowerCase()
+    if (value === "0" || value === "false") return { project: true, trust: { all: true, roots: [] }, ignored: [] }
+    return { project: false, trust: closed, ignored: [] }
+  }
+  const parsed = parseTrustDeclaration(declaration)
+  return { project: true, trust: { all: false, roots: parsed.roots }, ignored: parsed.ignored }
 }
 
 function truthy(value?: string) {

@@ -69,7 +69,7 @@ const instances = Layer.effect(
       Global.node.replace(tempGlobalLayer),
       // The upstream tests exercise project-side discovery, so they declare the historical
       // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-      ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+      ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
       ManagedPolicy.node.replace(Layer.succeed(ManagedPolicy.Service, managed)),
       offlineModels,
       Npm.node.replace(npmLayer),

@@ -61,7 +61,6 @@ import { WebSearch } from "../websearch.js"
 import { Ripgrep } from "../ripgrep.js"
 import { Session } from "../session.js"
 import { SessionCompaction } from "../session/compaction.js"
-import { SessionInstructions } from "../session/instructions.js"
 import { SubagentJob } from "../session/subagent-job.js"
 import { SessionTodo } from "../session/todo.js"
 import { Shell } from "../shell.js"
@@ -147,7 +146,6 @@ const services = [
   Session.Service,
   SessionCompaction.Service,
   SessionTodo.Service,
-  SessionInstructions.Service,
   SubagentJob.Service,
   Shell.Service,
   ShellSelect.Service,
@@ -203,7 +201,6 @@ export const requirements = LayerNode.group([
   Session.node,
   SessionCompaction.node,
   SessionTodo.node,
-  SessionInstructions.node,
   SubagentJob.node,
   Shell.node,
   ShellSelect.node,

@@ -34,3 +34,22 @@ test("accepts an optional CORS allowlist", () => {
   ])
   expect(Option.isNone(decode({ cors: "http://192.168.1.10:3001" }))).toBe(true)
 })
+
+test("accepts a host trust declaration for project-side discovery", () => {
+  expect(Option.getOrThrow(decode({ config: { trust: { all: false, roots: ["/repo"] } } })).config?.trust).toEqual({
+    all: false,
+    roots: ["/repo"],
+  })
+  expect(Option.getOrThrow(decode({ config: { trust: { all: true, roots: [] } } })).config?.trust).toEqual({
+    all: true,
+    roots: [],
+  })
+  expect(Option.getOrThrow(decode({ config: { project: true } })).config?.trust).toBeUndefined()
+})
+
+test("rejects a malformed trust declaration", () => {
+  expect(Option.isNone(decode({ config: { trust: { all: "yes", roots: [] } } }))).toBe(true)
+  expect(Option.isNone(decode({ config: { trust: { roots: [] } } }))).toBe(true)
+  expect(Option.isNone(decode({ config: { trust: { all: false, roots: [1] } } }))).toBe(true)
+  expect(Option.isNone(decode({ config: { trust: { all: false, roots: "all" } } }))).toBe(true)
+})

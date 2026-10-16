@@ -70,7 +70,7 @@ function testLayer(
     Config.node.replace(Config.configured({ system: false, ...options })),
     // The upstream tests exercise project-side discovery, so they declare the historical
     // trust-everything declaration; the closed default is pinned by test/fork/project-trust*.
-    ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+    ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
     Location.node.replace(locationLayer),
     Global.node.replace(Global.layerWith({ config: globalDirectory, home: path.join(globalDirectory, "home") })),
     Credential.node.replace(credentialNode),
@@ -506,7 +506,7 @@ describe("Config", () => {
             Effect.provide(
               AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node]), [
                 Config.node.replace(Config.configured({ system: false })),
-                ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+                ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
                 Location.node.replace(
                   Layer.succeed(
                     Location.Service,
@@ -731,7 +731,7 @@ describe("Config", () => {
           const instance = () =>
             AppNodeBuilder.build(LayerNode.group([Config.node, Bus.node, WellKnown.node]), [
               Config.node.replace(Config.configured({ system: false })),
-              ProjectTrust.node.replace(ProjectTrust.layer({ all: true })),
+              ProjectTrust.node.replace(ProjectTrust.layer({ all: true, roots: [] })),
               Location.node.replace(
                 Layer.succeed(
                   Location.Service,

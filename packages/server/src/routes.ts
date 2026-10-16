@@ -1,6 +1,7 @@
 import { Database } from "@opencode/core/database/database"
 import { V1Migration } from "@opencode/core/database/v1-migration"
 import { App } from "@opencode/core/app"
+import { ProjectTrust } from "@opencode/core/fork/project-trust"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Node } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
@@ -107,18 +108,16 @@ export function createEmbeddedRoutes(
   return makeRoutes(ServerAuth.Config.configLayer({ password: Option.none() }), options, () => [], overrides, instances)
 }
 
-function makeRoutes<AuthError, AuthServices>(
-  auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>,
-  options: ServerOptions,
-  serviceURLs: () => ReadonlyArray<string>,
-  // Runtime-profile replacements (e.g. workerd) applied after the standard set, so later entries win.
-  overrides: LayerNode.Replacements,
-  instances?: InstanceNode,
-) {
+/**
+ * The host-owned replacement set installed for every server graph, including the location graphs
+ * built by `AppNodeBuilder`. Exported so tests can prove the operator's trust declaration reaches
+ * `ProjectTrust.Service` through the same list `createRoutes` installs.
+ */
+export function standardReplacements(options: ServerOptions): LayerNode.Replacements {
   // Closed unless the embedder opts in: an omitted config.project must not discover a
   // repository's own config, which can redirect provider traffic and execute code.
   const project = options.config?.project === true
-  const standard: LayerNode.Replacements = [
+  return [
     Database.node.replace(Database.configured(options.database)),
     PersistentPty.node.replace(PersistentPty.configured(options.pty)),
     Bus.node.replace(Bus.configured({ persist: options.events?.persist })),
@@ -135,6 +134,9 @@ function makeRoutes<AuthError, AuthServices>(
       }),
     ),
     InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project })),
+    // The operator's declaration is host data: it arrives through ServerOptions and is the only
+    // source of ProjectTrust. An omitted value stays closed.
+    ProjectTrust.node.replace(ProjectTrust.layer(options.config?.trust)),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
     Mcp.node.replace(
       Mcp.configured({
@@ -145,6 +147,17 @@ function makeRoutes<AuthError, AuthServices>(
       }),
     ),
   ]
+}
+
+function makeRoutes<AuthError, AuthServices>(
+  auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>,
+  options: ServerOptions,
+  serviceURLs: () => ReadonlyArray<string>,
+  // Runtime-profile replacements (e.g. workerd) applied after the standard set, so later entries win.
+  overrides: LayerNode.Replacements,
+  instances?: InstanceNode,
+) {
+  const standard = standardReplacements(options)
   const build = (overrides: LayerNode.Replacements) => {
     const replacements: LayerNode.Replacements = [
       ...standard,

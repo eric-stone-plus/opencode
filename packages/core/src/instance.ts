@@ -46,7 +46,6 @@ import { Snapshot } from "./snapshot.js"
 import { InstructionDiscovery } from "./instruction-discovery.js"
 import { InstructionBuiltIns } from "./instructions/builtins.js"
 import { InstructionEntry } from "./session/instruction-entry.js"
-import { SessionInstructions } from "./session/instructions.js"
 import { SessionTodo } from "./session/todo.js"
 import { McpTool } from "./tool/mcp.js"
 import { ReadToolFileSystem } from "./tool/read-filesystem.js"
@@ -101,7 +100,6 @@ const nodes = [
   Generate.node,
   ReadToolFileSystem.node,
   McpTool.node,
-  SessionInstructions.node,
   SessionRunnerModel.node,
   SessionCompaction.node,
   SessionTitle.node,

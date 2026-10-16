@@ -59,6 +59,17 @@ describe("ProjectTrust.allows", () => {
     expect(ProjectTrust.allows(ProjectTrust.closed, "/repo")).toBe(false)
   })
 
+  test("the service freezes the declaration: a consumer cannot widen it at run time", () => {
+    const service = ProjectTrust.make({ all: false, roots: ["/trusted"] })
+    const mutable = service.data as { all: boolean; roots: string[] }
+    expect(() => mutable.roots.push("/evil")).toThrow()
+    expect(() => {
+      mutable.all = true
+    }).toThrow()
+    expect(service.allows("/evil")).toBe(false)
+    expect(service.allows("/trusted/inside")).toBe(true)
+  })
+
   test("a root matches itself and its descendants, never a mere prefix string", () => {
     const data: ProjectTrust.Data = { all: false, roots: ["/a/b"] }
     expect(ProjectTrust.allows(data, "/a/b")).toBe(true)
