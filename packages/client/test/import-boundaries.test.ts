@@ -38,8 +38,10 @@ describe("public import boundaries", () => {
 
     const effectService = await bundleInputs("@opencode/client/effect/service", "bun")
 
+    // The effect service may pull Effect itself, but the protocol, core, and server
+    // runtime packages must stay out of its module graph.
     expect(within(effectService.eager, effect).length).toBeGreaterThan(0)
-    expect(within(effectService.eager, protocol).length).toBeGreaterThan(0)
+    expect(within(effectService.all, protocol)).toEqual([])
     expect(within(effectService.all, core)).toEqual([])
     expect(within(effectService.all, server)).toEqual([])
   })
