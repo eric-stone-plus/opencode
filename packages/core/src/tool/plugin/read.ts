@@ -124,7 +124,7 @@ export const Plugin = {
                 if (readable.length === 0) return
                 return renderInstructionContext(readable)
               }).pipe(
-                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.orElseSucceed(() => undefined),
                 Effect.catchDefect(() => Effect.succeed(undefined)),
               )
               // PDFs are read as text and never attached: inline media is dead weight for text-only models and is
