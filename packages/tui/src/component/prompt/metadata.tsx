@@ -9,7 +9,6 @@ export function PromptMetadataRow(props: {
   mode: "normal" | "shell"
   agent?: string
   model: string
-  provider: string
   variant?: string
   muted: boolean
   highlight: RGBA
@@ -20,13 +19,12 @@ export function PromptMetadataRow(props: {
   const theme = useTheme()
   const dimensions = useTerminalDimensions()
   const layout = createMemo(() => {
-    if (props.mode === "shell") return { agent: props.agent ?? "Shell", model: "" }
+    if (props.mode === "shell") return { agent: props.agent ?? "Shell", model: "", variant: undefined }
     return promptMetadataLayout({
       width: Math.max(0, dimensions().width - (dimensions().width < 44 ? 9 : 13)),
       terminalWidth: dimensions().width,
       agent: props.agent ?? "",
       model: props.model,
-      provider: props.provider,
       variant: props.variant,
     })
   })
@@ -54,13 +52,6 @@ export function PromptMetadataRow(props: {
             >
               {layout().model}
             </text>
-            <Show when={layout().provider}>
-              {(provider) => (
-                <text flexShrink={0} fg={fade(theme.text.muted, props.modelAlpha)}>
-                  {provider()}
-                </text>
-              )}
-            </Show>
             <Show when={layout().variant}>
               {(variant) => (
                 <>
@@ -88,7 +79,6 @@ function fade(color: RGBA, alpha: number) {
 type Layout = {
   agent?: string
   model: string
-  provider?: string
   variant?: string
 }
 
@@ -97,23 +87,11 @@ function promptMetadataLayout(input: {
   terminalWidth: number
   agent: string
   model: string
-  provider: string
   variant?: string
 }) {
   const agent = input.terminalWidth < 44 ? undefined : input.agent
-  const provider = input.terminalWidth < 44 ? "" : input.provider
-  const candidates: Layout[] = [
-    { agent, model: input.model, provider, variant: input.variant },
-    {
-      agent,
-      model: input.model,
-      provider: provider.split(" / ").at(-1) ?? provider,
-      variant: input.variant,
-    },
-    { agent, model: input.model, variant: input.variant },
-  ]
-  const fit = candidates.find((candidate) => stringWidth(text(candidate)) <= input.width)
-  if (fit) return fit
+  const layout = { agent, model: input.model, variant: input.variant }
+  if (stringWidth(text(layout)) <= input.width) return layout
 
   const prefix = agent ? `${agent} · ` : ""
   const suffix = input.variant ? ` · ${input.variant}` : ""
@@ -131,7 +109,6 @@ function text(input: Layout) {
   return [
     ...(input.agent ? [input.agent] : []),
     ...(input.model ? [...(input.agent ? ["·"] : []), input.model] : []),
-    ...(input.provider ? [input.provider] : []),
     ...(input.variant ? ["·", input.variant] : []),
   ].join(" ")
 }

@@ -41,7 +41,7 @@ function render(state: string) {
 }
 
 // The session route shows the prompt but no home wordmark; home shows the wordmark.
-const onSessionScreen = (frame: string) => frame.includes("Build · Model Provider") && !frame.includes("█▀▀█")
+const onSessionScreen = (frame: string) => frame.includes("Build · Model") && !frame.includes("█▀▀█")
 const onHomeScreen = (frame: string) => frame.includes("█▀▀█ █▀▀█")
 
 test("/clear leaves the session for the home screen", async () => {

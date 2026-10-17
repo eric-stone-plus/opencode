@@ -110,7 +110,7 @@ test("an escape that withdraws a pending prompt clears the interrupt window", as
     }),
   })
   await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  await setup.waitForFrame((frame) => frame.includes("Build · Model"))
   setup.events.emit(started(info.id))
   await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
   await setup.waitForFrame((frame) => frame.includes("withdraw me"))
@@ -166,7 +166,7 @@ test("a queued prompt is withdrawn without interrupting the run", async () => {
     }),
   })
   await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  await setup.waitForFrame((frame) => frame.includes("Build · Model"))
   setup.events.emit(started(info.id))
   await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
   await setup.waitForFrame((frame) => frame.includes("queued draft text"))
@@ -200,7 +200,7 @@ test("a composer draft is never clobbered by the escape withdraw", async () => {
     fetch: handlers({ info, messages: [userMessage("msg_queued", "withdraw me", 3)], inbox: [pending], deleted, interrupts }),
   })
   await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  await setup.waitForFrame((frame) => frame.includes("Build · Model"))
   setup.events.emit(started(info.id))
   await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
   await setup.mockInput.typeText("keep my draft")
@@ -237,7 +237,7 @@ test("an escape retracts a started reply that rendered no output", async () => {
     }),
   })
   await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  await setup.waitForFrame((frame) => frame.includes("Build · Model"))
   setup.events.emit(started(info.id))
   await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
   await setup.waitForFrame((frame) => frame.includes("bring me back"))
@@ -273,7 +273,7 @@ test("an escape leaves an answered prompt to /undo", async () => {
     }),
   })
   await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("Build · Model Provider"))
+  await setup.waitForFrame((frame) => frame.includes("Build · Model"))
   setup.events.emit(started(info.id))
   await setup.waitForFrame((frame) => frame.includes("esc interrupt"))
   await setup.waitForFrame((frame) => frame.includes("already answered"))

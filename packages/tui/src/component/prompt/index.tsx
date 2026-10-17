@@ -1607,7 +1607,6 @@ export function Prompt(props: PromptProps) {
     agentLabel: string | undefined
     agentColor: RGBA | undefined
     modelLabel: string
-    providerLabel: string
     variant: string | undefined
   }>(
     (previous) => {
@@ -1626,7 +1625,6 @@ export function Prompt(props: PromptProps) {
         agentLabel: agent ? Locale.titlecase(agent.id) : undefined,
         agentColor: agent ? local.agent.color(agent.id) : undefined,
         modelLabel: model.model,
-        providerLabel: model.provider,
         variant: local.model.variant.display(),
       }
     },
@@ -1634,7 +1632,6 @@ export function Prompt(props: PromptProps) {
       agentLabel: undefined,
       agentColor: undefined,
       modelLabel: local.model.parsed().model,
-      providerLabel: local.model.parsed().provider,
       variant: undefined,
     },
   )
@@ -1910,7 +1907,6 @@ export function Prompt(props: PromptProps) {
                 mode={store.mode}
                 agent={agentLabel()}
                 model={promptDisplay().modelLabel}
-                provider={promptDisplay().providerLabel}
                 variant={promptDisplay().variant}
                 muted={!!muted()}
                 highlight={highlight()}
