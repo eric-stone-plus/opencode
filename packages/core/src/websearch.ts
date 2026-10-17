@@ -63,6 +63,10 @@ export interface Interface extends State.Transformable<Editor> {
     options?: {
       readonly sessionID?: Session.ID
       readonly onProvider?: (provider: Provider) => Effect.Effect<void>
+      /** The user's original question, forwarded to providers that support it. */
+      readonly oriQuestion?: string
+      /** Ask the provider for full page content instead of summaries. */
+      readonly needContent?: boolean
     },
   ) => Effect.Effect<Response, Error>
 }
@@ -192,8 +196,13 @@ const layer = Layer.effect(
           let cooldown = choice === "random" ? cooldowns.get(provider.id) : undefined
           if (!cooldown || cooldown.until <= (yield* Clock.currentTimeMillis)) {
             attempted.add(provider.id)
+            const providerInput: ProviderInput = {
+              query: input.query,
+              ...(options?.oriQuestion ? { oriQuestion: options.oriQuestion } : {}),
+              ...(options?.needContent === undefined ? {} : { needContent: options.needContent }),
+            }
             const result = yield* provider
-              .execute({ query: input.query })
+              .execute(providerInput)
               .pipe(Effect.flatMap(decodeResults), Effect.result)
             if (result._tag === "Success") return new Response({ providerID: provider.id, results: result.success })
             const cause = result.failure

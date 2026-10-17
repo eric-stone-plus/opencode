@@ -33,6 +33,10 @@ export const FETCH_URL = `${BASE_URL}/v1/tools/fetch`
  *   page it actually needs with `webfetch`.
  * - `need_content=true` raised the same count=5 response to 38 KB (25.7 K chars
  *   of page content), so the summary field is the right payload for discovery.
+ *   The websearch tool exposes it as `needContent` for callers that explicitly
+ *   need page text; the default stays false.
+ * - `ori_question` is optional and improves query understanding. The tool
+ *   forwards the current user message, capped at the API's 128 characters.
  * - A six-request burst produced one 429 with "Your current QPS: 5", so the
  *   limiter admits five requests per rolling second. Search and Fetch have
  *   independent account quotas, so each gets its own limiter.
@@ -48,6 +52,8 @@ export const MAX_ATTEMPTS = 3
 const MAX_SEARCH_BYTES = 1_000_000
 const MAX_FETCH_BYTES = 5 * 1024 * 1024
 const MAX_SUMMARY_CHARS = 2_000
+const MAX_CONTENT_CHARS = 20_000
+const MAX_ORI_QUESTION_CHARS = 128
 const DEFAULT_USER_AGENT = "OpenCode/1.0"
 
 const SearchItem = Schema.Struct({
@@ -73,7 +79,14 @@ export interface Credential {
   readonly provider: Provider.Info
 }
 
-export interface RequestOptions {
+export interface SearchOptions {
+  /** The user's original question; the API accepts 1-128 characters and uses it to improve query understanding. */
+  readonly oriQuestion?: string
+  /** Return full page content instead of summaries. */
+  readonly needContent?: boolean
+}
+
+export interface RequestOptions extends SearchOptions {
   readonly userAgent?: string
 }
 
@@ -117,11 +130,21 @@ const makeLimiter = (limit: number, windowMillis = 1_000): Limiter => {
 const searchLimiter = makeLimiter(SEARCH_QPS)
 const fetchLimiter = makeLimiter(FETCH_QPS)
 
-export const searchBody = (query: string) => ({
-  query,
-  count: SEARCH_COUNT,
-  need_content: SEARCH_NEED_CONTENT,
-})
+const normalizeOriQuestion = (value: string | undefined) => {
+  if (!value) return undefined
+  const points = Array.from(value.trim())
+  return points.length === 0 ? undefined : points.slice(0, MAX_ORI_QUESTION_CHARS).join("")
+}
+
+export const searchBody = (query: string, options: SearchOptions = {}) => {
+  const oriQuestion = normalizeOriQuestion(options.oriQuestion)
+  return {
+    query,
+    count: SEARCH_COUNT,
+    need_content: options.needContent ?? SEARCH_NEED_CONTENT,
+    ...(oriQuestion === undefined ? {} : { ori_question: oriQuestion }),
+  }
+}
 
 export const credential = (ctx: Context): Effect.Effect<Credential | undefined, unknown> =>
   Effect.gen(function* () {
@@ -208,12 +231,12 @@ const request = (
     }
   })
 
-const truncate = (value: string | undefined) => {
+const truncate = (value: string | undefined, max = MAX_SUMMARY_CHARS) => {
   if (value === undefined) return undefined
   // Count code points, not UTF-16 units: a slice at the boundary can split a
   // surrogate pair and emit U+FFFD into the model's context.
   const points = Array.from(value)
-  return points.length <= MAX_SUMMARY_CHARS ? value : `${points.slice(0, MAX_SUMMARY_CHARS).join("")}…`
+  return points.length <= max ? value : `${points.slice(0, max).join("")}…`
 }
 
 const published = (value: string | null | undefined) => {
@@ -233,7 +256,7 @@ export const searchWithKey = (
       http,
       SEARCH_URL,
       key,
-      searchBody(query),
+      searchBody(query, options),
       SEARCH_TIMEOUT_SECONDS,
       searchLimiter,
       MAX_SEARCH_BYTES,
@@ -241,23 +264,29 @@ export const searchWithKey = (
     )
     const parsed = yield* Effect.try(() => JSON.parse(text))
     const decoded = yield* Schema.decodeUnknownEffect(SearchResponse)(parsed)
-    return decoded.results.map((item) => ({
-      url: item.url,
-      title: item.title || undefined,
-      content: truncate(item.summary || item.snippet || item.content || undefined),
-      time: published(item.date),
-    }))
+    return decoded.results.map((item) => {
+      const content = options.needContent
+        ? item.content || item.summary || item.snippet || undefined
+        : item.summary || item.snippet || item.content || undefined
+      return {
+        url: item.url,
+        title: item.title || undefined,
+        content: truncate(content, options.needContent ? MAX_CONTENT_CHARS : MAX_SUMMARY_CHARS),
+        time: published(item.date),
+      }
+    })
   })
 
 export const search = (
   ctx: Context,
   http: HttpClient.HttpClient,
   query: string,
+  options: SearchOptions = {},
 ): Effect.Effect<readonly WebSearch.Result[], unknown> =>
   Effect.gen(function* () {
     const resolved = yield* credential(ctx)
     if (!resolved) return yield* Effect.fail(new Error("DeepSeek API key is not configured"))
-    return yield* searchWithKey(http, resolved.key, query, { userAgent: App.useragent(ctx.app) })
+    return yield* searchWithKey(http, resolved.key, query, { userAgent: App.useragent(ctx.app), ...options })
   })
 
 export const fetchWithKey = (

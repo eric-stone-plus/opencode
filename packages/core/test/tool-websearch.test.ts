@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
-import { Context, Effect, Layer } from "effect"
+import { Context, DateTime, Effect, Layer } from "effect"
 import type { HttpClientError } from "effect/http"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Permission } from "@opencode/core/permission"
@@ -25,7 +26,20 @@ const webSearchToolNode = makeLocationNode({
   layer: Layer.effectDiscard(
     Effect.gen(function* () {
       const websearch = yield* WebSearch.Service
-      yield* registerToolPlugin(WebSearchTool.Plugin, { websearch: webSearchHost(websearch) })
+      yield* registerToolPlugin(WebSearchTool.Plugin, {
+        websearch: webSearchHost(websearch),
+        session: {
+          context: () =>
+            Effect.succeed([
+              SessionMessage.User.make({
+                id: SessionMessage.ID.make("msg_websearch_user"),
+                type: "user",
+                text: "what is the effect of search",
+                time: { created: DateTime.makeUnsafe(0) },
+              }),
+            ]),
+        },
+      })
     }),
   ),
   deps: [Tool.node, Permission.node, WebSearch.node, Form.node],
@@ -40,6 +54,7 @@ const providers = [
 class Fixture {
   assertions: Permission.AssertInput[] = []
   events: string[] = []
+  providerInputs: WebSearch.ProviderInput[] = []
   formRequests: Form.CreateInput[] = []
   formResponse: Form.TerminalState = { status: "cancelled" }
   formResponses: Form.TerminalState[] = []
@@ -59,9 +74,10 @@ const setup = Effect.gen(function* () {
     providers.forEach((provider) =>
       editor.add({
         ...provider,
-        execute: () =>
+        execute: (input) =>
           Effect.gen(function* () {
             fixture.events.push("query")
+            fixture.providerInputs.push(input)
             if (fixture.error) return yield* fixture.error
             return fixture.results
           }),
@@ -179,6 +195,31 @@ describe("WebSearchTool registration", () => {
           },
         ],
         metadata: { provider: "relay" },
+      })
+    }),
+  )
+
+  it.effect("passes the original question and needContent to the provider", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup
+      yield* fixture.websearch.select(WebSearch.ID.make("axis"))
+
+      const result = yield* executeTool(fixture.registry, {
+        sessionID,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: "call-full-content",
+          name: "websearch",
+          input: { query: "effect typescript", needContent: true },
+        },
+      })
+
+      expect(result.status).toBe("completed")
+      expect(fixture.providerInputs.at(-1)).toEqual({
+        query: "effect typescript",
+        oriQuestion: "what is the effect of search",
+        needContent: true,
       })
     }),
   )

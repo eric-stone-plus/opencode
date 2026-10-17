@@ -86,6 +86,22 @@ describe("WebSearch", () => {
     }),
   )
 
+  it.effect("forwards optional search hints to the provider", () =>
+    Effect.gen(function* () {
+      const provider = yield* register("axis")
+      const websearch = yield* WebSearch.Service
+
+      yield* websearch.query(
+        { query: "effect", providerID: provider.providerID },
+        { oriQuestion: "what is effect", needContent: true },
+      )
+
+      expect(provider.calls).toEqual([
+        { query: "effect", oriQuestion: "what is effect", needContent: true },
+      ])
+    }),
+  )
+
   it.effect("requires a provider when no default is set", () =>
     Effect.gen(function* () {
       yield* register("axis")

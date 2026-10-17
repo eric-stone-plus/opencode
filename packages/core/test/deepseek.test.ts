@@ -22,6 +22,21 @@ describe("DeepSeek native tools", () => {
     expect(DeepSeek.searchBody("effect")).toEqual({ query: "effect", count: 5, need_content: false })
   })
 
+  test("adds the optional search hints without changing the default body", () => {
+    expect(DeepSeek.searchBody("effect", { oriQuestion: "what is effect", needContent: true })).toEqual({
+      query: "effect",
+      count: 5,
+      need_content: true,
+      ori_question: "what is effect",
+    })
+    expect(DeepSeek.searchBody("effect", { oriQuestion: "   " })).toEqual({
+      query: "effect",
+      count: 5,
+      need_content: false,
+    })
+    expect(DeepSeek.searchBody("effect", { oriQuestion: "x".repeat(200) }).ori_question ?? "").toHaveLength(128)
+  })
+
   it.live("maps summaries and dates onto the WebSearch result shape", () =>
     Effect.gen(function* () {
       const requests: Array<{ url: string; headers: Record<string, string> }> = []
@@ -54,6 +69,39 @@ describe("DeepSeek native tools", () => {
         },
         { url: "https://example.com/b", title: undefined, content: "Snippet B", time: {} },
       ])
+    }),
+  )
+
+  it.live("sends the original question and returns full content when requested", () =>
+    Effect.gen(function* () {
+      let body: unknown
+      const http = mock((request) => {
+        body =
+          request.body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(request.body.body)) : undefined
+        return json({
+          results: [
+            {
+              url: "https://example.com/full",
+              title: "Full",
+              summary: "Summary",
+              content: "Full page content",
+            },
+          ],
+        })
+      })
+
+      const results = yield* DeepSeek.searchWithKey(http, "secret", "effect", {
+        oriQuestion: "what is effect",
+        needContent: true,
+      })
+
+      expect(body).toEqual({
+        query: "effect",
+        count: 5,
+        need_content: true,
+        ori_question: "what is effect",
+      })
+      expect(results[0]?.content).toBe("Full page content")
     }),
   )
 

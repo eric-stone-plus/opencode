@@ -21,7 +21,11 @@ export const Plugin = define<HttpClient.HttpClient | Scope.Scope>({
         editor.add({
           id: "deepseek",
           name: "DeepSeek Search",
-          execute: (input) => search(ctx, http, input.query),
+          execute: (input) =>
+            search(ctx, http, input.query, {
+              oriQuestion: input.oriQuestion,
+              needContent: input.needContent,
+            }),
         })
         if (editor.default.get() === undefined) editor.default.set("deepseek")
       })

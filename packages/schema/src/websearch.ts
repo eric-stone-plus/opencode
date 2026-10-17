@@ -18,7 +18,12 @@ export const Input = Schema.Struct({
   query: Schema.String,
   providerID: ID.pipe(optional),
 }).annotate({ identifier: "WebSearch.Input" })
-export type ProviderInput = Pick<Input, "query">
+export type ProviderInput = Pick<Input, "query"> & {
+  /** The user's original question, forwarded to providers that support it. */
+  readonly oriQuestion?: string
+  /** Ask the provider for full page content instead of summaries. */
+  readonly needContent?: boolean
+}
 
 export interface Result extends Schema.Schema.Type<typeof Result> {}
 export const Result = Schema.Struct({

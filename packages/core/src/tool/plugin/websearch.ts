@@ -2,6 +2,7 @@ export * as WebSearchTool from "./websearch.js"
 
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
+import type { Session } from "@opencode/schema/session"
 import { ToolFailure } from "@opencode/ai"
 import { Effect, Schema, Semaphore } from "effect"
 import { HttpClientError } from "effect/http"
@@ -12,17 +13,43 @@ import { WebSearch } from "../../websearch.js"
 export const name = "websearch"
 export const NO_RESULTS = "No search results found. Please try a different query."
 const providerSelectionLock = Semaphore.makeUnsafe(1)
+const MAX_ORI_QUESTION_CHARS = 128
 const httpErrors = new Map([
   [429, "Web search rate limited (HTTP 429)"],
   [401, "Web search authentication failed (HTTP 401)"],
 ])
 
+/**
+ * The search API accepts the user's original question as a quality hint. Read
+ * the last user message from the session context; a failed read only omits the
+ * hint, so it must never fail the search itself.
+ */
+const originalQuestion = (ctx: Context, sessionID: Session.ID) =>
+  ctx.session.context({ sessionID }).pipe(
+    Effect.map((messages) => {
+      let text: string | undefined
+      for (const message of messages) {
+        if (message.type !== "user") continue
+        const value = message.text.trim()
+        text = value ? Array.from(value).slice(0, MAX_ORI_QUESTION_CHARS).join("") : undefined
+      }
+      return text
+    }),
+    Effect.catchCause(() => Effect.succeed(undefined)),
+  )
+
 export const description = `Search the web using the user's selected search integration. Use this for current information beyond knowledge cutoff.
+
+Set needContent to true to return full page content instead of summaries; this produces a much larger response.
 
 The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events.`
 
 export const Input = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
+  needContent: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "Return full page content instead of summaries. Larger response; use only when summaries are insufficient.",
+  }),
 })
 
 const Output = Schema.Struct({
@@ -55,12 +82,15 @@ export const Plugin = {
                 agent: context.agent,
                 source: { type: "tool", messageID: context.messageID, id: context.id },
               })
+              const oriQuestion = yield* originalQuestion(ctx, context.sessionID)
               const search = (providerID?: WebSearch.ID) =>
                 websearch.query(
-                  { ...input, providerID },
+                  { query: input.query, providerID },
                   {
                     sessionID: context.sessionID,
                     onProvider: (provider) => context.progress({ provider: provider.id }),
+                    oriQuestion,
+                    needContent: input.needContent,
                   },
                 )
               const result = yield* search().pipe(
