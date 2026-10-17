@@ -64,7 +64,6 @@
       },
       "models": {
         "deepseek-flash": {
-          "name": "DeepSeek-V4.1-Flash",
           "tool_call": true,
           "limit": {
             "context": 1000000,
