@@ -4,6 +4,7 @@ import { ForkInstructionsPlugin } from "./instructions.js"
 import { ForkModesPlugin } from "./modes.js"
 import { ForkAutonomyPlugin } from "./autonomy.js"
 import { ForkPricingPlugin } from "./pricing.js"
+import { ForkModelNamesPlugin } from "./model-names.js"
 import { ForkChildAuthorityPlugin } from "./child-authority.js"
 import { ForkGuardPlugin } from "./guard.js"
 import { ForkWriteScopePlugin } from "./write-scope.js"
@@ -16,6 +17,7 @@ export const post = [
   ForkModesPlugin.Plugin,
   ForkAutonomyPlugin.Plugin,
   ForkPricingPlugin.Plugin,
+  ForkModelNamesPlugin.Plugin,
   ForkChildAuthorityPlugin.Plugin,
   ForkEnvelopePlugin.Plugin,
   ForkWriteScopePlugin.Plugin,
