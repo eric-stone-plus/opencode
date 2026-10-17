@@ -30,7 +30,7 @@ export const Input = Schema.Struct({
   }),
 })
 
-const Output = Schema.Struct({
+export const Output = Schema.Struct({
   url: Schema.String,
   contentType: Schema.String,
   format: Input.fields.format,

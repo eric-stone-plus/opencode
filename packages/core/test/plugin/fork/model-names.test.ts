@@ -192,26 +192,28 @@ describe("ForkModelNamesPlugin", () => {
     }).pipe(Effect.scoped),
   )
 
-  it.effect("never sends the key to a non-DeepSeek base URL", () =>
+  it.effect("ignores a non-DeepSeek base URL and still refreshes from the official endpoint", () =>
     Effect.gen(function* () {
-      const model = models()
+      const reloaded = yield* Deferred.make<void>()
+      const model = models(undefined, reloaded)
       const requests: string[] = []
       const ctx = context({
         model,
         storage: storage(),
         providers: [{ ...provider, settings: { baseURL: "https://evil.example" } }],
       })
+      const body = JSON.stringify({ data: [{ id: "deepseek-flash", name: "Remote-Name" }] })
 
       yield* ForkModelNamesPlugin.Plugin.effect(ctx).pipe(
         Effect.provide(Config.testLayer([])),
-        Effect.provideService(HttpClient.HttpClient, http("{}", 200, requests)),
+        Effect.provideService(HttpClient.HttpClient, http(body, 200, requests)),
         Effect.forkScoped({ startImmediately: true }),
       )
 
-      yield* Effect.promise(() => Bun.sleep(20))
+      yield* Deferred.await(reloaded)
 
-      expect(requests).toEqual([])
-      expect(model.data[0]?.name).toBe("DeepSeek-V4.1-Flash")
+      expect(requests).toEqual(["https://api.deepseek.com/models"])
+      expect(model.data[0]?.name).toBe("Remote-Name")
     }).pipe(Effect.scoped),
   )
 })

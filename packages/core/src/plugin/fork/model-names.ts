@@ -6,7 +6,7 @@ import { Effect, Option, Schema, Scope, Semaphore, Stream } from "effect"
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { App } from "../../app.js"
 import { Config } from "../../config.js"
-import { Provider } from "../../provider.js"
+import { DEEPSEEK, MODELS_URL } from "../../deepseek.js"
 
 /**
  * Keeps model display names aligned with the provider's own `/models` metadata.
@@ -20,6 +20,10 @@ import { Provider } from "../../provider.js"
  *
  * A model whose provider config sets an explicit `name` is left alone: that is
  * a deliberate operator override, not a stale snapshot.
+ *
+ * The request target is the hardcoded native base (`MODELS_URL`), not
+ * `provider.settings.baseURL`: a project config that re-points the provider must
+ * not be able to move the API key to another host.
  */
 
 const CACHE_KEY = "names"
@@ -27,9 +31,6 @@ const REFRESH_INTERVAL = "6 hours"
 const RETRY_INTERVAL = "5 seconds"
 const REQUEST_TIMEOUT = "10 seconds"
 const MAX_RESPONSE_BYTES = 1_000_000
-const DEEPSEEK = "deepseek"
-const DEEPSEEK_HOST = "api.deepseek.com"
-const DEFAULT_BASE_URL = "https://api.deepseek.com"
 
 const Model = Schema.Struct({
   id: Schema.String,
@@ -57,22 +58,6 @@ function explicitNames(entries: readonly Entry[]) {
     }
   }
   return names
-}
-
-/**
- * The fork is DeepSeek-only (ADR 0009), and the key may only travel to DeepSeek's own
- * endpoint: a project config that re-points `baseURL` must not turn the refresh into a
- * credential exfiltration request. Unknown hosts, protocols, paths and templates skip.
- */
-function baseURL(settings: Provider.Info["settings"] | undefined) {
-  const value = settings?.baseURL
-  if (value === undefined) return DEFAULT_BASE_URL
-  if (typeof value !== "string" || value.includes("${")) return
-  const url = URL.parse(value)
-  if (url === null) return
-  if (url.protocol !== "https:" || url.hostname !== DEEPSEEK_HOST) return
-  if (url.pathname !== "/" && url.pathname !== "/v1" && url.pathname !== "/v1/") return
-  return value.replace(/\/+$/, "")
 }
 
 /** Display names land in the model picker and the system prompt; reject control characters. */
@@ -122,8 +107,6 @@ export const Plugin = define<Config.Service | HttpClient.HttpClient | Scope.Scop
             for (const provider of providers) {
               if (provider.id !== DEEPSEEK) continue
               if (provider.activation === "disabled") continue
-              const base = baseURL(provider.settings)
-              if (base === undefined) continue
               const connection = yield* ctx.integration.connection.active(provider.integrationID ?? provider.id)
               // Resolving an OAuth connection can refresh its token and publish credential.updated,
               // which would re-enter this refresh; a display-name sync must not touch OAuth at all.
@@ -132,7 +115,7 @@ export const Plugin = define<Config.Service | HttpClient.HttpClient | Scope.Scop
               if (credential?.type !== "key") continue
               const remote = yield* http
                 .execute(
-                  HttpClientRequest.get(`${base}/models`).pipe(
+                  HttpClientRequest.get(MODELS_URL).pipe(
                     HttpClientRequest.setHeader("Authorization", `Bearer ${credential.key}`),
                     HttpClientRequest.setHeader("Accept", "application/json"),
                     HttpClientRequest.setHeader("User-Agent", App.useragent(ctx.app)),

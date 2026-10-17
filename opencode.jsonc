@@ -16,6 +16,9 @@
   // (deepseek-v4-flash is a retired alias that now routes to the same
   // model).
   "model": "deepseek/deepseek-flash",
+  // Native DeepSeek Search/Fetch. The fork hardcodes the official base; this
+  // selects the provider without a first-use consent form.
+  "websearch": { "provider": "deepseek" },
   "provider": {
     // DeepSeek official API. npm + baseURL are the registry values, so
     // this block only overlays the flash model. Key is already in
