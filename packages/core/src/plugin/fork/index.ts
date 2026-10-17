@@ -4,6 +4,7 @@ import { ForkInstructionsPlugin } from "./instructions.js"
 import { ForkModesPlugin } from "./modes.js"
 import { ForkAutonomyPlugin } from "./autonomy.js"
 import { ForkPricingPlugin } from "./pricing.js"
+import { ForkDeepSeekBaseURLPlugin } from "./base-url.js"
 import { ForkModelNamesPlugin } from "./model-names.js"
 import { ForkSearchPlugin } from "./search.js"
 import { ForkWebFetchPlugin } from "./webfetch.js"
@@ -19,6 +20,7 @@ export const post = [
   ForkModesPlugin.Plugin,
   ForkAutonomyPlugin.Plugin,
   ForkPricingPlugin.Plugin,
+  ForkDeepSeekBaseURLPlugin.Plugin,
   ForkModelNamesPlugin.Plugin,
   ForkSearchPlugin.Plugin,
   ForkWebFetchPlugin.Plugin,
