@@ -145,7 +145,10 @@ export const Plugin = define<Config.Service | HttpClient.HttpClient | Scope.Scop
       )
 
       yield* ctx.event.subscribe().pipe(
-        Stream.filter((event) => event.type === "config.updated"),
+        Stream.filter(
+          (event) =>
+            event.type === "config.updated" || event.type === "provider.updated" || event.type === "credential.updated",
+        ),
         Stream.runForEach(() =>
           Effect.gen(function* () {
             explicit = explicitNames(yield* config.entries())

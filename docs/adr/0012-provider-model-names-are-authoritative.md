@@ -11,7 +11,8 @@ actually serving, without a source rebuild for every server-side release. DeepSe
 `ForkModelNamesPlugin` (`packages/core/src/plugin/fork/model-names.ts`) refreshes model display names
 from each declared provider's own `GET <baseURL>/models` response:
 
-- at plugin activation, then every six hours and on `config.updated`;
+- at plugin activation, then every six hours and on `config.updated`, `provider.updated` and
+  `credential.updated`;
 - using the provider's active integration credential and its configured `baseURL`;
 - caching the last successful map in plugin storage so a cold boot shows the last known name before
   the first request;
