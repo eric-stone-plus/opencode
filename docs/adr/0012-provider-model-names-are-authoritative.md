@@ -13,8 +13,8 @@ had a hardcoded `name` that pinned the old label.
 display name from `GET https://api.deepseek.com/models`:
 
 - at plugin activation, then every six hours and on `config.updated`, `provider.updated`,
-  `credential.updated` and `credential.switched`; a pass with no usable provider retries after one
-  minute instead of waiting six hours;
+  `credential.updated` and `credential.switched`; a pass with no usable provider retries after five
+  seconds instead of waiting six hours;
 - using the active `deepseek` integration's key credential;
 - caching the last successful map in plugin storage so a cold boot shows the last known name before
   the first request;

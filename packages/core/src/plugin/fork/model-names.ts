@@ -24,7 +24,7 @@ import { Provider } from "../../provider.js"
 
 const CACHE_KEY = "names"
 const REFRESH_INTERVAL = "6 hours"
-const RETRY_INTERVAL = "1 minute"
+const RETRY_INTERVAL = "5 seconds"
 const REQUEST_TIMEOUT = "10 seconds"
 const MAX_RESPONSE_BYTES = 1_000_000
 const DEEPSEEK = "deepseek"
