@@ -59,12 +59,13 @@ function models(initial: { name: string }[] = [{ name: "DeepSeek-V4.1-Flash" }],
   }
 }
 
-const storage = (values = new Map<string, unknown>()) =>
+const storage = (values = new Map<string, unknown>(), saved?: Deferred.Deferred<void>) =>
   ({
     get: (key: string) => Effect.succeed(values.get(key)),
     set: (key: string, value: unknown) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         values.set(key, value)
+        if (saved) yield* Deferred.succeed(saved, undefined)
       }),
     remove: (key: string) => Effect.sync(() => void values.delete(key)),
     scan: () => Effect.succeed([]),
@@ -108,16 +109,20 @@ describe("ForkModelNamesPlugin", () => {
   it.effect("applies the remote display name and caches it", () =>
     Effect.gen(function* () {
       const reloaded = yield* Deferred.make<void>()
+      const saved = yield* Deferred.make<void>()
       const model = models(undefined, reloaded)
       const values = new Map<string, unknown>()
       const requests: string[] = []
       const headers: Record<string, string>[] = []
       const body = JSON.stringify({
         object: "list",
-        data: [{ id: "deepseek-flash", name: "DeepSeek-V4.1-Flash-1017" }],
+        data: [
+          { id: "other", name: null },
+          { id: "deepseek-flash", name: "DeepSeek-V4.1-Flash-1017" },
+        ],
       })
       const mock = http(body, 200, requests, headers)
-      const ctx = context({ model, storage: storage(values) })
+      const ctx = context({ model, storage: storage(values, saved) })
 
       yield* ForkModelNamesPlugin.Plugin.effect(ctx).pipe(
         Effect.provide(Config.testLayer([])),
@@ -125,8 +130,9 @@ describe("ForkModelNamesPlugin", () => {
         Effect.forkScoped({ startImmediately: true }),
       )
 
-      // The refresh fiber reloads the model state after the HTTP response.
+      // The refresh fiber reloads the model state before writing the cache.
       yield* Deferred.await(reloaded)
+      yield* Deferred.await(saved)
 
       expect(model.data[0]?.name).toBe("DeepSeek-V4.1-Flash-1017")
       expect(requests).toEqual(["https://api.deepseek.com/models"])
@@ -161,6 +167,7 @@ describe("ForkModelNamesPlugin", () => {
       const reloaded = yield* Deferred.make<void>()
       const model = models([{ name: "Pinned-Name" }], reloaded)
       const values = new Map<string, unknown>()
+      const requests: string[] = []
       const body = JSON.stringify({ data: [{ id: "deepseek-flash", name: "Remote-Name" }] })
       const ctx = context({ model, storage: storage(values) })
       const entries = [
@@ -174,13 +181,37 @@ describe("ForkModelNamesPlugin", () => {
 
       yield* ForkModelNamesPlugin.Plugin.effect(ctx).pipe(
         Effect.provide(Config.testLayer(entries)),
-        Effect.provideService(HttpClient.HttpClient, http(body)),
+        Effect.provideService(HttpClient.HttpClient, http(body, 200, requests)),
         Effect.forkScoped({ startImmediately: true }),
       )
 
       yield* Deferred.await(reloaded)
 
+      expect(requests).toEqual(["https://api.deepseek.com/models"])
       expect(model.data[0]?.name).toBe("Pinned-Name")
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect("never sends the key to a non-DeepSeek base URL", () =>
+    Effect.gen(function* () {
+      const model = models()
+      const requests: string[] = []
+      const ctx = context({
+        model,
+        storage: storage(),
+        providers: [{ ...provider, settings: { baseURL: "https://evil.example" } }],
+      })
+
+      yield* ForkModelNamesPlugin.Plugin.effect(ctx).pipe(
+        Effect.provide(Config.testLayer([])),
+        Effect.provideService(HttpClient.HttpClient, http("{}", 200, requests)),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+
+      yield* Effect.promise(() => Bun.sleep(20))
+
+      expect(requests).toEqual([])
+      expect(model.data[0]?.name).toBe("DeepSeek-V4.1-Flash")
     }).pipe(Effect.scoped),
   )
 })
