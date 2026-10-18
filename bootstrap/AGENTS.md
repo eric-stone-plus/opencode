@@ -114,3 +114,30 @@ Credential material lives in `$HOME` by operator decision (2026-10-06 — "don't
 - Working path = the `codex-update` bash function in `~/.bashrc` (`codex-update [version]`): fetch `install.sh` from `raw.githubusercontent.com/openai/codex/main/scripts/install/install.sh` (byte-identical to the chatgpt.com copy, sha256 `150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6`, verified), run it with the causeway 18880 proxy exported (3.2 MB/s) plus `CODEX_NON_INTERACTIVE=1 CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=0`, so the installer only touches GitHub and still enforces its own `codex-package_SHA256SUMS` check. `codex-update-prune` runs afterwards and keeps only `current` + the previous release — the installer never cleans up, and 7 releases had piled up to 2.3 GB.
 - `check_for_update_on_startup = false` in `~/.codex/config.toml` suppresses the misleading popup (`codex doctor` no longer lists an update note). Re-enable only if direct egress to chatgpt.com/releases.openai.com starts working again.
 - General lesson: a HEAD/200 or an API response proves nothing about bulk-download throughput through the GFW. Before trusting a "reachable" verdict for a multi-hundred-MB fetch, probe with a ranged GET (`curl -r 0-8388607 -w '%{speed_download}'`) and compare direct vs. proxy.
+
+## Code review routing (mandatory)
+
+Two modes, and the trigger decides which one runs.
+
+- **Normal review — automatic, no prompt.** In GOAL mode, after any code edit
+  (`edit`/`write`/`patch` to a code file), run the normal review before
+  declaring the change done. Do not wait for the user. Load
+  `code-review-playbook` and follow its normal path: deterministic checks +
+  quick Standards/Spec + the `code-audit` OCR gate + a fail-closed verdict.
+  This is the per-edit gate; it does not run the deep protocol or an
+  independent verifier.
+- **Deep review — user-invoked.** When the user says "审查", "review",
+  "做好代码审查", "深度审计", or "deep-audit", load `deep-audit` and follow it
+  end to end. Bare "审查"/"review"/"做好代码审查" means **deep review**;
+  "深度审计"/"deep-audit" means **deep audit** (the full protocol when a
+  sandbox is available).
+- **Do not substitute.** Never answer a user-invoked "审查"/"review" with the
+  normal playbook. Never run the deep path automatically after an edit; if the
+  normal review finds critical/high or the change is high-risk, report BLOCKED
+  and recommend `deep-audit`.
+- Every verdict is one of APPROVE / APPROVE-WITH-NITS / NEEDS-FIXES / BLOCKED /
+  INCOMPLETE, with evidence and the exact commands run. If a required check
+  cannot run, say so and use INCOMPLETE; never silently skip. Never claim "no
+  vulnerabilities".
+- A full-repo audit is a separate request; do not run the Cloudflare
+  security-audit protocol on every code review.
