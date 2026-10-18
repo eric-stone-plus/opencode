@@ -20,6 +20,10 @@ export const sessionToken = Effect.sync(() => {
   return value ? Redacted.make(value) : undefined
 })
 
+// Set by the agent shell next to the token. A session id without a token means the shell is
+// running inside an agent and the CLI must not fall back to the operator credential.
+export const sessionID = Effect.sync(() => process.env.OPENCODE_SESSION_ID || undefined)
+
 export function session() {
   return Object.fromEntries(
     Object.entries(process.env).filter(

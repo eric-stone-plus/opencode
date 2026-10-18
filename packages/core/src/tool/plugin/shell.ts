@@ -199,6 +199,9 @@ export const Plugin = {
           output: Output,
           execute: (input, context) =>
             Effect.gen(function* () {
+              // The shell service runs the invocation callback in its own context, which does not
+              // include the app-level token issuer; capture it in the tool's context instead.
+              const accessToken = yield* Effect.serviceOption(SessionAccessToken.Service)
               const timeout = input.background === true ? (input.timeout ?? 0) : (input.timeout ?? DEFAULT_TIMEOUT_MS)
               let finalTimeout = timeout
               const info = yield* shell.create(
@@ -220,7 +223,6 @@ export const Plugin = {
                     delete invocation.env.OPENCODE_PASSWORD
                     delete invocation.env.OPENCODE_SERVER_PASSWORD
                     delete invocation.env.OPENCODE_SESSION_TOKEN
-                    const accessToken = yield* Effect.serviceOption(SessionAccessToken.Service)
                     if (Option.isSome(accessToken)) {
                       const token = yield* accessToken.value.issue(context.sessionID)
                       if (token !== undefined) invocation.env.OPENCODE_SESSION_TOKEN = token

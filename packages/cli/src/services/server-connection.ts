@@ -22,6 +22,13 @@ export const resolve = Effect.fn("cli.server-connection.resolve")(function* (arg
   if (args.server !== undefined && args.standalone)
     return yield* Effect.fail(new Error("--server and --standalone cannot be combined"))
   const sessionToken = yield* Env.sessionToken
+  // An agent shell always carries OPENCODE_SESSION_ID. If its token is missing, fail instead of
+  // falling back to the operator credential in the service config: a silent fallback would let a
+  // shell read every session again.
+  if (!sessionToken && (yield* Env.sessionID) !== undefined)
+    return yield* Effect.fail(
+      new Error("This agent shell has no session access token; refusing to use the operator credential"),
+    )
   if (args.server !== undefined) {
     const password = yield* Env.password
     const endpoint = withSessionToken(

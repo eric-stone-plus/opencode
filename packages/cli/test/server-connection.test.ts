@@ -28,6 +28,11 @@ test("resolution groups Effect-native lifecycle operations only for the managed 
   const runPromise = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem | Scope.Scope>) =>
     Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer), Effect.scoped))
 
+  // The test runner may itself be started from an agent shell; simulate the operator for the
+  // ordinary resolution cases and restore the environment afterwards.
+  const previousSessionID = process.env.OPENCODE_SESSION_ID
+  delete process.env.OPENCODE_SESSION_ID
+
   try {
     await fs.mkdir(path.dirname(registration), { recursive: true })
     await fs.writeFile(
@@ -66,7 +71,18 @@ test("resolution groups Effect-native lifecycle operations only for the managed 
       if (previousToken === undefined) delete process.env.OPENCODE_SESSION_TOKEN
       else process.env.OPENCODE_SESSION_TOKEN = previousToken
     }
+
+    // A shell with a session id but no token must fail rather than use the operator credential.
+    process.env.OPENCODE_SESSION_ID = "ses_agent_shell"
+    delete process.env.OPENCODE_SESSION_TOKEN
+    try {
+      await expect(runPromise(ServerConnection.resolve())).rejects.toThrow("no session access token")
+    } finally {
+      delete process.env.OPENCODE_SESSION_ID
+    }
   } finally {
+    if (previousSessionID === undefined) delete process.env.OPENCODE_SESSION_ID
+    else process.env.OPENCODE_SESSION_ID = previousSessionID
     await server.stop(true)
     await fs.rm(root, { recursive: true, force: true })
   }

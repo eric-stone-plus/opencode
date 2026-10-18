@@ -119,7 +119,14 @@ test("redacts URL credentials and credential environment variables without mutat
 async function cli(args: string[], cwd = path.join(import.meta.dir, ".."), env?: Record<string, string>) {
   const child = Bun.spawn([process.execPath, "run", path.join(import.meta.dir, "../src/index.ts"), ...args], {
     cwd,
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      // The suite may run inside an agent shell; empty values are treated as absent so the
+      // command resolves as the operator would.
+      OPENCODE_SESSION_ID: "",
+      OPENCODE_SESSION_TOKEN: "",
+    },
     stdout: "pipe",
     stderr: "pipe",
   })

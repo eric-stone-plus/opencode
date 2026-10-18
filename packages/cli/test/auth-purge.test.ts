@@ -157,6 +157,9 @@ function located<T>(data: T) {
 async function cli(args: string[]) {
   const child = Bun.spawn([process.execPath, "run", "src/index.ts", ...args], {
     cwd: path.join(import.meta.dir, ".."),
+    // Simulate the operator CLI: the suite may run inside an agent shell whose initial
+    // environment carries the real session id/token. Empty values are treated as absent.
+    env: { ...process.env, OPENCODE_SESSION_ID: "", OPENCODE_SESSION_TOKEN: "" },
     stdout: "pipe",
     stderr: "pipe",
   })
