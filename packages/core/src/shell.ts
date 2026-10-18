@@ -19,6 +19,7 @@ import { ShellScope } from "./shell/scope.js"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import { PluginHooks } from "./plugin/hooks.js"
 import { SessionEnvironment } from "./session/environment.js"
+import { SessionAccessToken } from "./session/access-token.js"
 import { SessionSchema } from "./session/schema.js"
 import { Config } from "./config.js"
 import { ToolOutput } from "./tool-output.js"
@@ -130,6 +131,10 @@ const layer = () =>
       const environments = yield* SessionEnvironment.Service
       const config = yield* Config.Service
       const appProcess = yield* AppProcess.Service
+      // The issuer is a global node, so the app graph installs the signing implementation and
+      // every location graph resolves it through the same replacement set. A required dependency
+      // is what puts the node in the location graph; serviceOption alone silently found nothing.
+      const accessToken = yield* SessionAccessToken.Service
       const context = yield* Effect.context()
       const runFork = Effect.runForkWith(context)
       const commands = new Map<Shell.ID, Active>()
@@ -280,6 +285,10 @@ const layer = () =>
         }
         yield* hooks.trigger("shell", "create.before", invocation)
         if (before) yield* before(invocation)
+        if (Schema.is(SessionSchema.ID)(sessionID)) {
+          const token = yield* accessToken.issue(sessionID)
+          if (token !== undefined) invocation.env.OPENCODE_SESSION_TOKEN = token
+        }
 
         const id = Shell.ID.ascending()
         const args = ShellSelect.args(invocation.shell, invocation.command)
@@ -465,6 +474,7 @@ export const node = makeLocationNode({
     SessionEnvironment.node,
     Config.node,
     AppProcess.node,
+    SessionAccessToken.node,
     cleanupNode,
   ],
 })
