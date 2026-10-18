@@ -138,9 +138,12 @@ const layer = () =>
       const shellScope = location.workspaceID === undefined ? yield* ShellScope.make(appProcess) : undefined
 
       const outputDir = path.join(global.data, DIRECTORY, location.project.id)
-      const { mkdir, unlink } = yield* Effect.promise(() => import("fs/promises"))
+      const { mkdir, unlink, chmod } = yield* Effect.promise(() => import("fs/promises"))
       const { createWriteStream, createReadStream } = yield* Effect.promise(() => import("fs"))
-      yield* Effect.promise(() => mkdir(outputDir, { recursive: true }))
+      yield* Effect.promise(() => mkdir(outputDir, { recursive: true, mode: 0o700 }))
+      // mkdir leaves an existing project directory's mode untouched; shell output can contain
+      // session text, so keep the directory and the files owner-only like the rest of the data dir.
+      yield* Effect.promise(() => chmod(outputDir, 0o700).catch(() => undefined))
 
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
@@ -328,7 +331,7 @@ const layer = () =>
               }
               commands.set(id, command)
 
-              const stream = createWriteStream(file)
+              const stream = createWriteStream(file, { mode: 0o600 })
               const outputDone = Latch.makeUnsafe()
               const pump = handle.all.pipe(
                 Stream.runForEach((chunk: Uint8Array) =>

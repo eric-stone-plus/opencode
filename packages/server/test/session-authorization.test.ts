@@ -88,6 +88,38 @@ it.live("a session access token can read only its own session", () =>
       expect(response.status).toBe(401)
     }
 
+    // A session token is read-only: write routes are denied before their handlers run, so the
+    // prompt attachment primitive cannot read arbitrary files (including the operator config).
+    for (const [route, method, body] of [
+      [
+        `/api/session/${firstSession.id}/prompt`,
+        "POST",
+        { files: [{ uri: "file:///home/eric/.config/opencode/service-main.json" }] },
+      ],
+      [`/api/session/${firstSession.id}`, "PATCH", { title: "self-granted" }],
+      [`/api/session/${firstSession.id}/move`, "POST", { directory: second.path }],
+      [`/api/session/${firstSession.id}`, "DELETE", undefined],
+      [`/api/session/${firstSession.id}/fork`, "POST", {}],
+      [`/api/session/${firstSession.id}/command`, "POST", {}],
+      [`/api/session/${firstSession.id}/agent`, "POST", {}],
+    ] as const) {
+      const response = yield* request(route, token, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      expect(response.status).toBe(401)
+    }
+
+    // The operator password still drives the session (a harmless title update).
+    const renamed = yield* request(`/api/session/${firstSession.id}`, "secret", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "operator-renamed" }),
+    })
+    expect(renamed.status).toBe(204)
+    yield* Effect.promise(() => renamed.body?.cancel() ?? Promise.resolve())
+
     // File APIs are operator-only for a session token: fs.read could otherwise reach the
     // server's database, and fs.list can escape the location with an absolute path.
     for (const route of [

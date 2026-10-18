@@ -96,6 +96,13 @@ function sessionRouteAllowed(path: string, method: string) {
   return false
 }
 
+// A session token is a read credential: it may inspect its own session, not drive it. Prompt
+// attachments can read arbitrary file:// paths, and update/move/remove/fork/command are operator
+// actions; the agent's own loop runs in-process. Keep this default-deny for new routes.
+function sessionMethodAllowed(method: string) {
+  return method === "GET" || method === "HEAD"
+}
+
 // These session-scoped routes spawn a process without the shell tool's environment hook, so a
 // command run through them would not receive the session token and could fall back to the
 // operator credential. The agent's own shell tool is the supported path.
@@ -146,6 +153,8 @@ export const authorizationLayer = Layer.effect(
               return yield* new UnauthorizedError({ message: "Session access token does not match this session" })
             if (sessionScopedRouteDenied(route.route.path))
               return yield* new UnauthorizedError({ message: "Session access token cannot use this route" })
+            if (!sessionMethodAllowed(request.method))
+              return yield* new UnauthorizedError({ message: "Session access token is read-only" })
           } else if (!sessionRouteAllowed(route.route.path, request.method)) {
             return yield* new UnauthorizedError({ message: "Session access token cannot use this route" })
           }
