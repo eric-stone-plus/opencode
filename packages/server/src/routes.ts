@@ -18,6 +18,7 @@ import { PersistentPty } from "@opencode/core/persistent-pty"
 import { Project } from "@opencode/core/project"
 import { Worktree } from "@opencode/core/worktree"
 import { Session } from "@opencode/core/session"
+import { SessionAccessToken } from "@opencode/core/session/access-token"
 import { Instance } from "@opencode/core/instance/service"
 import { SessionTransfer } from "@opencode/core/session/transfer"
 import { ShellSelect } from "@opencode/core/shell/select"
@@ -62,6 +63,7 @@ const applicationServiceNodes = [
   Project.sweepNode,
   Worktree.node,
   Session.node,
+  SessionAccessToken.node,
   Instance.node,
   SessionTransfer.node,
   SdkPlugins.node,
@@ -117,8 +119,16 @@ export function standardReplacements(options: ServerOptions): LayerNode.Replacem
   // Closed unless the embedder opts in: an omitted config.project must not discover a
   // repository's own config, which can redirect provider traffic and execute code.
   const project = options.config?.project === true
+  const password = options.password
   return [
     Database.node.replace(Database.configured(options.database)),
+    // A passworded server mints one session-bound credential per agent shell. The token is
+    // signed with the server password, so rotation revokes it with every other credential.
+    SessionAccessToken.node.replace(
+      SessionAccessToken.layer(
+        password ? (sessionID) => ServerAuth.issueSessionAccessToken(password, sessionID) : undefined,
+      ),
+    ),
     PersistentPty.node.replace(PersistentPty.configured(options.pty)),
     Bus.node.replace(Bus.configured({ persist: options.events?.persist })),
     App.node.replace(App.configured(options.app)),

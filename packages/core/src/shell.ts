@@ -15,6 +15,7 @@ import { FileRetention } from "./file-retention.js"
 import { Location } from "./location.js"
 import { Global } from "@opencode/util/global"
 import { ShellSelect } from "./shell/select.js"
+import { ShellScope } from "./shell/scope.js"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import { PluginHooks } from "./plugin/hooks.js"
 import { SessionEnvironment } from "./session/environment.js"
@@ -128,10 +129,13 @@ const layer = () =>
       const hooks = yield* PluginHooks.Service
       const environments = yield* SessionEnvironment.Service
       const config = yield* Config.Service
+      const appProcess = yield* AppProcess.Service
       const context = yield* Effect.context()
       const runFork = Effect.runForkWith(context)
       const commands = new Map<Shell.ID, Active>()
       const exitOrder: Shell.ID[] = []
+      // Workspace-backed spawners run elsewhere; the local user manager cannot stop their units.
+      const shellScope = location.workspaceID === undefined ? yield* ShellScope.make(appProcess) : undefined
 
       const outputDir = path.join(global.data, DIRECTORY, location.project.id)
       const { mkdir, unlink } = yield* Effect.promise(() => import("fs/promises"))
@@ -276,6 +280,7 @@ const layer = () =>
 
         const id = Shell.ID.ascending()
         const args = ShellSelect.args(invocation.shell, invocation.command)
+        const wrapped = shellScope?.wrap({ command: invocation.shell, args, unit: `${ShellScope.UNIT_PREFIX}${id}` })
         const file = path.join(outputDir, `${id}.out`)
 
         const info: Info = {
@@ -298,9 +303,9 @@ const layer = () =>
             Effect.gen(function* () {
               const handle = yield* environment.spawner
                 .spawn(
-                  ChildProcess.make(invocation.shell, args, {
+                  ChildProcess.make(wrapped?.command ?? invocation.shell, wrapped?.args ?? args, {
                     cwd: invocation.cwd,
-                    env: invocation.env,
+                    env: wrapped?.unit ? ShellScope.environment(invocation.env) : invocation.env,
                     stdin: "ignore",
                     detached: process.platform !== "win32",
                     forceKillAfter: Duration.seconds(3),
@@ -309,6 +314,9 @@ const layer = () =>
                 .pipe(
                   Effect.mapError((cause) => new AppProcess.AppProcessError({ command: invocation.command, cause })),
                 )
+              // Run after the spawner release is registered so the cgroup stop happens first and
+              // the existing process-group kill remains the fallback.
+              if (wrapped) yield* Effect.addFinalizer(() => wrapped.stop)
               const command: Active = {
                 info: produce(info, (draft) => {
                   draft.pid = handle.pid
@@ -398,7 +406,10 @@ const layer = () =>
                         finish(
                           "timeout",
                           undefined,
-                          handle.kill({ forceKillAfter: Duration.seconds(3) }).pipe(Effect.catch(() => Effect.void)),
+                          (wrapped?.stop ?? Effect.void).pipe(
+                            Effect.andThen(handle.kill({ forceKillAfter: Duration.seconds(3) })),
+                            Effect.catch(() => Effect.void),
+                          ),
                         ),
                       ),
                     ),
@@ -450,6 +461,7 @@ export const node = makeLocationNode({
     PluginHooks.node,
     SessionEnvironment.node,
     Config.node,
+    AppProcess.node,
     cleanupNode,
   ],
 })

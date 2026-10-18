@@ -5,7 +5,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import type { Tool } from "@opencode/schema/tool"
-import { Deferred, Effect, Schema, Scope } from "effect"
+import { Deferred, Effect, Option, Schema, Scope } from "effect"
 import { Config } from "../../config.js"
 import { Environment } from "../../environment/index.js"
 import { Job } from "../../job.js"
@@ -13,6 +13,7 @@ import { FileAccess } from "../../file-access.js"
 import { Permission } from "../../permission.js"
 import { NonNegativeInt } from "../../schema.js"
 import { Session } from "../../session.js"
+import { SessionAccessToken } from "../../session/access-token.js"
 import { SessionSchema } from "../../session/schema.js"
 import { Shell } from "../../shell.js"
 import { shellParserWasm } from "#shell-parser-wasm"
@@ -214,6 +215,16 @@ export const Plugin = {
                     invocation.env.OPENCODE = "1"
                     invocation.env.AI_AGENT ||= "opencode"
                     invocation.env.OPENCODE_SESSION_ID = context.sessionID
+                    // Operator credentials never belong in an agent shell, and a token inherited
+                    // from a parent session must be replaced by this session's own token.
+                    delete invocation.env.OPENCODE_PASSWORD
+                    delete invocation.env.OPENCODE_SERVER_PASSWORD
+                    delete invocation.env.OPENCODE_SESSION_TOKEN
+                    const accessToken = yield* Effect.serviceOption(SessionAccessToken.Service)
+                    if (Option.isSome(accessToken)) {
+                      const token = yield* accessToken.value.issue(context.sessionID)
+                      if (token !== undefined) invocation.env.OPENCODE_SESSION_TOKEN = token
+                    }
                     finalTimeout = yield* prepare(invocation, context)
                   }),
               )

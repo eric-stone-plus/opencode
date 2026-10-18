@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { ServerAuth } from "@opencode/server/auth"
+import { Session } from "@opencode/schema/session"
 import { Option, Redacted } from "effect"
 
 test("accepts only the fixed opencode username", () => {
@@ -21,4 +22,35 @@ test("session tokens expire, resist tampering, and are revoked by changing the p
   expect(ServerAuth.verifySession(`${Number(parts[0]) + 1}.${parts[1]}`, config, now)).toBe(false)
   expect(ServerAuth.verifySession(token, { ...config, password: Option.some("rotated") }, now)).toBe(false)
   expect(ServerAuth.issueSession({ ...config, password: Option.none() })).toBeUndefined()
+})
+
+test("session access tokens name one session and are distinct from operator credentials", () => {
+  const config = { password: Option.some("secret"), username: "opencode" }
+  const now = Date.now()
+  const sessionID = Session.ID.make("ses_access_token_test")
+  const token = ServerAuth.issueSessionAccessToken("secret", sessionID, now)
+
+  expect(ServerAuth.verifySessionAccessToken(token, config, now)).toBe(sessionID)
+  expect(ServerAuth.authenticate({ username: "opencode", password: Redacted.make(token) }, config, now)).toEqual({
+    kind: "session",
+    sessionID,
+  })
+  expect(ServerAuth.authenticate({ username: "opencode", password: Redacted.make("secret") }, config, now)).toEqual({
+    kind: "admin",
+  })
+  expect(
+    ServerAuth.authenticate({ username: "custom", password: Redacted.make(token) }, config, now),
+  ).toBeUndefined()
+  expect(ServerAuth.verifySessionAccessToken(`${token}x`, config, now)).toBeUndefined()
+  expect(
+    ServerAuth.verifySessionAccessToken(token, { ...config, password: Option.some("rotated") }, now),
+  ).toBeUndefined()
+  expect(
+    ServerAuth.verifySessionAccessToken(
+      token,
+      config,
+      now + ServerAuth.SESSION_ACCESS_TTL_SECONDS * 1000,
+    ),
+  ).toBeUndefined()
+  expect(ServerAuth.verifySessionAccessToken(token, { ...config, password: Option.none() }, now)).toBeUndefined()
 })

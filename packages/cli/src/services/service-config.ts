@@ -22,6 +22,8 @@ export const Info = Schema.Struct({
   remoteAccepted: Schema.optional(Schema.Literal(true)),
   hostname: Schema.optional(Schema.String),
   port: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(65_535))),
+  // Operator-equivalent. The registration is written 0600, but any process running as the
+  // same OS user can read it; the per-session token is a narrower credential, not a sandbox.
   password: Schema.optional(Schema.String),
   cors: Schema.optional(Schema.Array(Schema.String)),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),

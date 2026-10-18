@@ -13,16 +13,20 @@ import { Permission } from "../../permission.js"
 import { Worktree } from "../../worktree.js"
 
 export const RenameInput = Schema.Struct({
-  sessionID: Schema.optionalKey(Session.ID).annotate({ description: "Omit to rename the current session." }),
+  sessionID: Schema.optionalKey(Session.ID).annotate({
+    description: "Must match the current session when set. Omit to rename the current session.",
+  }),
   title: Schema.String.check(Schema.isMinLength(1)).annotate({ description: "New session title." }),
 })
 
 const RenameOutput = Schema.Struct({ sessionID: Session.ID, title: Schema.String })
 
 export const MoveInput = Schema.Struct({
-  sessionID: Schema.optionalKey(Session.ID).annotate({ description: "Omit to move the current session." }),
+  sessionID: Schema.optionalKey(Session.ID).annotate({
+    description: "Must match the current session when set. Omit to move the current session.",
+  }),
   directory: AbsolutePath.check(Schema.isMinLength(1)).annotate({
-    description: "Destination directory, relative to the target session's directory or absolute. Supports ~.",
+    description: "Destination directory, relative to the current session's directory or absolute. Supports ~.",
   }),
 })
 
@@ -84,6 +88,19 @@ const ModelsOutput = Schema.Struct({
   next: Schema.NullOr(Schema.Int).annotate({ description: "Offset of the next page, or null on the last page." }),
 })
 
+// A caller-supplied ID must not widen the tool's authority beyond the session that invoked it.
+const currentSession = (
+  requested: Session.ID | undefined,
+  current: Session.ID,
+): Effect.Effect<Session.ID, ToolFailure> =>
+  requested === undefined || requested === current
+    ? Effect.succeed(current)
+    : Effect.fail(
+        new ToolFailure({
+          message: `Cannot target session ${requested}: this tool only acts on the current session ${current}. Omit sessionID to target the current session.`,
+        }),
+      )
+
 export const Plugin = {
   id: "opencode.tools",
   effect: Effect.fn("OpenCodeTools.Plugin")(function* (ctx: Context) {
@@ -110,47 +127,54 @@ export const Plugin = {
         draft.add({
           name: "session_rename",
           description:
-            "Rename a session, or omit sessionID to rename the current session. Use a short, specific title that summarizes the work being done.",
+            "Rename the current session. Omit sessionID or pass the current session's ID; other sessions are rejected. Use a short, specific title that summarizes the work being done.",
           input: RenameInput,
           output: RenameOutput,
           options: { namespace: "opencode", codemode: true },
-          execute: (input, context) => {
-            const sessionID = input.sessionID ?? context.sessionID
-            const title = input.title.trim()
-            if (!title) return Effect.fail(new ToolFailure({ message: "Session title must not be empty" }))
-            return ctx.session.update({ sessionID, title }).pipe(
-              Effect.as({
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              const sessionID = yield* currentSession(input.sessionID, context.sessionID)
+              const title = input.title.trim()
+              if (!title) return yield* new ToolFailure({ message: "Session title must not be empty" })
+              yield* ctx.session
+                .update({ sessionID, title })
+                .pipe(
+                  Effect.mapError(
+                    (error) => new ToolFailure({ message: `Unable to rename session ${sessionID}`, error }),
+                  ),
+                )
+              return {
                 output: { sessionID, title },
                 content: `Renamed session ${sessionID} to ${title}.`,
-              }),
-              Effect.mapError((error) => new ToolFailure({ message: `Unable to rename session ${sessionID}`, error })),
-            )
-          },
+              }
+            }),
         })
         draft.add({
           name: "session_move",
           description:
-            "Move a session to another directory, or omit sessionID to move the current session. The current session moves at the next safe boundary; do not run destination-dependent tools in the same execute call.",
+            "Move the current session to another directory. Omit sessionID or pass the current session's ID; other sessions are rejected. The current session moves at the next safe boundary; do not run destination-dependent tools in the same execute call.",
           input: MoveInput,
           output: MoveOutput,
           options: { namespace: "opencode", codemode: true, pinned: true },
           execute: (input, context) =>
             Effect.gen(function* () {
-              const sessionID = input.sessionID ?? context.sessionID
-              yield* ctx.session.move({
-                sessionID,
-                directory: input.directory,
-                delivery: "steer",
-              })
+              const sessionID = yield* currentSession(input.sessionID, context.sessionID)
+              yield* ctx.session
+                .move({
+                  sessionID,
+                  directory: input.directory,
+                  delivery: "steer",
+                })
+                .pipe(
+                  Effect.mapError(
+                    (error) => new ToolFailure({ message: `Unable to move session to ${input.directory}`, error }),
+                  ),
+                )
               return {
                 output: { sessionID, directory: input.directory },
                 content: `Moved session ${sessionID} to ${input.directory}.`,
               }
-            }).pipe(
-              Effect.mapError(
-                (error) => new ToolFailure({ message: `Unable to move session to ${input.directory}`, error }),
-              ),
-            ),
+            }),
         })
         draft.add({
           name: "worktree_create",

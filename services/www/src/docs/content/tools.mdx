@@ -221,11 +221,12 @@ their own permissions, and plugin tools enforce the permissions they assert.
 
 The `opencode` Code Mode namespace contains session utilities:
 
-- `session_rename` changes the title of the current session, or another session
-  selected by `sessionID`.
-- `session_move` moves the current session, or another selected session, to a
-  relative or absolute `directory`. The move takes effect at a safe boundary,
-  so destination-dependent work belongs in a later call.
+- `session_rename` changes the title of the current session. `sessionID` is
+  optional and must match the current session when set.
+- `session_move` moves the current session to a relative or absolute
+  `directory`. `sessionID` is optional and must match the current session when
+  set. The move takes effect at a safe boundary, so destination-dependent work
+  belongs in a later call.
 
 ```text
 Rename this session to "Timeout cleanup", then move it to the new worktree.

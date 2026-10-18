@@ -63,13 +63,29 @@ export function make(input: Partial<Interface> = {}): Interface {
 const acquire = (input: Partial<Interface>) =>
   Effect.gen(function* () {
     const service = Service.of(make(input))
+    // Session data and logs are private; other service directories keep their historical modes.
+    const privateDirectories = new Set([service.data, service.log])
     yield* Effect.promise(() =>
       Promise.all(
         [service.data, service.config, service.state, service.log, service.bin, service.repos, service.tmp].map(
-          (directory) => fs.promises.mkdir(directory, { recursive: true }),
+          (directory) =>
+            fs.promises.mkdir(directory, {
+              recursive: true,
+              ...(privateDirectories.has(directory) ? { mode: 0o700 } : {}),
+            }),
         ),
       ),
     )
+    // mkdir leaves an existing directory's mode untouched, so older installs stay world-readable
+    // until they are tightened here. Windows inherits ACLs from the user profile directory.
+    // Never chmod the OS temp root itself (tests configure it as a scratch data/log directory and
+    // it is shared), and never let one chmod failure break startup.
+    const temp = os.tmpdir()
+    const tighten = (directory: string) =>
+      process.platform !== "win32" && directory !== temp
+        ? fs.promises.chmod(directory, 0o700).catch(() => undefined)
+        : Promise.resolve()
+    yield* Effect.promise(() => Promise.all(Array.from(privateDirectories, tighten)))
     // The async realpath is what the service payload test and the rest of the flow compare against; the
     // sync call expands more on Windows (the profile's 8.3 short name), which puts the two out of step.
     const canonicalTmp = yield* Effect.promise(() => fs.promises.realpath(service.tmp))

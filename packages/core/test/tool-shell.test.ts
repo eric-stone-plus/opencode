@@ -25,6 +25,7 @@ import { AbsolutePath } from "@opencode/core/schema"
 import { Agent } from "@opencode/core/agent"
 import { Job } from "@opencode/core/job"
 import { Session } from "@opencode/core/session"
+import { SessionAccessToken } from "@opencode/core/session/access-token"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionMessage } from "@opencode/core/session/message"
@@ -148,6 +149,7 @@ const nodes = LayerNode.group([
   Bus.node,
   Job.node,
   Session.node,
+  SessionAccessToken.node,
   SessionExecution.node,
   LocationServiceMap.node,
   filesystem,
@@ -164,6 +166,12 @@ const replacements = [
   offlineModels,
 ] satisfies LayerNode.Replacements
 const productionIt = testEffect(AppNodeBuilder.build(nodes, replacements))
+const tokenIt = testEffect(
+  AppNodeBuilder.build(nodes, [
+    ...replacements,
+    SessionAccessToken.node.replace(SessionAccessToken.layer((id) => `token-${id}`)),
+  ]),
+)
 const it = testEffect(
   AppNodeBuilder.build(nodes, [...replacements, PluginSupervisor.node.replace(shellPluginSupervisor)]),
 )
@@ -968,6 +976,39 @@ describe("ShellTool", () => {
 
               expect(settled.status).toBe("completed")
               expect(settled.content?.[0]).toEqual({ type: "text", text: "from-session" })
+            }),
+          )
+        },
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]().then(() => undefined)),
+      ),
+    { timeout: 15_000 },
+  )
+
+  tokenIt.live(
+    "injects the session access token and strips operator credentials",
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) => {
+          reset()
+          return withSession(tmp.path, (registry) =>
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              yield* sessions.environment({
+                sessionID,
+                variables: {
+                  OPENCODE_SESSION_TOKEN: "stale",
+                  OPENCODE_PASSWORD: "operator-password",
+                  OPENCODE_SERVER_PASSWORD: "legacy-password",
+                },
+              })
+              const command = isWindows
+                ? '[Console]::Out.Write("$env:OPENCODE_SESSION_TOKEN|$env:OPENCODE_PASSWORD|$env:OPENCODE_SERVER_PASSWORD")'
+                : 'printf %s "$OPENCODE_SESSION_TOKEN|$OPENCODE_PASSWORD|$OPENCODE_SERVER_PASSWORD"'
+              const settled = yield* executeTool(registry, call({ command }))
+
+              expect(settled.status).toBe("completed")
+              expect(settled.content?.[0]).toEqual({ type: "text", text: `token-${sessionID}||` })
             }),
           )
         },

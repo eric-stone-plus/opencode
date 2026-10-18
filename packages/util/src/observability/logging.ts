@@ -65,8 +65,12 @@ export function fileLogger(target = file(), id: string = runID()) {
   // Do not set batchWindow to 0; it causes high idle CPU usage.
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    yield* fs.makeDirectory(path.dirname(target), { recursive: true })
-    const logger = yield* Logger.toFile(formatter(id), target, { flag: "a" })
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 })
+    // Logger.toFile applies `mode` only when it creates the file, so pre-create it owner-only and
+    // tighten a log left by an older version. Windows inherits ACLs from the profile directory.
+    yield* Effect.scoped(fs.open(target, { flag: "a", mode: 0o600 }))
+    if (process.platform !== "win32") yield* fs.chmod(target, 0o600)
+    const logger = yield* Logger.toFile(formatter(id), target, { flag: "a", mode: 0o600 })
     yield* trim(target).pipe(
       Effect.ignore,
       Effect.repeat(Schedule.spaced(LOG_TRIM_INTERVAL)),

@@ -33,8 +33,12 @@ function credentialFromRequest(request: HttpServerRequest.HttpServerRequest) {
   const url = new URL(request.url, "http://localhost")
   const token = url.searchParams.get(AUTH_TOKEN_QUERY)
   if (token) return decodeCredential(token)
-  const match = /^Basic\s+(.+)$/i.exec(request.headers.authorization ?? "")
-  if (match) return decodeCredential(match[1])
+  const authorization = request.headers.authorization ?? ""
+  const basic = /^Basic\s+(.+)$/i.exec(authorization)
+  if (basic) return decodeCredential(basic[1])
+  // Bearer is the natural form for a session access token; Basic stays the CLI's transport.
+  const bearer = /^Bearer\s+(.+)$/i.exec(authorization)
+  if (bearer) return Effect.succeed({ username: "opencode", password: Redacted.make(bearer[1]!) })
   return Effect.succeed(emptyCredential())
 }
 
@@ -55,10 +59,18 @@ export function unauthorizedResponse(request: HttpServerRequest.HttpServerReques
   )
 }
 
-export function authorizedRequest(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
+export function authenticateRequest(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
   return credentialFromRequest(request).pipe(
-    Effect.map((credential) => ServerAuth.authorized(credential, config) || authorizedSessionCookie(request, config)),
+    Effect.map(
+      (credential) =>
+        ServerAuth.authenticate(credential, config) ??
+        (authorizedSessionCookie(request, config) ? ServerAuth.adminAccess : undefined),
+    ),
   )
+}
+
+export function authorizedRequest(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
+  return authenticateRequest(request, config).pipe(Effect.map((access) => access !== undefined))
 }
 
 function authorizedSessionCookie(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
@@ -70,11 +82,39 @@ function authorizedSessionCookie(request: HttpServerRequest.HttpServerRequest, c
   return ServerAuth.verifySession(token, config)
 }
 
+/**
+ * Routes a session-scoped credential may use when the route has no `sessionID` parameter.
+ * Everything else is denied by default: a token for one session must not reach the global event
+ * feed, plugin RPC, file APIs (which could expose the database), or operator-only controls.
+ */
+function sessionRouteAllowed(path: string, method: string) {
+  if (path === "/api/info" || path === "/api/location") return true
+  if (path === "/api/session") return method === "GET"
+  if (path === "/api/session/active") return true
+  if (path === "/api/shell") return method === "GET"
+  if (path === "/api/shell/:id" || path === "/api/shell/:id/output") return method === "GET" || method === "DELETE"
+  return false
+}
+
+// These session-scoped routes spawn a process without the shell tool's environment hook, so a
+// command run through them would not receive the session token and could fall back to the
+// operator credential. The agent's own shell tool is the supported path.
+function sessionScopedRouteDenied(path: string) {
+  return (
+    path === "/api/session/:sessionID/shell" ||
+    path === "/api/experimental/session/:sessionID/terminal" ||
+    path === "/api/experimental/session/:sessionID/terminal/read"
+  )
+}
+
 export const authorizationLayer = Layer.effect(
   Authorization,
   Effect.gen(function* () {
     const config = yield* ServerAuth.Config
-    if (!ServerAuth.required(config)) return Authorization.of((effect) => effect)
+    if (!ServerAuth.required(config))
+      return Authorization.of((effect) =>
+        Effect.provideService(effect, ServerAuth.AccessService, ServerAuth.adminAccess),
+      )
     return Authorization.of((effect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest
@@ -88,13 +128,29 @@ export const authorizationLayer = Layer.effect(
             !!url.searchParams.get(PTY_CONNECT_TICKET_QUERY)) ||
           route.route.path === PAIRING_CONNECT_PATH
         )
-          return yield* effect
-        if (yield* authorizedRequest(request, config)) return yield* effect
-        if (challengeRequest(request))
-          yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-            Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", WWW_AUTHENTICATE)),
+          return yield* effect.pipe(
+            Effect.provideService(ServerAuth.AccessService, ServerAuth.adminAccess),
           )
-        return yield* new UnauthorizedError({ message: UNAUTHORIZED_MESSAGE })
+        const access = yield* authenticateRequest(request, config)
+        if (access === undefined) {
+          if (challengeRequest(request))
+            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+              Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", WWW_AUTHENTICATE)),
+            )
+          return yield* new UnauthorizedError({ message: UNAUTHORIZED_MESSAGE })
+        }
+        if (access.kind === "session") {
+          const scoped = route.params.sessionID
+          if (typeof scoped === "string") {
+            if (scoped !== access.sessionID)
+              return yield* new UnauthorizedError({ message: "Session access token does not match this session" })
+            if (sessionScopedRouteDenied(route.route.path))
+              return yield* new UnauthorizedError({ message: "Session access token cannot use this route" })
+          } else if (!sessionRouteAllowed(route.route.path, request.method)) {
+            return yield* new UnauthorizedError({ message: "Session access token cannot use this route" })
+          }
+        }
+        return yield* effect.pipe(Effect.provideService(ServerAuth.AccessService, access))
       }),
     )
   }),

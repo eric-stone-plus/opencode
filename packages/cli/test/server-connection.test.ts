@@ -1,4 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
+import { Service } from "@opencode/client/effect/service"
 import { Global } from "@opencode/util/global"
 import { OPENCODE_VERSION } from "../src/version"
 import { expect, test } from "bun:test"
@@ -50,6 +51,21 @@ test("resolution groups Effect-native lifecycle operations only for the managed 
     const explicit = await runPromise(ServerConnection.resolve({ server: server.url.toString() }))
     expect(explicit.endpoint.url).toBe(server.url.toString())
     expect(explicit.service).toBeUndefined()
+
+    const previousToken = process.env.OPENCODE_SESSION_TOKEN
+    process.env.OPENCODE_SESSION_TOKEN = "session-token"
+    try {
+      const scoped = await runPromise(ServerConnection.resolve({ server: server.url.toString() }))
+      expect(Service.headers(scoped.endpoint)?.authorization).toBe(
+        `Basic ${Buffer.from("opencode:session-token").toString("base64")}`,
+      )
+      await expect(runPromise(ServerConnection.resolve({ standalone: true }))).rejects.toThrow(
+        "session access token cannot start a standalone server",
+      )
+    } finally {
+      if (previousToken === undefined) delete process.env.OPENCODE_SESSION_TOKEN
+      else process.env.OPENCODE_SESSION_TOKEN = previousToken
+    }
   } finally {
     await server.stop(true)
     await fs.rm(root, { recursive: true, force: true })

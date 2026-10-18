@@ -112,6 +112,35 @@ test("file logger appends concurrent runs with a run on every line", async () =>
   expect(lines.every((line) => !line.startsWith("{"))).toBe(true)
 })
 
+test("file logger keeps the log owner-only and preserves existing content", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-log-test-"))
+  await using _ = {
+    async [Symbol.asyncDispose]() {
+      await fs.rm(dir, { recursive: true, force: true })
+    },
+  }
+  const existing = path.join(dir, "existing.log")
+  const fresh = path.join(dir, "fresh.log")
+  // Simulate a log created by an older version with the default umask.
+  await fs.writeFile(existing, "old\n", { mode: 0o644 })
+  await fs.chmod(existing, 0o644)
+  const write = (file: string) =>
+    Effect.logInfo("entry").pipe(
+      Effect.provide(Logger.layer([fileLogger(file, "run-a")]).pipe(Layer.provide(NodeFileSystem.layer), Layer.orDie)),
+      Effect.scoped,
+      Effect.runPromise,
+    )
+
+  await write(existing)
+  await write(fresh)
+
+  if (process.platform !== "win32") {
+    expect((await fs.stat(existing)).mode & 0o777).toBe(0o600)
+    expect((await fs.stat(fresh)).mode & 0o777).toBe(0o600)
+  }
+  expect(await Bun.file(existing).text()).toContain("old\n")
+})
+
 test("file logger flattens nested objects", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-log-test-"))
   await using _ = {

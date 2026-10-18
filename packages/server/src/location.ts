@@ -5,9 +5,10 @@ import { LocationServiceMap } from "@opencode/core/location-services"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
 import { LocationNotFoundError, InvalidRequestError, ServiceUnavailableError } from "@opencode/protocol/errors"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpServerRequest } from "effect/http"
 import { HttpApiMiddleware } from "effect/http-api"
+import { ServerAuth } from "./auth"
 import { missingSession } from "./handlers/session-error"
 
 export type LocationServices = Layer.Success<ReturnType<(typeof LocationServiceMap.Service)["get"]>>
@@ -90,10 +91,28 @@ export const layer = Layer.effect(
   LocationMiddleware,
   Effect.gen(function* () {
     const locations = yield* LocationServiceMap.Service
+    const sessions = yield* Session.Service
     return LocationMiddleware.of((effect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest
-        return yield* effect.pipe(Effect.provide(locations.get(requestRef(request))), locationErrors)
+        // A session access token is pinned to the session's own location. The query cannot
+        // redirect it to another project or another session's working tree.
+        const access = yield* Effect.serviceOption(ServerAuth.AccessService)
+        const ref =
+          Option.isSome(access) && access.value.kind === "session"
+            ? yield* sessions.get(access.value.sessionID).pipe(
+                Effect.map((session) => session.location),
+                Effect.catchTag("Session.NotFoundError", () =>
+                  Effect.fail(
+                    new LocationNotFoundError({
+                      location: requestRef(request),
+                      message: "Session not found",
+                    }),
+                  ),
+                ),
+              )
+            : requestRef(request)
+        return yield* effect.pipe(Effect.provide(locations.get(ref)), locationErrors)
       }),
     )
   }),

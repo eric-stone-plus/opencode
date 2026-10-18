@@ -21,12 +21,18 @@ export type Resolved = {
 export const resolve = Effect.fn("cli.server-connection.resolve")(function* (args: Args = {}) {
   if (args.server !== undefined && args.standalone)
     return yield* Effect.fail(new Error("--server and --standalone cannot be combined"))
+  const sessionToken = yield* Env.sessionToken
   if (args.server !== undefined) {
     const password = yield* Env.password
-    const endpoint = {
-      url: args.server,
-      auth: password ? { type: "basic" as const, username: "opencode", password: Redacted.value(password) } : undefined,
-    } satisfies Endpoint
+    const endpoint = withSessionToken(
+      {
+        url: args.server,
+        auth: password
+          ? { type: "basic" as const, username: "opencode", password: Redacted.value(password) }
+          : undefined,
+      } satisfies Endpoint,
+      sessionToken,
+    )
     const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     const health = yield* Effect.tryPromise({
       try: () => client.server.info({ signal: AbortSignal.timeout(5_000) }),
@@ -39,21 +45,30 @@ export const resolve = Effect.fn("cli.server-connection.resolve")(function* (arg
     return { endpoint } satisfies Resolved
   }
   if (args.standalone || (yield* ServiceConfig.read()).disabled === true) {
+    // A standalone server gets a fresh operator password and the shared database. Allowing a
+    // session token to take this path would silently promote it to operator.
+    if (sessionToken)
+      return yield* Effect.fail(new Error("A session access token cannot start a standalone server"))
     return { endpoint: yield* Standalone.start() } satisfies Resolved
   }
 
   const mismatch = args.mismatch ?? "ignore"
   const options = yield* ServiceConfig.options({ checkVersion: mismatch !== "ignore" })
   return {
-    endpoint: yield* resolveManaged({ ...options, onStart: args.onStart }, mismatch),
-    service: managedService(options),
+    endpoint: withSessionToken(yield* resolveManaged({ ...options, onStart: args.onStart }, mismatch), sessionToken),
+    service: managedService(options, sessionToken),
   } satisfies Resolved
 })
 
-function managedService(options: EnsureOptions) {
+function withSessionToken(endpoint: Endpoint, token: Redacted.Redacted | undefined): Endpoint {
+  if (!token) return endpoint
+  return { ...endpoint, auth: { type: "basic", username: "opencode", password: Redacted.value(token) } }
+}
+
+function managedService(options: EnsureOptions, token: Redacted.Redacted | undefined) {
   const reconnectOptions = { ...options, version: undefined }
   return {
-    reconnect: () => Service.ensure(reconnectOptions),
+    reconnect: () => Service.ensure(reconnectOptions).pipe(Effect.map((endpoint) => withSessionToken(endpoint, token))),
     restart: () =>
       Effect.gen(function* () {
         yield* Service.stop({ file: options.file, pty: "handoff" })
@@ -88,7 +103,7 @@ function connectError(endpoint: Endpoint, cause: unknown) {
     return new Error(
       endpoint.auth === undefined
         ? `Server at ${endpoint.url} requires a password; set OPENCODE_PASSWORD`
-        : `Server at ${endpoint.url} rejected the password`,
+        : `Server at ${endpoint.url} rejected the credential`,
       { cause },
     )
   }

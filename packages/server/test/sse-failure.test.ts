@@ -1,7 +1,7 @@
 import { expect } from "bun:test"
 import { OpenCode } from "@opencode/client/effect"
 import { ClientApi } from "@opencode/protocol/client"
-import { Authorization } from "@opencode/protocol/middleware/authorization"
+import { AccessService, Authorization, adminAccess } from "@opencode/protocol/middleware/authorization"
 import { Event } from "@opencode/schema/event"
 import { Session } from "@opencode/schema/session"
 import { Cause, Effect, Exit, Layer, Stream } from "effect"
@@ -30,7 +30,7 @@ const handler = HttpRouter.toWebHandler(
     Layer.provide(
       Layer.succeed(
         Authorization,
-        Authorization.of((effect) => effect),
+        Authorization.of((effect) => Effect.provideService(effect, AccessService, adminAccess)),
       ),
     ),
     Layer.provide(HttpServer.layerServices),

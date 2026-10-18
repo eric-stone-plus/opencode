@@ -50,6 +50,33 @@ describe("global", () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
+  test("creates private directories with owner-only modes and tightens existing ones", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-global-private-"))
+    const data = path.join(root, "data")
+    const log = path.join(data, "log")
+    // Simulate a data directory created by an older version with the default umask.
+    fs.mkdirSync(data, { recursive: true })
+    fs.chmodSync(data, 0o755)
+
+    const directories = {
+      data,
+      cache: path.join(root, "cache"),
+      config: path.join(root, "config"),
+      state: path.join(root, "state"),
+      log,
+      bin: path.join(root, "bin"),
+      repos: path.join(data, "repos"),
+      tmp: path.join(root, "tmp"),
+    }
+    await Effect.runPromise(Effect.scoped(Layer.build(Global.layerWith(directories))))
+
+    if (process.platform !== "win32") {
+      expect(fs.statSync(data).mode & 0o777).toBe(0o700)
+      expect(fs.statSync(log).mode & 0o777).toBe(0o700)
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
   test("building a layer with default tmp creates and canonicalizes it", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-global-layer-"))
     const directories = ["data", "cache", "config", "state", "tmp"].map((directory) => path.join(root, directory))

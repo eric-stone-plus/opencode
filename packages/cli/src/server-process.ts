@@ -94,11 +94,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
         yield* RetainedImage.retain(global.cache, "service")
       const { start } = yield* Effect.promise(() => import("@opencode/server/process"))
       const environmentPassword = yield* Env.password
-      // Keep the lease credential out of the environment inherited by tools.
-      if (options.mode === "stdio") {
-        delete process.env.OPENCODE_PASSWORD
-        delete process.env.OPENCODE_SERVER_PASSWORD
-      }
+      // Keep operator credentials and any parent session token out of the environment inherited
+      // by tools. The shell tool injects a fresh per-session token for each invocation.
+      delete process.env.OPENCODE_PASSWORD
+      delete process.env.OPENCODE_SERVER_PASSWORD
+      delete process.env.OPENCODE_SESSION_TOKEN
       const password =
         options.mode === "service"
           ? config.password || randomBytes(32).toString("base64url")

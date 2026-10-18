@@ -24,6 +24,7 @@ import {
   SkillNotFoundError,
 } from "@opencode/protocol/errors"
 import { AbsolutePath } from "@opencode/core/schema"
+import { ServerAuth } from "../auth"
 import { locationErrors } from "../location"
 import { failedMessageDecode, failedSnapshot, missingMessage, missingSession } from "./session-error"
 
@@ -62,6 +63,15 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.list",
         Effect.fn(function* (ctx) {
+          const access = yield* ServerAuth.AccessService
+          // A session-scoped token sees exactly its own session. This also avoids pagination
+          // side channels: the result is one row, not a filtered page of a larger listing.
+          if (access.kind === "session") {
+            const info = yield* session
+              .get(access.sessionID)
+              .pipe(Effect.catchTag("Session.NotFoundError", () => Effect.succeed(undefined)))
+            return { data: info ? [info] : [], cursor: {} }
+          }
           const query =
             ctx.query.cursor !== undefined
               ? yield* SessionsCursor.parse(ctx.query.cursor).pipe(
@@ -193,9 +203,16 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.active",
         Effect.fn(function* () {
+          const access = yield* ServerAuth.AccessService
           const active = yield* session.active
+          const ids =
+            access.kind === "session"
+              ? active.has(access.sessionID)
+                ? [access.sessionID]
+                : []
+              : Array.from(active)
           return {
-            data: Object.fromEntries(Array.from(active, (sessionID) => [sessionID, { type: "running" as const }])),
+            data: Object.fromEntries(Array.from(ids, (sessionID) => [sessionID, { type: "running" as const }])),
           }
         }),
       )
