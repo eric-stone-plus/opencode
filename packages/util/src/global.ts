@@ -46,7 +46,7 @@ export interface Interface {
 
 export function make(input: Partial<Interface> = {}): Interface {
   // The acquired service canonicalizes default tmp; use it instead of Path.tmp for path comparisons.
-  return {
+  const service = {
     home: Path.home,
     data: Path.data,
     cache: Path.cache,
@@ -58,6 +58,10 @@ export function make(input: Partial<Interface> = {}): Interface {
     repos: Path.repos,
     ...input,
   }
+  // A relative config directory is resolved against home, never the launch cwd: a repository that
+  // sets OPENCODE_CONFIG_DIR=.opencode must not become the operator's global config directory.
+  if (service.config) service.config = path.resolve(service.home, service.config)
+  return service
 }
 
 const acquire = (input: Partial<Interface>) =>

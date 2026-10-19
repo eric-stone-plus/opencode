@@ -11,6 +11,7 @@ import { usePlugin } from "../../plugin/context"
 import { DIALOG_INSET, DialogBleed, DialogFooter, DialogHeader, DialogLayout } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { getScrollAcceleration } from "../../util/scroll"
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 
 // session.generate exposes the session's tools but runs no tool loop, so a
 // tool call would surface as an empty answer.
@@ -135,7 +136,7 @@ export function Answer(props: {
           }
         >
           <text fg={theme.text.muted} wrapMode="none" flexGrow={1} truncate>
-            {props.question.replace(/\s+/g, " ")}
+            {sanitizeTerminalOutput(props.question.replace(/\s+/g, " "))}
           </text>
         </DialogHeader>
       }

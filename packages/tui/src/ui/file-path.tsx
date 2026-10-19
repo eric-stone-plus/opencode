@@ -1,6 +1,7 @@
 import type { RGBA } from "@opentui/core"
 import { createMemo } from "solid-js"
 import { stringWidth } from "../util/string-width"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
@@ -13,7 +14,9 @@ export interface FilePathProps {
 
 export function FilePath(props: FilePathProps) {
   const display = createMemo(() => {
-    const value = truncateFilePath(props.value, props.maxWidth)
+    // A path can come from a repository (a Git filename allows ESC), and this component is the
+    // shared renderer for every file-path sink, so sanitize here rather than at each caller.
+    const value = truncateFilePath(sanitizeTerminalOutput(props.value), props.maxWidth)
     const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
     return {
       parent: value.slice(0, index + 1),

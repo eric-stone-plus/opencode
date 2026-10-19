@@ -66,6 +66,24 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
     yield* Effect.try(() => process.chdir(global.home)).pipe(
       Effect.catch((cause) => Effect.logWarning("failed to change service directory to home", { cause })),
     )
+  // The operator's trust declaration lives beside the global config, so a project can never write
+  // it. Resolve it against home: a relative OPENCODE_CONFIG_DIR would otherwise make the declaration
+  // path cwd-relative, and a repository that ships `.opencode/trusted-roots` could authorize itself
+  // when the CLI happens to run from that directory. A missing or unreadable file is absent data,
+  // which the gate treats as closed.
+  const declarationPath = path.resolve(global.home, global.config, "trusted-roots")
+  const declaration = yield* Effect.tryPromise(() => readFile(declarationPath, "utf8")).pipe(
+    Effect.orElseSucceed(() => undefined),
+  )
+  // Evaluate the gate from the process-start environment, before saved service env is applied: a
+  // relative config directory can make the service config repository-controlled, so it must not be
+  // able to relax the gate that decides whether that repository's project config loads.
+  const gate = projectConfigGate(process.env, declaration)
+  if (gate.ignored.length > 0)
+    yield* Effect.logWarning("trusted-roots declaration lines ignored", {
+      path: declarationPath,
+      ignored: gate.ignored,
+    })
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const foreground = options.mode === "default"
@@ -80,27 +98,6 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       if (findIncumbent !== undefined && (yield* findIncumbent) !== undefined) return
       // Desktop can launch the service directly without injecting its saved environment.
       Object.assign(process.env, config.env)
-      // The operator's trust declaration lives beside the global config, so a project can never write
-      // it. Resolve it after the saved environment is applied, and against home when the config path is
-      // relative: a repository that ships `.opencode/trusted-roots` must not authorize itself when the
-      // CLI happens to run from that directory. A missing or unreadable file is absent data, which the
-      // gate treats as closed.
-      const declarationPath = path.resolve(
-        global.home,
-        process.env.OPENCODE_CONFIG_DIR ?? global.config,
-        "trusted-roots",
-      )
-      const declaration = yield* Effect.tryPromise(() => readFile(declarationPath, "utf8")).pipe(
-        Effect.orElseSucceed(() => undefined),
-      )
-      // Evaluate the trust gate only after the saved environment is applied: a direct launch and a
-      // spawned service must see the same disable flags before deciding which project config loads.
-      const gate = projectConfigGate(process.env, declaration)
-      if (gate.ignored.length > 0)
-        yield* Effect.logWarning("trusted-roots declaration lines ignored", {
-          path: declarationPath,
-          ignored: gate.ignored,
-        })
       // Keep a package-manager or curl install replaceable while the service runs; Desktop updates its own copy.
       if (options.mode === "service" && process.platform === "win32" && RetainedImage.installed(global.home))
         yield* RetainedImage.retain(global.cache, "service")

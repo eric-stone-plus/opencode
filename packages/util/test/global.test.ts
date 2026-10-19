@@ -31,6 +31,12 @@ describe("global", () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
+  test("resolves a relative config directory against home, not the launch cwd", () => {
+    const home = path.join(os.tmpdir(), "opencode-global-home")
+    expect(Global.make({ home, config: ".opencode" }).config).toBe(path.join(home, ".opencode"))
+    expect(Global.make({ home, config: path.join(home, "absolute") }).config).toBe(path.join(home, "absolute"))
+  })
+
   test("building layerWith creates service directories and preserves an explicit tmp", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-global-layer-"))
     const directories = {
