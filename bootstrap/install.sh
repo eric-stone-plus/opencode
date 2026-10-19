@@ -99,6 +99,13 @@ TARGET_HOME=$(cd "$TARGET_HOME" && pwd -P)
 # a root-run `--home /home/u` must not accept root-owned system files as
 # writable dotfiles targets, and must still accept U's own files.
 SEAT_UID=$(stat -c '%u' "$TARGET_HOME" 2>/dev/null || id -u)
+# A root-run `--home /home/u` would create root-owned files in the seat and
+# verify.sh (run as the seat user) would reject them; the safe contract is to
+# run as the seat user. This also keeps every chmod below on seat-owned paths.
+if [ "$(id -u)" != "$SEAT_UID" ]; then
+  echo "install.sh: $TARGET_HOME is owned by uid $SEAT_UID; run as that user (root-run installs are refused)" >&2
+  exit 1
+fi
 
 
 sed_re_escape() {
@@ -108,6 +115,11 @@ sed_re_escape() {
 TS=$(date +%Y%m%d%H%M%S)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-install.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Paths whose mode was already reported: the same file can be reached by an
+# install step and the final normalization pass, and --dry-run must not count
+# the same would-chmod twice.
+MODE_SEEN="$WORK/mode-seen"
+: > "$MODE_SEEN"
 
 ACTIONS=0
 LAST_BACKUP=""
@@ -196,8 +208,14 @@ require_private() {
   # (pre-existing seeds may hold live values); only the mode converges to 0600.
   # A symlinked seed is judged (and tightened) at its target; -e is false for a
   # dangling one, which is skipped instead of aborting the run under set -e.
-  local f="$1" mode
+  local f="$1" mode owner
   if [ ! -e "$f" ]; then return 0; fi
+  owner=$(stat -L -c '%u' "$f" 2>/dev/null) || return 0
+  if [ "$owner" != "$SEAT_UID" ]; then
+    say "WARN  $f resolves to a file not owned by the seat user; not tightening its mode"
+    REFUSED=1
+    return 0
+  fi
   mode=$(stat -L -c '%a' "$f" 2>/dev/null) || return 0
   if [ -z "$mode" ]; then return 0; fi
   if [ "$(( 8#$mode & 077 ))" -ne 0 ]; then
@@ -293,7 +311,11 @@ normalize_link_target() {
   chmod go-w "$target" 2>/dev/null || true
   d=$(dirname "$target")
   while [ "$d" != "$TARGET_HOME" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
-    [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || true
+    # Only a seat-owned real directory: never chmod a foreign-owned ancestor
+    # (a root-run install is refused, but a seat can still contain one).
+    if [ ! -L "$d" ] && [ "$(stat -c '%u' "$d" 2>/dev/null)" = "$SEAT_UID" ]; then
+      chmod go-w "$d" 2>/dev/null || true
+    fi
     d=$(dirname "$d")
   done
 }
@@ -324,8 +346,18 @@ link_parents_safe() {
 # never chmod'ed directly: normalize_link_target only touches an in-home target
 # it can prove is a seat-owned regular file.
 normalize_mode_file() {
-  local f="$1" mode
+  local f="$1" mode target
+  grep -Fxq "$f" "$MODE_SEEN" 2>/dev/null && return 0
   if [ -L "$f" ]; then
+    target=$(readlink -f "$f" 2>/dev/null || true)
+    if [ -z "$target" ] || [ ! -f "$target" ] ||
+      [ "$(stat -c '%u' "$target" 2>/dev/null)" != "$SEAT_UID" ] ||
+      [ -n "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+      ! link_parents_safe "$target"; then
+      say "WARN  $f is a symlink with a missing/unsafe target; not normalizing it"
+      REFUSED=1
+      return 0
+    fi
     # A symlink's target is normalized only in a real run (normalize_link_target
     # writes); a dry run must not touch it.
     [ "$DRY_RUN" -eq 1 ] && return 0
@@ -333,8 +365,14 @@ normalize_mode_file() {
     return 0
   fi
   [ -f "$f" ] || return 0
+  if [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$SEAT_UID" ]; then
+    say "WARN  $f is not owned by the seat user; not normalizing its mode"
+    REFUSED=1
+    return 0
+  fi
   mode=$(stat -c '%a' "$f" 2>/dev/null) || return 0
   [ $((0$mode & 022)) -ne 0 ] || return 0
+  printf '%s\n' "$f" >> "$MODE_SEEN"
   if [ "$DRY_RUN" -eq 1 ]; then
     act "chmod go-w $f"
     changed
@@ -350,10 +388,17 @@ normalize_mode_file() {
 # The directory counterpart used by the final pass.
 normalize_mode_dir() {
   local d="$1" mode
+  grep -Fxq "$d" "$MODE_SEEN" 2>/dev/null && return 0
   if [ -L "$d" ]; then return 0; fi
   [ -d "$d" ] || return 0
+  if [ "$(stat -c '%u' "$d" 2>/dev/null)" != "$SEAT_UID" ]; then
+    say "WARN  $d is not owned by the seat user; not normalizing its mode"
+    REFUSED=1
+    return 0
+  fi
   mode=$(stat -c '%a' "$d" 2>/dev/null) || return 0
   [ $((0$mode & 022)) -ne 0 ] || return 0
+  printf '%s\n' "$d" >> "$MODE_SEEN"
   if [ "$DRY_RUN" -eq 1 ]; then
     act "chmod go-w $d"
     changed
@@ -422,7 +467,8 @@ if [ "$LINK_MODE" -eq 1 ]; then
   # The link target is the checkout's file; a clone under umask 002 leaves it
   # 0664 and its directories 0775, which verify rejects (another local user
   # could edit the config or replace the target). Normalize the target and its
-  # ancestors up to the repository root (verify's parents_safe stops there).
+  # ancestors up to the repository root; verify walks the chain to the seat home
+  # or /, so a writable ancestor above the repo root is refused below.
   repo_root=$(cd "$BOOTSTRAP_DIR/.." && pwd -P)
   if [ "$DRY_RUN" -eq 0 ]; then
     if [ -L "$want" ]; then
@@ -436,6 +482,10 @@ if [ "$LINK_MODE" -eq 1 ]; then
       [ "$d" = "/" ] && continue
       [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || { say "WARN  could not normalize $d"; REFUSED=1; }
     done
+    if ! link_parents_safe "$want"; then
+      say "WARN  $want has a group/world-writable or foreign-owned ancestor; verify will fail"
+      REFUSED=1
+    fi
   fi
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$want" ]; then
     note "unchanged symlink $dst"
@@ -472,14 +522,40 @@ if [ -f "$CLI_JSON" ]; then
     changed
   elif [ -L "$CFG/cli.json" ]; then
     note "unchanged $CFG/cli.json (symlink; never written through)"
-    if [ "$DRY_RUN" -eq 0 ]; then normalize_link_target "$CFG/cli.json"; fi
-    cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
-    if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
-      [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ] ||
-      [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-      ! link_parents_safe "$cli_target"; then
-      say "WARN  $CFG/cli.json target is missing, foreign-owned, or group/world-writable; verify will fail"
-      REFUSED=1
+    if [ "$DRY_RUN" -eq 1 ]; then
+      cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
+      if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
+        [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ]; then
+        say "WARN  $CFG/cli.json target is missing or foreign-owned; verify will fail"
+        REFUSED=1
+      else
+        case "$cli_target" in
+          "$TARGET_HOME"/*)
+            if [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+              ! link_parents_safe "$cli_target"; then
+              act "normalize mode of $cli_target and its ancestors"
+              changed
+            fi
+            ;;
+          *)
+            if [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+              ! link_parents_safe "$cli_target"; then
+              say "WARN  $CFG/cli.json target is group/world-writable; verify will fail"
+              REFUSED=1
+            fi
+            ;;
+        esac
+      fi
+    else
+      normalize_link_target "$CFG/cli.json"
+      cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
+      if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
+        [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ] ||
+        [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+        ! link_parents_safe "$cli_target"; then
+        say "WARN  $CFG/cli.json target is missing, foreign-owned, or group/world-writable; verify will fail"
+        REFUSED=1
+      fi
     fi
   elif [ -e "$CFG/cli.json" ]; then
     note "unchanged $CFG/cli.json (exists; never overwritten)"
@@ -1621,17 +1697,45 @@ else
   # root-run --home install could append to a shared/system file.
   bashrc_ok=1
   if [ -L "$BASHRC" ]; then
-    # Normalize an in-home dotfiles target and its ancestors first: a clone
-    # under umask 002 is otherwise refused by the check below.
-    normalize_link_target "$BASHRC"
     bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
     if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
-      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ] ||
-      [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-      ! link_parents_safe "$bashrc_target"; then
-      say "WARN  $BASHRC target is missing, foreign-owned, or group/world-writable; not writing through it"
+      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ]; then
+      say "WARN  $BASHRC target is missing or foreign-owned; not writing through it"
       REFUSED=1
       bashrc_ok=0
+    elif [ "$DRY_RUN" -eq 1 ]; then
+      # A real run normalizes an in-home target and its ancestors first (a
+      # clone under umask 002 is otherwise refused); a dry run must not chmod.
+      # Report that it would, and refuse only an outside-home target that
+      # cannot be normalized.
+      case "$bashrc_target" in
+        "$TARGET_HOME"/*)
+          if [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+            ! link_parents_safe "$bashrc_target"; then
+            act "normalize mode of $bashrc_target and its ancestors"
+            changed
+          fi
+          ;;
+        *)
+          if [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+            ! link_parents_safe "$bashrc_target"; then
+            say "WARN  $BASHRC target is group/world-writable; not writing through it"
+            REFUSED=1
+            bashrc_ok=0
+          fi
+          ;;
+      esac
+    else
+      normalize_link_target "$BASHRC"
+      bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
+      if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
+        [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ] ||
+        [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+        ! link_parents_safe "$bashrc_target"; then
+        say "WARN  $BASHRC target is missing, foreign-owned, or group/world-writable; not writing through it"
+        REFUSED=1
+        bashrc_ok=0
+      fi
     fi
   fi
   if [ "$bashrc_ok" -eq 1 ]; then

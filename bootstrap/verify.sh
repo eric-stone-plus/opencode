@@ -190,19 +190,19 @@ if [ -f "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null;
     fail "shim is a symlink to an unsafe target: $SHIM -> $(readlink "$SHIM" 2>/dev/null)"
   else
     pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
-  fi
-  if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
-    pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
-  else
-    warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: this fork fetches only with OPENCODE_ENABLE_MODELS_FETCH set, but upstream V2 refreshes the catalog at boot and every 5 minutes (re-run install.sh)"
-  fi
-  if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
-    warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"
-  fi
-  if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
-    pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
-  else
-    warn "shim lacks OPENCODE_DISABLE_LSP_DOWNLOAD=1: a missing language server auto-downloads inside the awaited edit/write path (re-run install.sh)"
+    if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
+      pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
+    else
+      warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: this fork fetches only with OPENCODE_ENABLE_MODELS_FETCH set, but upstream V2 refreshes the catalog at boot and every 5 minutes (re-run install.sh)"
+    fi
+    if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
+      warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"
+    fi
+    if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
+      pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
+    else
+      warn "shim lacks OPENCODE_DISABLE_LSP_DOWNLOAD=1: a missing language server auto-downloads inside the awaited edit/write path (re-run install.sh)"
+    fi
   fi
 elif [ -L "$SHIM" ] || [ -e "$SHIM" ]; then
   tgt=$(readlink "$SHIM" 2>/dev/null || echo "(not a symlink)")
@@ -810,6 +810,20 @@ if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then
     fail "$nested is group/world-writable or not owned by the current user"
   done < <(find "$CFG" -mindepth 1 -type d \( -perm /022 -o ! -user "$(id -u)" \) 2>/dev/null)
 fi
+# Executed/sourced files whose sections only check content: restore the
+# regular-file/owner/mode gate for the non-symlink layout. A symlink is judged
+# by its own section (link_ok plus the content comparison through the link).
+for f in "$SHIM" "$GUARD" "$CFG/shell/bashrc-opencode-block.sh"; do
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    fail "$f missing"
+  elif [ ! -L "$f" ] && [ ! -f "$f" ]; then
+    fail "$f is not a regular file"
+  elif [ ! -L "$f" ] && [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
+    fail "$f is not owned by the current user"
+  elif [ ! -L "$f" ] && [ -n "$(find "$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+    fail "$f is group/world-writable"
+  fi
+done
 # Only opencode.jsonc may be a file symlink: `install.sh --link` creates
 # exactly that link, and a dotfiles target outside the checkout is supported.
 # The other executed/sourced paths are checked by their own sections, which
@@ -969,14 +983,15 @@ if [ "$LIB_LINK" -eq 1 ]; then
   : # the parent failure above covers lib/drawio.py
 elif [ -L "$CFG/lib/drawio.py" ]; then
   fail "lib/drawio.py is a symlink — install the bundled copy (install.sh step 7b)"
-elif [ -f "$CFG/lib/drawio.py" ]; then
-  if [ -f "$LOCAL_SRC/lib/drawio.py" ] && cmp -s "$LOCAL_SRC/lib/drawio.py" "$CFG/lib/drawio.py"; then
-    pass "lib/drawio.py matches the bundle"
-  else
-    fail "lib/drawio.py differs from the bundle (reinstall with install.sh step 7b)"
-  fi
+elif [ ! -f "$CFG/lib/drawio.py" ]; then
+  fail "lib/drawio.py missing or not a regular file (drawio tool will refuse; install.sh step 7b or bun run script/install-local-tools.ts)"
+elif [ "$(stat -c '%u' "$CFG/lib/drawio.py" 2>/dev/null)" != "$(id -u)" ] ||
+  [ -n "$(find "$CFG/lib/drawio.py" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+  fail "lib/drawio.py is not owned by the current user or is group/world-writable"
+elif [ -f "$LOCAL_SRC/lib/drawio.py" ] && cmp -s "$LOCAL_SRC/lib/drawio.py" "$CFG/lib/drawio.py"; then
+  pass "lib/drawio.py matches the bundle"
 else
-  fail "lib/drawio.py missing (drawio tool will refuse; install.sh step 7b or bun run script/install-local-tools.ts)"
+  fail "lib/drawio.py differs from the bundle (reinstall with install.sh step 7b)"
 fi
 # The manifest is the local-edit baseline install-local-tools.ts validates; a
 # symlinked/missing/tampered manifest lets a local edit pass as unchanged.
@@ -1103,10 +1118,10 @@ fi
 # --- 9b. review workflow prerequisites --------------------------------------
 echo "-- review workflow"
 if command -v ocr >/dev/null 2>&1; then
-  # Take the first version token on the first line that has one, whether the
-  # product is spelled "open-code-review", "ocr", or omitted: the external CLI
-  # owns its banner, and a valid install must not be rejected for its wording.
-  ocr_version=$(timeout 30 ocr version 2>/dev/null | sed -nE 's/^[^0-9]*([0-9]+)\.([0-9]+)\.([0-9]+).*/\1.\2.\3/p' | head -n 1)
+  # Anchor on the product name (either spelling) and take the first version
+  # token on that line: an unrelated runtime/date version printed earlier must
+  # not satisfy the minimum check.
+  ocr_version=$(timeout 30 ocr version 2>/dev/null | sed -nE 's/^[^0-9]*(open[- ]?code[- ]?review|ocr)[[:space:]/:]+v?([0-9]+)\.([0-9]+)\.([0-9]+).*/\2.\3.\4/p' | head -n 1)
   if [ -n "$ocr_version" ]; then
     ocr_major=${ocr_version%%.*}
     ocr_rest=${ocr_version#*.}
@@ -1208,6 +1223,9 @@ for f in agent/auto.md agent/goal.md AGENTS.md; do
       fail "$f is a symlink — install the bundled copy (install.sh step 8)"
     elif [ ! -f "$CFG/$f" ]; then
       fail "$f shipped in bundle but missing at $CFG/$f (install.sh step 8)"
+    elif [ "$(stat -c '%u' "$CFG/$f" 2>/dev/null)" != "$(id -u)" ] ||
+      [ -n "$(find "$CFG/$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+      fail "$f is not owned by the current user or is group/world-writable"
     elif cmp -s "$BOOTSTRAP_DIR/$f" "$CFG/$f"; then
       pass "$f installed and matches the bundle (managed)"
     else
@@ -1235,6 +1253,15 @@ if [ -f "$CFG/opencode.jsonc" ] && grep -qE '^[[:space:]]*"instructions"[[:space
   fail "opencode.jsonc still lists instructions (retired; the mode cards own this policy)"
 else
   pass "opencode.jsonc has no instructions array (cards own the policy)"
+fi
+# A symlink target outside the checkout was accepted above; compare the
+# resolved content too, or verify would bless a different config.
+if [ -f "$CFG/opencode.jsonc" ]; then
+  if cmp -s "$BOOTSTRAP_DIR/config/opencode.jsonc" "$CFG/opencode.jsonc"; then
+    pass "opencode.jsonc matches the bundle"
+  else
+    fail "opencode.jsonc differs from the bundle (managed; refresh from bootstrap/config/opencode.jsonc)"
+  fi
 fi
 # The trust gate decides whether a project's own config, AGENTS.md chain, plugins,
 # and MCP servers load at all. Absent declaration = closed, which is the intended
