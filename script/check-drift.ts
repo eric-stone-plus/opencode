@@ -79,7 +79,7 @@ export const SEED_FILES: Mapping[] = [{ source: "cli.json", destination: ".confi
 // (skills are frozen at the PROVENANCE revision; updates are an explicit
 // operator task). A row here must stay absent on both sides: the repo growing
 // one back, or the seat keeping one, is drift.
-export const ABSENT_FILES: Array<{ root: "repo" | "seat"; path: string }> = [
+export const ABSENT_FILES: Array<{ root: "repo" | "seat"; path: string; detail?: string }> = [
   { root: "repo", path: "bootstrap/plugin/mpskills-update.ts" },
   { root: "repo", path: "script/mpskills-update.test.ts" },
   { root: "repo", path: "bootstrap/AGENTS.goal.md" },
@@ -89,6 +89,14 @@ export const ABSENT_FILES: Array<{ root: "repo" | "seat"; path: string }> = [
   { root: "seat", path: ".config/opencode/plugin/mpskills-update.ts" },
   { root: "seat", path: ".config/opencode/AGENTS.goal.md" },
   { root: "seat", path: ".config/opencode/autonomy.md" },
+  // The skill loader discovers every root `*.md` as a skill; PROVENANCE is
+  // installed without the suffix and the legacy name must stay absent.
+  {
+    root: "seat",
+    path: ".config/opencode/skills/PROVENANCE.md",
+    detail:
+      "legacy name registers as a skill; re-run install.sh or sync-upstream to migrate a frozen copy, or move an operator-owned file out of the skills root",
+  },
 ]
 
 async function sameContent(left: string, right: string) {
@@ -241,11 +249,27 @@ async function mirrorRow(root: string, left: string, right: string): Promise<Row
 
 // A retired file: absent is the pass, present is drift on whichever side it
 // reappeared (the repo growing it back, or the seat keeping a stale copy).
-async function absentRow(repo: string, seat: string, entry: { root: "repo" | "seat"; path: string }): Promise<Row> {
+async function absentRow(
+  repo: string,
+  seat: string,
+  entry: { root: "repo" | "seat"; path: string; detail?: string },
+): Promise<Row> {
   const target = path.join(entry.root === "repo" ? repo : seat, entry.path)
   const label = entry.root === "repo" ? entry.path : `~/${entry.path}`
-  return existsSync(target)
-    ? { label, status: "drift", detail: "removed on purpose (2026-10-16); delete it" }
+  // `existsSync` follows symlinks and returns false for a dangling one, while
+  // verify.sh fails `-e || -L` and the loader scans with `symlink: true`.
+  // lstat sees the directory entry itself, so a dangling legacy link counts.
+  let present = true
+  try {
+    lstatSync(target)
+  } catch (error) {
+    // ENOTDIR/EACCES are broken layouts, not an absent retired file: let
+    // guard() turn them into a drift row instead of a silent pass.
+    if (!isMissing(error)) throw error
+    present = false
+  }
+  return present
+    ? { label, status: "drift", detail: entry.detail ?? "removed on purpose (2026-10-16); delete it" }
     : { label, status: "ok" }
 }
 
@@ -269,7 +293,12 @@ async function skillRows(root: string, home: string): Promise<Row[]> {
       .filter((entry) => entry.isFile())
       .map((entry) =>
         guard(path.join("skills", entry.name), () =>
-          fileRow(root, home, { source: path.join("skills", entry.name), destination: `.config/opencode/skills/${entry.name}` }),
+          fileRow(root, home, {
+            source: path.join("skills", entry.name),
+            // The seat installs PROVENANCE.md without the .md suffix: the
+            // skill loader discovers every root `*.md` as a skill.
+            destination: `.config/opencode/skills/${entry.name === "PROVENANCE.md" ? "PROVENANCE" : entry.name}`,
+          }),
         ),
       ),
     ...skills.map((entry) =>

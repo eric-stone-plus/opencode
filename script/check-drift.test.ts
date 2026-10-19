@@ -38,7 +38,7 @@ async function mirror() {
   await write(path.join(root, "skills/LICENSE"), "license\n")
   await write(path.join(home, ".config/opencode/skills/LICENSE"), "license\n")
   await write(path.join(root, "skills/PROVENANCE.md"), "provenance\n")
-  await write(path.join(home, ".config/opencode/skills/PROVENANCE.md"), "provenance\n")
+  await write(path.join(home, ".config/opencode/skills/PROVENANCE"), "provenance\n")
   await write(path.join(root, "bootstrap/skills-extra/longrun-stability-audit/SKILL.md"), "orphan skill\n")
   await write(path.join(home, ".config/opencode/skills/longrun-stability-audit/SKILL.md"), "orphan skill\n")
   await write(path.join(root, "bootstrap/config/opencode.jsonc"), "agent: two profiles\n")
@@ -262,6 +262,7 @@ describe("collectDrift", () => {
       "seat:.config/opencode/AGENTS.goal.md",
       "seat:.config/opencode/autonomy.md",
       "seat:.config/opencode/plugin/mpskills-update.ts",
+      "seat:.config/opencode/skills/PROVENANCE.md",
     ])
   })
 

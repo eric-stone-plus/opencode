@@ -1122,14 +1122,24 @@ elif [ -d "$VENDORED_SKILLS" ]; then
   for f in "$VENDORED_SKILLS"/*; do
     [ -f "$f" ] || continue
     name=$(basename "$f")
-    if [ -L "$CFG/skills/$name" ]; then
-      fail "vendored file $name is a symlink — install the frozen copy"
-    elif cmp -s "$f" "$CFG/skills/$name"; then
-      pass "vendored file present: $name"
+    # PROVENANCE.md is installed without the .md suffix: the skill loader
+    # discovers every root `*.md` as a skill, and this file has no frontmatter
+    # that would make it skip. The legacy name is checked after the loop.
+    installed="$name"
+    [ "$name" = "PROVENANCE.md" ] && installed="PROVENANCE"
+    if [ -L "$CFG/skills/$installed" ]; then
+      fail "vendored file $installed is a symlink — install the frozen copy"
+    elif cmp -s "$f" "$CFG/skills/$installed"; then
+      pass "vendored file present: $installed"
     else
-      fail "vendored file $name differs from the frozen copy (install.sh step 6b)"
+      fail "vendored file $installed differs from the frozen copy (run sync-upstream/update-skills to refresh the vendored tree)"
     fi
   done
+  # A legacy root PROVENANCE.md is discovered as a skill; fail it so the
+  # operator re-runs install.sh, which migrates the frozen copy.
+  if [ -e "$CFG/skills/PROVENANCE.md" ] || [ -L "$CFG/skills/PROVENANCE.md" ]; then
+    fail "skills/PROVENANCE.md is a legacy root file that registers as a skill; re-run install.sh to migrate it, or move the checkout out of the seat if it is the frozen source"
+  fi
 else
   warn "vendored skills/ not found at $VENDORED_SKILLS"
 fi
