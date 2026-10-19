@@ -184,25 +184,21 @@ run_oc() {
 }
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
-  # A file symlink is a supported layout; validate its target and still check
-  # the content through the link (grep/cmp follow it).
-  if [ -L "$SHIM" ] && ! link_ok "$SHIM"; then
-    fail "shim is a symlink to an unsafe target: $SHIM -> $(readlink "$SHIM" 2>/dev/null)"
+  # The shared regular-file loop below is the single symlink verdict for this
+  # path; here we only check the content through the link (grep follows it).
+  pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
+  if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
+    pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
   else
-    pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
-    if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
-      pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
-    else
-      warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: this fork fetches only with OPENCODE_ENABLE_MODELS_FETCH set, but upstream V2 refreshes the catalog at boot and every 5 minutes (re-run install.sh)"
-    fi
-    if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
-      warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"
-    fi
-    if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
-      pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
-    else
-      warn "shim lacks OPENCODE_DISABLE_LSP_DOWNLOAD=1: a missing language server auto-downloads inside the awaited edit/write path (re-run install.sh)"
-    fi
+    warn "shim lacks OPENCODE_DISABLE_MODELS_FETCH=1: this fork fetches only with OPENCODE_ENABLE_MODELS_FETCH set, but upstream V2 refreshes the catalog at boot and every 5 minutes (re-run install.sh)"
+  fi
+  if grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null; then
+    warn "shim still exports dead OPENCODE_EXPERIMENTAL_* flags from the V1 runtime (re-run install.sh)"
+  fi
+  if grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
+    pass "shim disables LSP auto-download (OPENCODE_DISABLE_LSP_DOWNLOAD=1)"
+  else
+    warn "shim lacks OPENCODE_DISABLE_LSP_DOWNLOAD=1: a missing language server auto-downloads inside the awaited edit/write path (re-run install.sh)"
   fi
 elif [ -L "$SHIM" ] || [ -e "$SHIM" ]; then
   tgt=$(readlink "$SHIM" 2>/dev/null || echo "(not a symlink)")
@@ -811,13 +807,14 @@ if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then
   done < <(find "$CFG" -mindepth 1 -type d \( -perm /022 -o ! -user "$(id -u)" \) 2>/dev/null)
 fi
 # Executed/sourced files whose sections only check content: restore the
-# regular-file/owner/mode gate for the non-symlink layout. A symlink is judged
-# by its own section (link_ok plus the content comparison through the link).
+# regular-file/owner/mode gate for the non-symlink layout. This loop is the
+# single symlink verdict for these three paths; the sections below only compare
+# content through the resolved link, so one defect is reported once.
 for f in "$SHIM" "$GUARD" "$CFG/shell/bashrc-opencode-block.sh"; do
   if [ -L "$f" ] && ! link_ok "$f"; then
     fail "$f is a symlink to a missing/unsafe target"
-  elif [ "$f" = "$SHIM" ] && [ -f "$f" ] && [ ! -x "$f" ]; then
-    fail "$SHIM is not executable"
+  elif [ "$f" = "$SHIM" ] && [ -f "$f" ] && { [ ! -x "$f" ] || [ ! -r "$f" ]; }; then
+    fail "$SHIM is not executable/readable"
   elif [ ! -e "$f" ] && [ ! -L "$f" ]; then
     fail "$f missing"
   elif [ ! -L "$f" ] && [ ! -f "$f" ]; then
@@ -829,20 +826,23 @@ for f in "$SHIM" "$GUARD" "$CFG/shell/bashrc-opencode-block.sh"; do
   fi
 done
 # .bashrc sources the egress wrapper; a writable or foreign-owned .bashrc lets
-# another local user inject commands into every interactive shell. install.sh
-# validates a dotfiles symlink target; mirror it here. A missing .bashrc is
-# skipped by install.sh and is not a failure.
+# another local user inject commands into every interactive shell. Only gate a
+# file that actually sources the wrapper: --no-bashrc leaves .bashrc untouched
+# by design, and an unrelated file is not our policy surface.
 BASHRC="$TARGET_HOME_R/.bashrc"
-if [ -L "$BASHRC" ]; then
-  if ! link_ok "$BASHRC"; then
-    fail "$BASHRC is a symlink to a missing/unsafe target"
+if { [ -e "$BASHRC" ] || [ -L "$BASHRC" ]; } &&
+  { [ ! -f "$BASHRC" ] || grep -q 'bashrc-opencode-block.sh' "$BASHRC" 2>/dev/null; }; then
+  if [ -L "$BASHRC" ]; then
+    if ! link_ok "$BASHRC"; then
+      fail "$BASHRC is a symlink to a missing/unsafe target"
+    fi
+  elif [ ! -f "$BASHRC" ]; then
+    fail "$BASHRC is not a regular file"
+  elif [ "$(stat -c '%u' "$BASHRC" 2>/dev/null)" != "$(id -u)" ] ||
+    [ -n "$(find "$BASHRC" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+    [ ! -r "$BASHRC" ]; then
+    fail "$BASHRC is not owned by the current user, is group/world-writable, or is not readable"
   fi
-elif [ -e "$BASHRC" ] && [ ! -f "$BASHRC" ]; then
-  fail "$BASHRC is not a regular file"
-elif [ -f "$BASHRC" ] &&
-  { [ "$(stat -c '%u' "$BASHRC" 2>/dev/null)" != "$(id -u)" ] ||
-    [ -n "$(find "$BASHRC" -maxdepth 0 -perm /022 2>/dev/null)" ]; }; then
-  fail "$BASHRC is not owned by the current user or is group/world-writable"
 fi
 # Only opencode.jsonc may be a file symlink: `install.sh --link` creates
 # exactly that link, and a dotfiles target outside the checkout is supported.
@@ -921,20 +921,19 @@ for f in "$TARGET_HOME_R/.claude/settings.json" "$TARGET_HOME_R/.zcode/settings.
 done
 # The kill-guard script is executed by every wired tool and the sourced wrapper
 # runs in every shell; content matters, not only the executable bit.
-if [ -f "$GUARD" ] && [ -f "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" ]; then
+if [ -f "$GUARD" ]; then
   escaped_home=$(printf '%s' "$TARGET_HOME_R" | sed 's/[\\&|]/\\&/g')
-  if [ -L "$GUARD" ] && ! link_ok "$GUARD"; then
-    fail "agent-hooks/block-unsafe-kill.sh is a symlink to an unsafe target"
+  if [ ! -f "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" ]; then
+    fail "bundled agent-hooks/block-unsafe-kill.sh is missing; cannot verify the installed guard"
   elif sed "s|/home/eric|$escaped_home|g" "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" | cmp -s - "$GUARD"; then
     pass "agent-hooks/block-unsafe-kill.sh matches the bundle (home rewritten)"
   else
     fail "agent-hooks/block-unsafe-kill.sh differs from the bundle (stale or tampered)"
   fi
 fi
-if [ -f "$CFG/shell/bashrc-opencode-block.sh" ] &&
-  [ -f "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" ]; then
-  if [ -L "$CFG/shell/bashrc-opencode-block.sh" ] && ! link_ok "$CFG/shell/bashrc-opencode-block.sh"; then
-    fail "shell/bashrc-opencode-block.sh is a symlink to an unsafe target"
+if [ -f "$CFG/shell/bashrc-opencode-block.sh" ]; then
+  if [ ! -f "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" ]; then
+    fail "bundled shell/bashrc-opencode-block.sh is missing; cannot verify the installed wrapper"
   elif cmp -s "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" "$CFG/shell/bashrc-opencode-block.sh"; then
     pass "shell/bashrc-opencode-block.sh matches the bundle"
   else

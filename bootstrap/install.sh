@@ -228,11 +228,6 @@ require_private() {
     REFUSED=1
     return 0
   fi
-  if [ -z "$mode" ]; then
-    say "WARN  cannot determine the mode of $f; not tightening it"
-    REFUSED=1
-    return 0
-  fi
   if [ "$(( 8#$mode & 077 ))" -ne 0 ]; then
     act "chmod 600 $f (secret seed was mode $mode)"
     if [ "$DRY_RUN" -eq 0 ]; then chmod 600 "$f" 2>/dev/null || { say "WARN  could not tighten mode: $f"; REFUSED=1; }; fi
@@ -394,7 +389,7 @@ dotfile_fixable() {
 # normalization through act()/changed() so --dry-run and the applied run agree.
 # Returns 0 when safe, 1 when refused.
 normalize_dotfile_target() {
-  local f="$1" target
+  local f="$1" target d
   grep -Fxq "$f" "$MODE_SEEN" 2>/dev/null && return 0
   target=$(readlink -f "$f" 2>/dev/null || true)
   if [ -z "$target" ] || [ ! -f "$target" ] ||
@@ -414,6 +409,15 @@ normalize_dotfile_target() {
         ! link_parents_safe "$target"; then
         act "normalize mode of $target and its ancestors"
         changed
+        # The final pass walks the same directories; mark them seen so a dry
+        # run does not report the same would-chmod twice.
+        d=$(dirname "$target")
+        while :; do
+          printf '%s\n' "$d" >> "$MODE_SEEN"
+          [ "$d" = "$TARGET_HOME" ] && break
+          d=$(dirname "$d")
+        done
+        printf '%s\n' "$target" >> "$MODE_SEEN"
       fi
       if [ "$DRY_RUN" -eq 0 ]; then normalize_link_target "$f"; fi
       ;;
@@ -951,14 +955,16 @@ apply_wiring() {
     return 0
   fi
   act "wire $dst -> $GUARD (${what:-rewritten})"
+  # Validate a dotfiles symlink in both modes: a dry run must refuse an unsafe
+  # target too, and a real run normalizes a fixable in-home target before the
+  # cp writes through it.
+  if [ -L "$dst" ]; then
+    normalize_dotfile_target "$dst" || return 0
+  fi
   if [ "$DRY_RUN" -eq 0 ]; then
     # A dotfiles symlink is a supported layout; back up the content the cp
-    # below writes through, not just the link. Refuse an unsafe target: a
-    # foreign-owned or writable target must not receive the guard wiring.
+    # below writes through, not just the link.
     if [ -L "$dst" ]; then
-      # A dotfiles symlink is a supported layout; normalize/validate the target
-      # before writing through it (the helper sets REFUSED on an unsafe one).
-      normalize_dotfile_target "$dst" || return 0
       backup_file "$dst" L
     else
       backup_file "$dst"
