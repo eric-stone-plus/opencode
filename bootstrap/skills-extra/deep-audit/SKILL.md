@@ -6,14 +6,37 @@ description: >
   OCR at medium/high effort, independent verification of critical/high
   findings, and the Cloudflare 6-phase protocol when a sandbox is available;
   returns a fail-closed verdict. Bare "审查"/"review"/"做好代码审查" defaults to
-  deep review; "深度审计"/"deep-audit" selects deep audit. The normal review is
-  auto-triggered by code edits in GOAL mode and is a different skill.
+  deep review; "深度审计"/"deep-audit" selects deep audit. Goal mode
+  auto-selects this deep review when a code change meets the deep criteria; no
+  user phrase is needed. The normal review is auto-triggered by code changes in
+  GOAL mode; in Auto mode the plugin's OCR gate is the default check. Code
+  changes only: for a non-code task (prose, docs, data, research, ops), do not
+  use this skill.
 ---
 
 # Deep review / deep audit
 
-This is the **user-invoked deep path**. The normal per-edit review is
-`code-review-playbook`; do not run this skill automatically after edits.
+This is the **deep path**. In Goal mode the agent auto-selects it when a code
+change meets the deep criteria (security-sensitive surfaces, public
+API/contracts, data/persistence, concurrency, deps/lockfiles, CI/release,
+>200 lines/>10 files, or the normal review finds critical/high/cannot verify);
+no user phrase is needed. In Auto mode, run it only on explicit user request.
+The normal per-edit review is `code-review-playbook`.
+
+**Scope — code only.** For a non-code task (prose, docs, data, research, ops, a
+pure question), do not use this skill; answer directly. The discussion skills
+(`grilling`, `wayfinder`, `teach`, `research`, `domain-modeling`) stay
+available.
+
+## Goal auto-selection (no user words needed)
+
+After any code change in Goal mode, choose deep review automatically when any
+deep criterion holds; otherwise run the normal playbook. The deep review is the
+`review-delegate` coverage ledger + OCR medium + independent verifier for every
+critical/high finding. The full-repo 6-phase audit is only for an explicit
+"深度审计"/"deep-audit" or a full-repo request; the automatic Goal escalation
+is a deep review of the change set, not a full-repo audit. Record the choice
+and the reason in the final report.
 
 ## Mode selection (read the user's words)
 

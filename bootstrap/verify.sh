@@ -30,15 +30,39 @@ while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
 done
 
 BOOTSTRAP_DIR=$(cd "$(dirname "$0")" && pwd -P)
-CFG="$TARGET_HOME/.config/opencode"
-DATA="$TARGET_HOME/.local/share/opencode"
-DB="$DATA/opencode-main.db"
-LOG="$DATA/log/opencode.log"
-GUARD="$TARGET_HOME/.config/agent-hooks/block-unsafe-kill.sh"
-
+REPO_ROOT=$(cd "$BOOTSTRAP_DIR/.." && pwd -P)
+# Every ancestor up to `stop` must not be group/world-writable: a writable
+# parent lets another local user replace an otherwise safe target. (The target
+# file's ownership is checked separately; ancestors above the home are often
+# root-owned and are deliberately out of scope.)
+parents_safe() {
+  local dir="$1" stop="$2" owner
+  # Callers pass readlink -f output; a relative or empty value would loop
+  # forever on dirname "." — reject it rather than hang the audit.
+  case "$dir" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  while :; do
+    [ -z "$(find "$dir" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
+    # A foreign-owned 0755 ancestor can rename or replace the target even
+    # though it is not group/world-writable. Root-owned system ancestors are
+    # the expected exception.
+    owner=$(stat -c '%u' "$dir" 2>/dev/null) || return 1
+    [ "$owner" = "$(id -u)" ] || [ "$owner" = "0" ] || return 1
+    [ "$dir" = "$stop" ] && return 0
+    [ "$dir" = "/" ] && return 0
+    dir=$(dirname "$dir")
+  done
+}
 # Canonicalized homes for every comparison below: a hardcoded path from the
 # install machine (machine A's /home/eric) must never satisfy a scratch --home.
 canon() {
+  # Resolve the whole path, not only its parent: `--home` itself can be a
+  # symlink, and install.sh canonicalizes TARGET_HOME before writing paths.
+  # Only directories can be `cd`-ed into; for a file fall through to the
+  # parent-resolution branch (canon "$DB" / canon "$resolved" are files).
+  if [ -d "$1" ]; then (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; return; fi
   local d b
   d=$(dirname "$1"); b=$(basename "$1")
   if [ -d "$d" ]; then printf '%s/%s\n' "$(cd "$d" 2>/dev/null && pwd -P)" "$b"; else printf '%s\n' "$1"; fi
@@ -46,6 +70,11 @@ canon() {
 TARGET_HOME_R=$(canon "$TARGET_HOME")
 REAL_HOME_R=""
 [ -n "${HOME:-}" ] && REAL_HOME_R=$(canon "$HOME")
+CFG="$TARGET_HOME_R/.config/opencode"
+DATA="$TARGET_HOME_R/.local/share/opencode"
+DB="$DATA/opencode-main.db"
+LOG="$DATA/log/opencode.log"
+GUARD="$TARGET_HOME_R/.config/agent-hooks/block-unsafe-kill.sh"
 
 FAILS=0
 WARNS=0
@@ -55,6 +84,41 @@ warn() { printf 'WARN  %s\n' "$*"; WARNS=$((WARNS + 1)); }
 fail() { printf 'FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
 info() { printf '      %s\n' "$*"; }
 
+# The DB holds the credential as plaintext JSON in SQLite, and the log can
+# carry session data. The binary chmods the DB to 0600 only when it opens it,
+# which is after this audit, so a group/world-accessible copy from an older
+# build or a manual copy must fail here. The -wal/-shm sidecars carry the same
+# plaintext rows and are opened by the probe too.
+STORE_SAFE=1
+for f in "$DB" "$DB-wal" "$DB-shm" "$LOG"; do
+  if [ -e "$f" ] && [ ! -L "$f" ]; then
+    if [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
+      fail "$f is not owned by the current user"
+      STORE_SAFE=0
+    fi
+    db_mode=$(stat -c '%a' "$f" 2>/dev/null)
+    if [ -n "$db_mode" ] && [ $((0$db_mode & 077)) -ne 0 ]; then
+      fail "$f is group/world-accessible (it can carry credentials or session data)"
+      STORE_SAFE=0
+    fi
+  fi
+done
+
+# A symlinked store path can redirect the DB probe and `auth list` outside the
+# target home (and `auth list` may migrate the DB). Refuse before section 5
+# opens it; section 7 still runs the detailed audit. STORE_SAFE=0 skips the
+# DB-opening probes below. The config/plugin roots are loaded by the server
+# that `auth list` starts, so they gate the probe too; `.cache` is not a DB
+# path and stays out of this list.
+for f in "$TARGET_HOME_R/.local" "$TARGET_HOME_R/.local/share" "$TARGET_HOME_R/.local/state" \
+  "$DATA" "$DATA/log" "$DB" "$DB-wal" "$DB-shm" "$LOG" \
+  "$TARGET_HOME_R/.config" "$CFG" "$CFG/plugin"; do
+  if [ -L "$f" ]; then
+    fail "store path is a symlink: $f (replace it with a real path)"
+    STORE_SAFE=0
+  fi
+done
+
 echo "== verify opencode seat =="
 echo "target home: $TARGET_HOME"
 echo
@@ -62,7 +126,7 @@ echo
 # --- 1. toolchain deps -------------------------------------------------------
 echo "-- deps"
 missing=""
-for c in jq bun git python3 curl; do
+for c in jq bun git python3 curl timeout; do
   command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
 done
 if [ -z "$missing" ]; then
@@ -94,7 +158,18 @@ fi
 # Every invocation pins HOME to the audited home: a pin shim can then only ever
 # resolve inside that home, never silently into the auditor's own seat.
 run_oc() {
-  HOME="$TARGET_HOME" OPENCODE_DB=opencode-main.db "$OC_BIN" "$@"
+  # Pin every XDG root: `debug paths db` reads XDG_DATA_HOME, and an auditor
+  # shell that exports a different root would probe a different store. Clear
+  # the config overrides for the same reason.
+  env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+    HOME="$TARGET_HOME" \
+    XDG_DATA_HOME="$TARGET_HOME/.local/share" \
+    XDG_CONFIG_HOME="$TARGET_HOME/.config" \
+    XDG_STATE_HOME="$TARGET_HOME/.local/state" \
+    XDG_CACHE_HOME="$TARGET_HOME/.cache" \
+    OPENCODE_DB=opencode-main.db \
+    OPENCODE_DISABLE_MODELS_FETCH=1 \
+    "$OC_BIN" "$@"
 }
 SHIM="$TARGET_HOME/.local/bin/opencode"
 if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
@@ -161,6 +236,7 @@ fi
 
 # --- 5. canonical DB (guarded) ----------------------------------------------
 echo "-- canonical DB"
+DB_PATH_OK=0
 if [ -f "$DB" ]; then
   pass "canonical DB exists: $DB"
   # V2 resolves the path without opening the DB (`debug paths db`); a V1 binary
@@ -177,6 +253,7 @@ if [ -f "$DB" ]; then
     [ -n "$resolved" ] && resolved_r=$(canon "$resolved")
     if [ -n "$resolved" ] && [ "$resolved_r" = "$(canon "$DB")" ]; then
       pass "db path resolves to the canonical DB ($resolved)"
+      DB_PATH_OK=1
     elif [ -z "$resolved" ]; then
       warn "db path produced no path (inconclusive): $errtail"
     else
@@ -185,7 +262,7 @@ if [ -f "$DB" ]; then
   else
     warn "db path resolution skipped (no binary)"
   fi
-  if command -v python3 >/dev/null 2>&1; then
+  if [ "$STORE_SAFE" -eq 1 ] && command -v python3 >/dev/null 2>&1; then
     integ=$(python3 - "$DB" <<'PYEOF'
 import sqlite3, sys
 try:
@@ -251,10 +328,64 @@ PYEOF
         pass "provider entry present (deepseek)"
       fi
       if [ -n "$ph" ]; then
-        warn "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"
+        fail "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"
       fi
       ;;
   esac
+fi
+
+# --- 6a. DB credential (V2 stores credentials in the DB) --------------------
+echo "-- DB credential"
+if [ ! -f "$DB" ]; then
+  fail "canonical DB not present; credentials not imported (README 'auth import')"
+elif [ -z "$OC_BIN" ]; then
+  fail "opencode binary missing; cannot query the DB credential"
+elif [ "$DB_PATH_OK" -ne 1 ]; then
+  # A V1 binary's `auth list` opens/migrates the DB; without a verified V2
+  # `debug paths db` result, refuse to touch it.
+  fail "DB path not verified (V1 binary or non-canonical path); refusing auth list --standalone"
+elif [ "$STORE_SAFE" -ne 1 ]; then
+  warn "DB credential check skipped: a store path is a symlink (see the FAIL above)"
+elif ! command -v python3 >/dev/null 2>&1; then
+  warn "python3 missing; cannot parse the DB credential list"
+else
+  auth_json=$(mktemp) || auth_json=""
+  auth_err=$(mktemp) || auth_err=""
+  if [ -n "$auth_json" ] && [ -n "$auth_err" ] &&
+    timeout 30 env -u OPENCODE_SESSION_TOKEN -u OPENCODE_SESSION_ID \
+      -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+      HOME="$TARGET_HOME" \
+      XDG_DATA_HOME="$TARGET_HOME/.local/share" \
+      XDG_CONFIG_HOME="$TARGET_HOME/.config" \
+      XDG_STATE_HOME="$TARGET_HOME/.local/state" \
+      XDG_CACHE_HOME="$TARGET_HOME/.cache" \
+      OPENCODE_DB="opencode-main.db" \
+      OPENCODE_DISABLE_MODELS_FETCH=1 \
+      "$OC_BIN" auth list --standalone --format json >"$auth_json" 2>"$auth_err"; then
+    if python3 - "$auth_json" <<'PYEOF'
+import json, sys
+try:
+    integrations = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+# An env-backed connection (`type: "env"`) is not the imported DB credential:
+# the provider entry exists either way, so require a stored credential.
+sys.exit(0 if any(
+    item.get("id") == "deepseek"
+    and any(conn.get("type") == "credential" for conn in item.get("connections") or [])
+    for item in integrations
+) else 1)
+PYEOF
+    then
+      pass "DB credential present (deepseek, type=credential)"
+    else
+      fail "DB has no stored deepseek credential (env-only or missing); run the auth import step (README 'Secrets re-seed')"
+    fi
+  else
+    fail "auth list failed; check the DB credential (README 'auth import'): $([ -n "$auth_err" ] && head -c 200 "$auth_err" 2>/dev/null)"
+  fi
+  [ -z "$auth_json" ] || rm -f "$auth_json"
+  [ -z "$auth_err" ] || rm -f "$auth_err"
 fi
 
 # --- 6b. secret seed file modes ----------------------------------------------
@@ -378,6 +509,8 @@ def refs_in(text):
 
 
 def strip_jsonc(s):
+    # Pass 1: remove comments, replacing each with a space so tokens never
+    # merge (`tru/*x*/e` must not become `true`).
     out, i, n, in_str = [], 0, len(s), False
     while i < n:
         c = s[i]
@@ -395,16 +528,37 @@ def strip_jsonc(s):
         elif s.startswith("//", i):
             while i < n and s[i] != "\n":
                 i += 1
+            out.append(" ")
             continue
         elif s.startswith("/*", i):
             e = s.find("*/", i + 2)
             i = n if e < 0 else e + 2
+            out.append(" ")
             continue
+        out.append(c)
+        i += 1
+    text = "".join(out)
+    # Pass 2: drop trailing commas now that comments are gone
+    # (`"a": 1, // note` followed by `}`).
+    out, i, n, in_str = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            in_str = c != '"'
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
         elif c == ",":
             j = i + 1
-            while j < n and s[j] in " \t\r\n":
+            while j < n and text[j] in " \t\r\n":
                 j += 1
-            if j < n and s[j] in "}]":
+            if j < n and text[j] in "}]":
                 i += 1
                 continue
         out.append(c)
@@ -531,47 +685,475 @@ if [ -f "$BOOTSTRAP_DIR/agent-hooks/run-cases.sh" ]; then
   info "regression battery (optional, needs jq+bun): bash $TARGET_HOME/.config/agent-hooks/run-cases.sh"
 fi
 
+# A symlinked cli.json is a supported seed layout (dotfiles), but its target
+# decides which plugins the TUI loads: a foreign-owned or group/world-writable
+# target is not trustworthy.
+if [ -L "$CFG/cli.json" ]; then
+  cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
+  if [ -z "$cli_target" ] || [ ! -f "$cli_target" ]; then
+    fail "cli.json is a dangling symlink ($(readlink "$CFG/cli.json" 2>/dev/null))"
+  elif [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$(id -u)" ] ||
+    [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+    ! parents_safe "$(dirname "$cli_target")" "$TARGET_HOME_R"; then
+    fail "cli.json target $cli_target is not owned by the current user, is group/world-writable, or has a writable parent"
+  fi
+fi
+if [ -f "$CFG/cli.json" ]; then
+  # The CLI loader decodes the WHOLE Info schema and falls back to defaults if
+  # any field is invalid; checking only the two policy fields would PASS a file
+  # the loader silently discarded (e.g. session.verbosity: "verbose"). Use the
+  # fork's own schema/decoder through bun, and accept JSONC exactly as the
+  # loader does (comments, trailing commas). A hand-rolled stripper can merge
+  # tokens around a comment or mis-handle a trailing comma before a comment.
+  cli_check_dir="$BOOTSTRAP_DIR/../packages/cli"
+  if [ ! -d "$cli_check_dir" ]; then
+    warn "cli.json schema check skipped: packages/cli is not present in this checkout"
+  elif ! command -v bun >/dev/null 2>&1; then
+    warn "cli.json schema check skipped: bun is not on PATH"
+  elif cli_check_error=$( cd "$cli_check_dir" && bun -e '
+import { parse } from "jsonc-parser"
+import { Info } from "./src/config/schema.ts"
+import { Schema } from "effect"
+import { readFileSync } from "node:fs"
+const errors = []
+const value = parse(readFileSync(process.argv[1], "utf8"), errors, { allowTrailingComma: true })
+if (errors.length) process.exit(1)
+const decoded = Schema.decodeUnknownOption(Info)(value)
+if (decoded._tag === "None") process.exit(1)
+const info = decoded.value
+if (info.keybinds?.["app.exit"] !== "none") process.exit(1)
+if (info.session?.thinking !== "show") process.exit(1)
+' "$CFG/cli.json" 2>&1 ); then
+    pass "cli.json decodes with the CLI schema and keeps the fork policy (app.exit=none, session.thinking=show)"
+  elif printf '%s' "$cli_check_error" | grep -Eq "Cannot find module|Cannot find package|MODULE_NOT_FOUND|ENOENT|No such file or directory"; then
+    # The checker imports the checkout's own schema and its dependencies; an
+    # uninstalled checkout cannot judge the file. Do not tell the operator to
+    # overwrite a good config because the toolchain is missing.
+    warn "cli.json schema check skipped: the checkout's dependencies are not installed"
+  else
+    fail "cli.json is invalid under the CLI schema or lost the fork policy (app.exit=none, session.thinking=show); re-seed it from the repo root"
+  fi
+else
+  # A missing cli.json is not a cosmetic warning: the TUI then falls back to
+  # upstream defaults, including the exit key and hidden thinking. install.sh
+  # seeds it, so an installed seat must have it.
+  fail "cli.json missing (TUI keybinds + fork policy; install.sh seeds it from the repo root)"
+fi
+
 # --- 8. plugins --------------------------------------------------------------
 echo "-- plugin/"
-for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
-  if [ -f "$CFG/plugin/$f" ]; then
-    pass "plugin/$f present"
-  else
-    fail "plugin/$f missing"
+# A symlinked plugin directory would make every child look present and let
+# install_file write into the link target; fail it once and reuse the verdict.
+PLUGIN_LINK=0
+if [ -L "$CFG/plugin" ]; then
+  fail "$CFG/plugin is a symlink — plugins must be a real directory"
+  PLUGIN_LINK=1
+fi
+# The config root and the other written directories are checked too: a
+# symlinked root makes every child check follow the link, and install.sh
+# refuses to write through it.
+for d in "$TARGET_HOME_R/.config" "$CFG" "$CFG/shell" "$TARGET_HOME_R/.config/environment.d" "$TARGET_HOME_R/.config/agent-hooks" \
+  "$TARGET_HOME_R/.local" "$TARGET_HOME_R/.local/share" "$TARGET_HOME_R/.local/state" \
+  "$TARGET_HOME_R/.local/bin" "$DATA" "$TARGET_HOME_R/.cache" "$DATA/log" \
+  "$TARGET_HOME_R/.claude" "$TARGET_HOME_R/.zcode" "$TARGET_HOME_R/.grok" "$TARGET_HOME_R/.grok/hooks" \
+  "$TARGET_HOME_R/.kimi-code"; do
+  if [ -L "$d" ]; then
+    fail "$d is a symlink — replace it with a real directory"
   fi
 done
+# install.sh refuses these ancestors; a symlinked parent redirects the DB and
+# auth.json even when the final component is a real directory.
+for f in "$DB" "$LOG"; do
+  if [ -L "$f" ]; then
+    fail "$f is a symlink — replace it with a regular file"
+  fi
+done
+# The directory mode matters even when the files are correct: a
+# group/world-writable directory lets another local user replace a plugin.
+for d in "$TARGET_HOME_R" "$TARGET_HOME_R/.config" "$CFG" "$CFG/plugin" "$CFG/skills" "$CFG/agent" "$CFG/command" "$CFG/shell" "$CFG/lib" \
+  "$TARGET_HOME_R/.config/environment.d" "$TARGET_HOME_R/.config/agent-hooks" \
+  "$TARGET_HOME_R/.local" "$TARGET_HOME_R/.local/share" "$TARGET_HOME_R/.local/state" \
+  "$TARGET_HOME_R/.local/bin" "$DATA" "$DATA/log" "$TARGET_HOME_R/.cache" \
+  "$TARGET_HOME_R/.claude" "$TARGET_HOME_R/.zcode" "$TARGET_HOME_R/.grok" "$TARGET_HOME_R/.grok/hooks" \
+  "$TARGET_HOME_R/.kimi-code"; do
+  if [ -d "$d" ] && [ ! -L "$d" ]; then
+    if [ "$(stat -c '%u' "$d" 2>/dev/null)" != "$(id -u)" ]; then
+      fail "$d is not owned by the current user"
+    fi
+    if [ -n "$(find "$d" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+      fail "$d is group/world-writable"
+    fi
+  fi
+done
+# Nested seat directories (skills/<name>, plugin subdirs) matter too: a
+# writable skill directory lets another local user add or replace files.
+if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then
+  while IFS= read -r nested; do
+    fail "$nested is group/world-writable or not owned by the current user"
+  done < <(find "$CFG" -mindepth 1 -type d \( -perm /022 -o ! -user "$(id -u)" \) 2>/dev/null)
+fi
+# Executed/sourced files and files that decide which plugins load get the same
+# owner/mode gate even when their content matches the bundle. `install.sh --link`
+# and the documented live-edit layout may install a file symlink into this
+# checkout; allow that when the resolved target is user-owned and not
+# group/world-writable.
+link_ok() {
+  local target
+  target=$(readlink -f "$1" 2>/dev/null || true)
+  [ -n "$target" ] && [ -f "$target" ] || return 1
+  [ "$(stat -c '%u' "$target" 2>/dev/null)" = "$(id -u)" ] || return 1
+  [ -z "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
+  case "$target" in
+    "$REPO_ROOT"/*) : ;;
+    *) return 1 ;;
+  esac
+  parents_safe "$(dirname "$target")" "$REPO_ROOT"
+}
+for f in "$TARGET_HOME_R/.local/bin/opencode" "$TARGET_HOME_R/.config/agent-hooks/block-unsafe-kill.sh" \
+  "$CFG/shell/bashrc-opencode-block.sh" "$CFG/lib/drawio.py" "$CFG/opencode.jsonc" "$CFG/AGENTS.md"; do
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    fail "$f missing"
+  elif [ -L "$f" ]; then
+    # The README's SYMLINK RULE allows individual file symlinks into a git
+    # checkout (live-edit); accept one when the resolved target is user-owned,
+    # not group/world-writable, and its ancestors are safe.
+    if link_ok "$f"; then
+      pass "$f is a symlink into the checkout (target and parents owned, not group/world-writable)"
+    else
+      fail "$f is a symlink — replace it with a real file"
+    fi
+  elif [ ! -f "$f" ]; then
+    # A directory/FIFO at an executed/sourced path passes -e and the mode
+    # check, and the later [ -f ] content comparison is silently skipped.
+    fail "$f is not a regular file"
+  elif [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
+    fail "$f is not owned by the current user"
+  elif [ -n "$(find "$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+    fail "$f is group/world-writable"
+  fi
+done
+# The cli.json seed may be a dotfiles symlink (its target was checked above).
+if [ -f "$CFG/cli.json" ] && [ ! -L "$CFG/cli.json" ]; then
+  if [ "$(stat -c '%u' "$CFG/cli.json" 2>/dev/null)" != "$(id -u)" ] ||
+    [ -n "$(find "$CFG/cli.json" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+    fail "cli.json is not owned by the current user or is group/world-writable"
+  fi
+fi
+# A group/world-writable skill, agent card, command or environment file can
+# inject instructions or environment.
+for d in "$CFG/skills" "$CFG/agent" "$CFG/command" "$TARGET_HOME_R/.config/environment.d"; do
+  if [ -d "$d" ] && [ ! -L "$d" ] && [ -n "$(find "$d" -type f \( -perm /022 -o ! -user "$(id -u)" \) 2>/dev/null | head -n 1)" ]; then
+    fail "$d contains a group/world-writable or foreign-owned file"
+  fi
+  if [ -d "$d" ] && [ ! -L "$d" ]; then
+    # find -type f does not follow symlinks; a link to a writable/foreign
+    # target would otherwise escape the owner/mode gate.
+    while IFS= read -r link; do
+      # A directory symlink (an operator's extra skill) is a different layout;
+      # the bundle-skill loop above already rejects one for a managed skill.
+      [ -d "$link" ] && continue
+      if ! link_ok "$link"; then
+        fail "$link is a symlink to a target outside the checkout or with unsafe owner/mode/parents"
+      fi
+    done < <(find "$d" -type l 2>/dev/null)
+  fi
+done
+# The four hook configs decide whether the kill-guard runs; an existing one must
+# not be group/world-writable. Missing files are fine (install.sh wires only the
+# configs that exist). stat -L follows a dotfiles symlink to the real target.
+for f in "$TARGET_HOME_R/.claude/settings.json" "$TARGET_HOME_R/.zcode/settings.json" \
+  "$TARGET_HOME_R/.grok/hooks/block-unsafe-kill.json" "$TARGET_HOME_R/.kimi-code/config.toml"; do
+  if [ -L "$f" ] && [ ! -e "$f" ]; then
+    # `-e` follows the link: a dangling dotfiles link would otherwise be
+    # skipped while the kill-guard is silently unwired.
+    fail "$f is a dangling symlink — the kill-guard would be unwired"
+  elif [ -e "$f" ] && [ ! -f "$f" ]; then
+    # A directory/FIFO here passes the existence check while the guard is
+    # unwired; section 7's surface check only warns about "absent".
+    fail "$f is not a regular file — the kill-guard would be unwired"
+  elif [ -e "$f" ]; then
+    if [ "$(stat -L -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
+      fail "$f is not owned by the current user"
+    fi
+    hook_mode=$(stat -L -c '%a' "$f" 2>/dev/null)
+    if [ -n "$hook_mode" ] && [ $((0$hook_mode & 022)) -ne 0 ]; then
+      fail "$f is group/world-writable"
+    fi
+    hook_target=$(readlink -f "$f" 2>/dev/null || true)
+    if [ -n "$hook_target" ] && ! parents_safe "$(dirname "$hook_target")" "$TARGET_HOME_R"; then
+      fail "$f has a group/world-writable parent directory"
+    fi
+  fi
+done
+# The kill-guard script is executed by every wired tool and the sourced wrapper
+# runs in every shell; content matters, not only the executable bit.
+if [ -f "$GUARD" ] && [ ! -L "$GUARD" ] && [ -f "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" ]; then
+  escaped_home=$(printf '%s' "$TARGET_HOME_R" | sed 's/[\\&|]/\\&/g')
+  if sed "s|/home/eric|$escaped_home|g" "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" | cmp -s - "$GUARD"; then
+    pass "agent-hooks/block-unsafe-kill.sh matches the bundle (home rewritten)"
+  else
+    fail "agent-hooks/block-unsafe-kill.sh differs from the bundle (stale or tampered)"
+  fi
+fi
+if [ -f "$CFG/shell/bashrc-opencode-block.sh" ] && [ ! -L "$CFG/shell/bashrc-opencode-block.sh" ] &&
+  [ -f "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" ]; then
+  if cmp -s "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" "$CFG/shell/bashrc-opencode-block.sh"; then
+    pass "shell/bashrc-opencode-block.sh matches the bundle"
+  else
+    fail "shell/bashrc-opencode-block.sh differs from the bundle (stale or tampered)"
+  fi
+fi
+for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts; do
+  if [ "$PLUGIN_LINK" -eq 1 ]; then
+    : # the parent failure above covers every plugin
+  elif [ -L "$CFG/plugin/$f" ]; then
+    fail "plugin/$f is a symlink — replace it with the bundled copy"
+  elif [ ! -f "$CFG/plugin/$f" ]; then
+    fail "plugin/$f missing"
+  elif [ "$(stat -c '%u' "$CFG/plugin/$f" 2>/dev/null)" != "$(id -u)" ] ||
+    [ -n "$(find "$CFG/plugin/$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+    fail "plugin/$f is not owned by the current user or is group/world-writable"
+  elif [ ! -f "$BOOTSTRAP_DIR/plugin/$f" ]; then
+    fail "bundled plugin/$f is missing; cannot verify the installed copy"
+  elif ! cmp -s "$BOOTSTRAP_DIR/plugin/$f" "$CFG/plugin/$f"; then
+    fail "plugin/$f differs from the bundled copy (stale or tampered; reinstall from bootstrap/plugin/$f)"
+  else
+    pass "plugin/$f matches the bundled copy"
+  fi
+done
+# open-code-review.ts gets a content-aware verdict below. The generic `-f` test
+# follows symlinks and would report PASS before the symlink check FAILs.
+# The V2 loader accepts only `{id, setup}` (or `{id, effect}`). The upstream
+# OCR plugin exports a V1 `server`, which the V2 loader rejects; a symlink to
+# that checkout would silently disable the automatic gate. Check the symlink
+# first so a link is never reported as both PASS and FAIL.
+if [ "$PLUGIN_LINK" -eq 1 ]; then
+  : # the parent failure above covers this file too
+elif [ -L "$CFG/plugin/open-code-review.ts" ]; then
+  fail "plugin/open-code-review.ts is a symlink — replace it with the bundled copy"
+elif [ -f "$CFG/plugin/open-code-review.ts" ] &&
+  [ "$(stat -c '%u' "$CFG/plugin/open-code-review.ts" 2>/dev/null)" = "$(id -u)" ] &&
+  [ -z "$(find "$CFG/plugin/open-code-review.ts" -maxdepth 0 -perm /022 2>/dev/null)" ] &&
+  cmp -s "$BOOTSTRAP_DIR/plugin/open-code-review.ts" "$CFG/plugin/open-code-review.ts" &&
+  grep -qE "id:[[:space:]]*[\"']open-code-review[\"']" "$CFG/plugin/open-code-review.ts" &&
+  { grep -qE '(^|[^A-Za-z0-9_$])setup[[:space:]]*[:(,}]' "$CFG/plugin/open-code-review.ts" ||
+    grep -qE '(^|[^A-Za-z0-9_$])effect[[:space:]]*[:,}]' "$CFG/plugin/open-code-review.ts"; } &&
+  ! grep -qE '^[[:space:]]*server[[:space:]]*:' "$CFG/plugin/open-code-review.ts"; then
+  pass "plugin/open-code-review.ts is the V2 {id, setup|effect} port and matches the bundle"
+else
+  fail "plugin/open-code-review.ts differs from the bundle or is not the V2 {id, setup|effect} port (V1 server export, symlink, stale copy, or missing setup/effect)"
+fi
 # Skills freeze (2026-10-16): the auto-updater is removed on purpose. A stale
 # seat copy would keep fetching, re-vendoring, and committing behind the
 # operator's back.
-if [ -e "$CFG/plugin/mpskills-update.ts" ]; then
+if [ "$PLUGIN_LINK" -eq 1 ]; then
+  : # the parent failure above covers this file too
+elif [ -e "$CFG/plugin/mpskills-update.ts" ] || [ -L "$CFG/plugin/mpskills-update.ts" ]; then
   fail "plugin/mpskills-update.ts present — removed by the skills freeze; delete it"
 else
   pass "plugin/mpskills-update.ts absent (skills frozen)"
 fi
 # Support file and skills for the local-tools plugin (script/install-local-tools.ts;
 # the drawio tool fails closed without lib/drawio.py, the skills only lose guidance).
-if [ -f "$CFG/lib/drawio.py" ]; then
-  pass "lib/drawio.py present"
+LOCAL_SRC="$BOOTSTRAP_DIR/../dotfiles/opencode"
+LIB_LINK=0
+if [ -L "$CFG/lib" ]; then
+  fail "$CFG/lib is a symlink — lib must be a real directory"
+  LIB_LINK=1
+fi
+if [ "$LIB_LINK" -eq 1 ]; then
+  : # the parent failure above covers lib/drawio.py
+elif [ -L "$CFG/lib/drawio.py" ]; then
+  fail "lib/drawio.py is a symlink — install the bundled copy (install.sh step 7b)"
+elif [ -f "$CFG/lib/drawio.py" ]; then
+  if [ -f "$LOCAL_SRC/lib/drawio.py" ] && cmp -s "$LOCAL_SRC/lib/drawio.py" "$CFG/lib/drawio.py"; then
+    pass "lib/drawio.py matches the bundle"
+  else
+    fail "lib/drawio.py differs from the bundle (reinstall with install.sh step 7b)"
+  fi
 else
-  warn "lib/drawio.py missing (drawio tool will refuse; run: bun run script/install-local-tools.ts)"
+  fail "lib/drawio.py missing (drawio tool will refuse; install.sh step 7b or bun run script/install-local-tools.ts)"
+fi
+# The manifest is the local-edit baseline install-local-tools.ts validates; a
+# symlinked/missing/tampered manifest lets a local edit pass as unchanged.
+MANIFEST="$CFG/local-tools-manifest.json"
+if [ -L "$MANIFEST" ]; then
+  fail "local-tools-manifest.json is a symlink — replace it with a regular file"
+elif [ ! -f "$MANIFEST" ]; then
+  fail "local-tools-manifest.json missing (install.sh step 7b)"
+elif [ "$(stat -c '%u' "$MANIFEST" 2>/dev/null)" != "$(id -u)" ] ||
+  [ -n "$(find "$MANIFEST" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+  fail "local-tools-manifest.json is not owned by the current user or is group/world-writable"
+elif command -v bun >/dev/null 2>&1; then
+  if MANIFEST="$MANIFEST" DEST="$CFG" bun -e '
+    const data = await Bun.file(process.env.MANIFEST).json().catch(() => undefined)
+    const required = ["lib/drawio.py", "skills/drawio/SKILL.md", "skills/marker/SKILL.md", "skills/planning-with-files/SKILL.md"]
+    if (!data || typeof data !== "object" || Array.isArray(data) || required.some((key) => typeof data[key] !== "string")) process.exit(1)
+    for (const key of required) {
+      const bytes = await Bun.file(process.env.DEST + "/" + key).bytes()
+      if (Bun.CryptoHasher.hash("sha256", bytes, "hex") !== data[key]) process.exit(1)
+    }
+  ' >/dev/null 2>&1; then
+    pass "local-tools-manifest.json is a regular file with valid hashes"
+  else
+    fail "local-tools-manifest.json hashes do not match the installed files (re-run install.sh step 7b)"
+  fi
+fi
+# A symlinked skills parent makes every child look present; fail it once here
+# and let the sections below reuse the verdict instead of blessing the children.
+SKILLS_LINK=0
+if [ -L "$CFG/skills" ]; then
+  fail "$CFG/skills is a symlink — skills must be a real directory"
+  SKILLS_LINK=1
 fi
 for s in drawio marker planning-with-files; do
-  if [ -d "$CFG/skills/$s" ]; then
-    pass "skill present: $s"
+  if [ -L "$CFG/skills/$s" ]; then
+    fail "skill $s is a symlink — install the bundled copy (install.sh step 7b)"
+  elif [ "$SKILLS_LINK" -eq 1 ]; then
+    : # the parent failure above covers the whole tree
+  elif [ -L "$CFG/skills/$s/SKILL.md" ]; then
+    fail "skill $s/SKILL.md is a symlink — install the bundled copy (install.sh step 7b)"
+  elif [ -f "$CFG/skills/$s/SKILL.md" ]; then
+    if [ -f "$LOCAL_SRC/skills/$s/SKILL.md" ] && cmp -s "$LOCAL_SRC/skills/$s/SKILL.md" "$CFG/skills/$s/SKILL.md"; then
+      pass "skill present: $s"
+    else
+      fail "skill $s differs from the bundle (install.sh step 7b)"
+    fi
+  elif [ -d "$CFG/skills/$s" ]; then
+    fail "skill $s is incomplete (SKILL.md missing; install.sh step 7b)"
   else
-    warn "skill missing: $s (run: bun run script/install-local-tools.ts)"
+    fail "skill missing: $s (install.sh step 7b or bun run script/install-local-tools.ts)"
   fi
 done
 
 # --- 9. skills-extra ---------------------------------------------------------
 echo "-- skills-extra"
-for s in longrun-stability-audit; do
-  if [ -d "$CFG/skills/$s" ]; then
-    pass "skill present: $s"
+if [ "$SKILLS_LINK" -eq 1 ]; then
+  : # the parent symlink failure was reported in the local-tools section
+elif [ ! -d "$BOOTSTRAP_DIR/skills-extra" ]; then
+  warn "skills-extra bundle missing at $BOOTSTRAP_DIR/skills-extra; cannot verify review skills"
+else
+  for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
+    [ -d "$s" ] || continue
+    [ -f "$s/SKILL.md" ] || continue
+    name=$(basename "$s")
+    if [ -L "$CFG/skills/$name" ]; then
+      fail "skill $name is a symlink — replace it with the bundled copy (install.sh step 6)"
+    elif [ -L "$CFG/skills/$name/SKILL.md" ]; then
+      fail "skill $name/SKILL.md is a symlink — replace it with the bundled copy (install.sh step 6)"
+    elif [ -f "$CFG/skills/$name/SKILL.md" ]; then
+      if diff -r -q --no-dereference "$s" "$CFG/skills/$name" >/dev/null 2>&1; then
+        pass "skill present: $name"
+      else
+        # install.sh step 6 never overwrites a differing skill; the operator
+        # merges by hand. Report the divergence, do not fail a supported state.
+        warn "skill $name differs from the bundle (local edit kept by install.sh step 6 — merge by hand)"
+      fi
+    elif [ -d "$CFG/skills/$name" ]; then
+      fail "skill $name is incomplete (SKILL.md missing; install.sh step 6)"
+    else
+      fail "skill missing: $name (install.sh step 6)"
+    fi
+  done
+fi
+
+# --- 9a. vendored skills (frozen) -------------------------------------------
+echo "-- vendored skills"
+VENDORED_SKILLS="$BOOTSTRAP_DIR/../skills"
+if [ "$SKILLS_LINK" -eq 1 ]; then
+  : # the parent symlink failure was reported in the local-tools section
+elif [ -d "$VENDORED_SKILLS" ]; then
+  for s in "$VENDORED_SKILLS"/*/; do
+    [ -d "$s" ] || continue
+    name=$(basename "$s")
+    if [ -L "$CFG/skills/$name" ]; then
+      fail "vendored skill $name is a symlink — install the frozen copy"
+    elif [ -L "$CFG/skills/$name/SKILL.md" ]; then
+      fail "vendored skill $name/SKILL.md is a symlink — install the frozen copy"
+    elif [ -f "$CFG/skills/$name/SKILL.md" ]; then
+      if diff -r -q --no-dereference "$s" "$CFG/skills/$name" >/dev/null 2>&1; then
+        pass "vendored skill present: $name"
+      else
+        fail "vendored skill $name differs from the frozen copy (install.sh never overwrites; compare with skills/$name)"
+      fi
+    else
+      fail "vendored skill missing or incomplete: $name (install.sh step 6b)"
+    fi
+  done
+  for f in "$VENDORED_SKILLS"/*; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    if [ -L "$CFG/skills/$name" ]; then
+      fail "vendored file $name is a symlink — install the frozen copy"
+    elif cmp -s "$f" "$CFG/skills/$name"; then
+      pass "vendored file present: $name"
+    else
+      fail "vendored file $name differs from the frozen copy (install.sh step 6b)"
+    fi
+  done
+else
+  warn "vendored skills/ not found at $VENDORED_SKILLS"
+fi
+
+# --- 9b. review workflow prerequisites --------------------------------------
+echo "-- review workflow"
+if command -v ocr >/dev/null 2>&1; then
+  # Anchor on the first version token: a greedy leading `.*` captures the last
+  # `x.y.z` on a multi-token line (e.g. a trailing runtime version) and would
+  # pass an old OCR because an unrelated version matched.
+  ocr_version=$(timeout 30 ocr version 2>/dev/null | grep -iE 'open[- ]?code[- ]?review' | tr '[:upper:]' '[:lower:]' | sed -nE 's/^[^0-9]*open[- ]?code[- ]?review[[:space:]/:]+v?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1.\2.\3/p' | head -n 1)
+  if [ -n "$ocr_version" ]; then
+    ocr_major=${ocr_version%%.*}
+    ocr_rest=${ocr_version#*.}
+    ocr_minor=${ocr_rest%%.*}
+    ocr_patch=${ocr_rest#*.}
+    if [ "$ocr_major" -gt 1 ] ||
+      { [ "$ocr_major" -eq 1 ] && { [ "$ocr_minor" -gt 13 ] || { [ "$ocr_minor" -eq 13 ] && [ "$ocr_patch" -ge 1 ]; }; }; }; then
+      pass "ocr on PATH (v$ocr_version)"
+    else
+      fail "ocr is too old (v$ocr_version); the gate needs v1.13.1+ — npm install -g @alibaba-group/open-code-review@latest"
+    fi
   else
-    warn "skill missing: $s (orphan skill; install.sh step 6)"
+    # Fail closed: an unparseable version cannot prove the gate's minimum.
+    fail "ocr on PATH but its version could not be parsed; the gate needs v1.13.1+ — npm install -g @alibaba-group/open-code-review@latest"
   fi
-done
+  # `ocr llm test` makes a network call; without a timeout a hung provider
+  # blocks the whole verify. The plugin's ocr_health uses the same 60 s bound.
+  if timeout 60 env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+    HOME="$TARGET_HOME" \
+    XDG_CONFIG_HOME="$TARGET_HOME/.config" \
+    XDG_DATA_HOME="$TARGET_HOME/.local/share" \
+    XDG_STATE_HOME="$TARGET_HOME/.local/state" \
+    XDG_CACHE_HOME="$TARGET_HOME/.cache" \
+    ocr llm test </dev/null >/dev/null 2>&1; then
+    pass "ocr LLM connection"
+  else
+    warn "ocr LLM test failed; configure provider/model and run 'ocr llm test' (README Step 4b)"
+  fi
+else
+  fail "ocr missing — the security gate cannot run; npm install -g @alibaba-group/open-code-review"
+fi
+if [ ! -d "$BOOTSTRAP_DIR/skills-extra" ]; then
+  warn "skills-extra bundle missing; cannot verify the review skills (run from the bootstrap checkout)"
+else
+  for s in code-review-playbook deep-audit code-audit review-delegate; do
+    if [ -L "$CFG/skills/$s" ]; then
+      fail "review skill $s is a symlink — install the bundled copy (install.sh step 6)"
+    elif [ "$SKILLS_LINK" -eq 1 ]; then
+      : # the parent symlink failure was reported above
+    elif [ -f "$CFG/skills/$s/SKILL.md" ]; then
+      if diff -r -q --no-dereference "$BOOTSTRAP_DIR/skills-extra/$s" "$CFG/skills/$s" >/dev/null 2>&1; then
+        pass "review skill present: $s"
+      else
+        # Same policy as section 9: install.sh step 6 keeps a local edit, so a
+        # divergence is a supported state to merge by hand, not a failure.
+        warn "review skill $s differs from the bundle (local edit kept by install.sh step 6 — merge by hand)"
+      fi
+    else
+      fail "review skill missing: $s (install.sh step 6)"
+    fi
+  done
+fi
 
 # --- 10. silent-failure log sweep -------------------------------------------
 echo "-- log sweep (first-launch silent failures are logged only)"
@@ -598,9 +1180,28 @@ fi
 echo "-- mode cards + seat rules"
 # Both cards and the rules file are managed: shipped in the bundle and
 # converging on every install. A missing seat copy silently drops that policy.
+# A symlinked agent/ directory would make every card look present and let
+# install_file write into the link target; fail it once and reuse the verdict.
+AGENT_LINK=0
+if [ -L "$CFG/agent" ]; then
+  fail "$CFG/agent is a symlink — agent cards must be a real directory"
+  AGENT_LINK=1
+fi
+if [ -L "$CFG/command" ]; then
+  fail "$CFG/command is a symlink — commands must be a real directory"
+fi
 for f in agent/auto.md agent/goal.md AGENTS.md; do
+  case "$f" in
+    agent/*)
+      if [ "$AGENT_LINK" -eq 1 ]; then
+        continue # the parent failure above covers this card
+      fi
+      ;;
+  esac
   if [ -f "$BOOTSTRAP_DIR/$f" ]; then
-    if [ ! -f "$CFG/$f" ]; then
+    if [ -L "$CFG/$f" ]; then
+      fail "$f is a symlink — install the bundled copy (install.sh step 8)"
+    elif [ ! -f "$CFG/$f" ]; then
       fail "$f shipped in bundle but missing at $CFG/$f (install.sh step 8)"
     elif cmp -s "$BOOTSTRAP_DIR/$f" "$CFG/$f"; then
       pass "$f installed and matches the bundle (managed)"

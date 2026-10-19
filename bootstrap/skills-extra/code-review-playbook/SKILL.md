@@ -1,28 +1,47 @@
 ---
 name: code-review-playbook
 description: >
-  Normal code review, auto-triggered after code edits in GOAL mode. Runs
-  deterministic checks, a quick Standards+Spec review, and the code-audit OCR
-  gate, then returns a fail-closed verdict with evidence. Use this for the
-  automatic normal review after edit/write/patch; do NOT use it for the
+  Normal code review, auto-triggered after code changes in GOAL mode. In Auto
+  mode the plugin's automatic OCR gate is the code-change check; do not run
+  this full playbook by default. Runs deterministic checks, a quick
+  Standards+Spec review, and the code-audit OCR gate, then returns a fail-closed
+  verdict with evidence. Use this for the automatic normal review after
+  edit/write/patch or a shell command that writes code; do NOT use it for the
   user-invoked "审查", "review", "做好代码审查", "深度审计", or "deep-audit" —
-  those default to the `deep-audit` skill.
+  those default to the `deep-audit` skill. Code changes only: for a non-code
+  task (prose, docs, data, research, ops), do not load this skill.
 ---
 
 # Normal code review playbook
 
 This is the **normal review** path. It is automatic in GOAL mode after any
-edit/write/patch to code; it is not the user-invoked deep review/audit. For
-"审查"/"review"/"做好代码审查"/"深度审计"/"deep-audit", load `deep-audit`.
+code change — an edit/write/patch to a code file, or a shell command that
+writes code; the trigger is the code change, not the mode. In Auto mode the
+plugin's automatic OCR gate is the default code-change check; do not run this
+full playbook unless the user asks or the gate reports high/critical. In Goal
+mode this normal path is the default; if the change meets the deep criteria,
+the Goal agent automatically loads `deep-audit` instead — no user phrase is
+needed. The user phrases "审查"/"review"/"做好代码审查" force deep review;
+"深度审计"/"deep-audit" forces deep audit.
+
+**Scope — code only.** For a non-code task (prose, docs, data, research, ops,
+a pure question), do not load this skill; answer directly. A user-invoked
+"review" of a non-code artifact is not this path.
 
 ## 0. Non-negotiable rules
 
-- **Normal review is automatic.** In GOAL mode, after code edits, run this
-  before declaring the change done; do not wait for the user.
-- **Do not run the deep path here.** No `review-delegate`, no independent
-  verifier, no Cloudflare 6-phase, no sandbox. If the normal review finds a
-  critical/high finding or the change is high-risk, report `BLOCKED` and
-  recommend `deep-audit`; do not silently upgrade to a deep audit.
+- **Normal review is automatic.** In GOAL mode, after any code change
+  (edit/write/patch or a shell command that writes code), run this full path
+  before declaring the change done; do not wait for the user. If the deep
+  criteria apply, switch to `deep-audit` automatically (the next rule). In Auto
+  mode the plugin's OCR gate is the default check — run this path only if the
+  user asks or the gate reports a finding.
+- **Deep is auto-selected in Goal.** If the change meets the deep criteria
+  (security-sensitive surfaces, public API/contracts, data/persistence,
+  concurrency, deps/lockfiles, CI/release, >200 lines/>10 files) or the normal
+  review finds critical/high or cannot verify, the Goal agent automatically
+  loads `deep-audit` (deep review); do not ask the user. In Auto mode, report
+  BLOCKED and recommend Goal/deep-audit instead of silently upgrading.
 - **Never ask** for a base/spec/approval. Choose defaults, state them, finish.
 - **Review only.** Do not edit target code/tests/config.
 - **No single-pass LGTM.** Run deterministic checks and the OCR gate.
@@ -111,6 +130,7 @@ and full deep path belong to `deep-audit`.
 
 - Load `code-review` and run Standards + Spec on the diff. Supply the base
   chosen in section 1; tell the sub-agents **not to ask** for a base/spec.
+  Tell the Spec sub-agent **not to report security**: the OCR gate owns it.
 - If no spec, skip Spec and say so; do not invent one.
 - Build a manual changed-file coverage list: every changed file is either
   reviewed or explicitly skipped with a reason.
@@ -120,8 +140,9 @@ and full deep path belong to `deep-audit`.
 - Use the `/review` structured findings contract from `code-review`; no new
   schema. Standards and Spec are separate; do not rerank across axes.
 - If the diff is >200 changed lines or touches a high-risk area, the normal
-  review is not sufficient: report `INCOMPLETE`/`BLOCKED` and recommend
-  `deep-audit`; do not run the deep path here.
+  review is not sufficient: report `INCOMPLETE`/`BLOCKED`; in Goal mode the
+  agent switches to `deep-audit` automatically, and in Auto mode you recommend
+  it. This skill does not run the deep protocol itself.
 
 ## 5. Security gate
 
@@ -139,7 +160,7 @@ EFFORT="${EFFORT:-low}"
 ocr review --repo <repo> [--from <base> --to HEAD | --commit <sha>] \
   --effort "$EFFORT" --format json --audience agent \
   --provider deepseek --model deepseek-flash \
-  --max-tokens-budget 40000 --timeout 15 --concurrency 4
+  --max-tokens-budget 120000 --timeout 15 --concurrency 4
 ```
 
 Choose `EFFORT` **before** the run: `low` for a small, non-high-risk diff;
@@ -162,7 +183,10 @@ Then:
   unresolved or the change is high-risk, report `BLOCKED` and recommend
   `deep-audit`; the deep skill owns independent verification.
 - Respect the `code-audit` stop rules: no loop; same diff hash, 2 empty runs,
-  3 runs, 120k tokens, 2 injections, 2 OCR errors stop the gate.
+  3 runs, 240k total tokens, 2 injections, 2 OCR errors stop the gate. The
+  automatic gate starts at a 60k per-run budget and escalates to 120k then
+  160k when OCR rejects the budget at dispatch; a budget rejection is not a
+  pass.
 - If OCR is unavailable or fails: say so, fall back to the 10-line checklist +
   manual source review, and mark the security gate `INCOMPLETE`. Do not approve
   a high-risk change without a security gate.
@@ -224,8 +248,11 @@ This skill is the **normal** per-edit review. The user-invoked deep path is
 - "深度审计" / "deep-audit" → `deep-audit` in **deep audit** mode: the
   Cloudflare 6-phase protocol when a sandbox is available; otherwise static
   deep review + `needs_validation`.
-- Do not run `deep-audit` automatically after edits. If the normal review finds
-  critical/high or the change is high-risk, report `BLOCKED` and recommend it.
+- In **Goal** mode, the deep path is auto-selected when the deep criteria apply
+  or the normal review finds critical/high/cannot verify; the Goal card owns
+  that choice, and this skill hands control back to it. In **Auto** mode, do not
+  run `deep-audit` automatically; report `BLOCKED` and recommend
+  Goal/deep-audit.
 
 ## 9. Research basis
 

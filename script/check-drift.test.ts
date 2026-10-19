@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { ABSENT_FILES, collectDrift, MANAGED_FILES, MIRROR_FILES, SEED_FILES, summarize } from "./check-drift"
@@ -176,14 +176,29 @@ describe("collectDrift", () => {
     expect(summarize(rows).drift).toBe(1)
   })
 
-  test("a symlinked seat file is drift", async () => {
+  test("a symlinked seed is accepted, a symlinked managed file is drift", async () => {
     const { root, home } = await mirror()
-    const target = path.join(home, ".config/opencode/cli.json")
-    await rm(target)
-    await symlink(path.join(root, "cli.json"), target)
+    const seed = path.join(home, ".config/opencode/cli.json")
+    await rm(seed)
+    // The dotfiles target lives under the home; the target's parent chain is
+    // part of the safety rule.
+    const target = path.join(home, "dotfiles-cli.json")
+    await Bun.write(target, await Bun.file(path.join(root, "cli.json")).text())
+    await symlink(target, seed)
     const rows = await collectDrift(root, home)
-    expect(row(rows, "cli.json")?.status).toBe("drift")
-    expect(row(rows, "cli.json")?.detail).toContain("symlink")
+    expect(row(rows, "cli.json")?.status).toBe("ok")
+    // A group/world-writable target lets another local user edit the policy
+    // the TUI loads; the seed link is not accepted then.
+    await chmod(target, 0o666)
+    const unsafe = await collectDrift(root, home)
+    expect(row(unsafe, "cli.json")?.status).toBe("drift")
+    await chmod(target, 0o644)
+    const managed = path.join(home, ".config/opencode/AGENTS.md")
+    await rm(managed)
+    await symlink(path.join(root, "dotfiles/opencode/AGENTS.md"), managed)
+    const after = await collectDrift(root, home)
+    expect(row(after, "dotfiles/opencode/AGENTS.md")?.status).toBe("drift")
+    expect(row(after, "dotfiles/opencode/AGENTS.md")?.detail).toContain("symlink")
   })
 
   test("a directory where a seat file belongs is drift, not a crash", async () => {

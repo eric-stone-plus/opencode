@@ -52,6 +52,7 @@ TARGET_HOME="${HOME:-}"
 SED_USER="${USER:-$(id -un 2>/dev/null || echo unknown)}"
 LINK_MODE=0
 NO_BASHRC=0
+REFUSED=0
 
 usage() {
   cat <<'EOF'
@@ -90,6 +91,10 @@ while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
   TARGET_HOME="${TARGET_HOME%/}"
 done
 [ -d "$TARGET_HOME" ] || { echo "install.sh: target home is not a directory: $TARGET_HOME" >&2; exit 1; }
+# Canonicalize: the hook configs and the .bashrc source line record this path,
+# and verify.sh compares it against the canonical home. A symlinked parent
+# would otherwise leave the non-canonical spelling behind.
+TARGET_HOME=$(cd "$TARGET_HOME" && pwd -P)
 
 
 sed_re_escape() {
@@ -133,7 +138,9 @@ export OPENCODE_DISABLE_LSP_DOWNLOAD=1
 # `opencode service set env`).
 exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
-  chmod +x "$SHIM"
+  # umask 002 would make `cat`+`chmod +x` create 0775; the shim is executed by
+  # the operator's shell, so keep it owner-writable, world-readable/executable.
+  chmod 0755 "$SHIM"
 }
 
 ensure_dir() {
@@ -141,17 +148,18 @@ ensure_dir() {
 }
 
 backup_file() {
-  # timestamped backup of anything we are about to overwrite
-  # (a symlink, dangling or not, is backed up as the link itself: -P never
-  # follows it, so the backup records where it pointed).
-  local f="$1" b
+  # timestamped backup of anything we are about to overwrite.
+  # Default -P: a symlink, dangling or not, is backed up as the link itself.
+  # Pass L for a destination we write *through* (`apply_wiring`, `.bashrc` on
+  # a dotfiles symlink): the target's content is the data at risk, not the link.
+  local f="$1" follow="${2:-P}" b
   if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
   b="$f.bak.$TS"
   if [ -e "$b" ] || [ -L "$b" ]; then b="$b.$$"; fi
   act "backup $f -> $(basename "$b")"
   LAST_BACKUP="$b"
   if [ "$DRY_RUN" -eq 0 ]; then
-    cp -pP "$f" "$b"
+    cp -p"$follow" "$f" "$b"
     prune_backups "$f"
   fi
 }
@@ -221,6 +229,7 @@ install_file() {
       backup_file "$dst"
       rm -f "$dst"
       cp -p "$stage" "$dst"
+      chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
     else
       note "(would back up the link itself first; its target is never written)"
     fi
@@ -229,10 +238,14 @@ install_file() {
     act "create $dst (from ${src#"$BOOTSTRAP_DIR"/})"
     # New file: cp -p stamps the bundle template's mode (intended — templates
     # carry the perms they want; secret seeds are tightened by require_private).
-    [ "$DRY_RUN" -eq 1 ] || { ensure_dir_quiet "$(dirname "$dst")"; cp -p "$stage" "$dst"; }
+    [ "$DRY_RUN" -eq 1 ] || { ensure_dir_quiet "$(dirname "$dst")"; cp -p "$stage" "$dst"; chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"; }
     changed
   elif cmp -s "$stage" "$dst"; then
     note "unchanged $dst"
+    # An existing destination keeps its mode (the update path below does not
+    # restamp it), so a file created under umask 002 stays 0664. Remove the
+    # group/world write bits without touching the user's own bits.
+    [ "$DRY_RUN" -eq 1 ] || chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
   else
     act "update $dst (from ${src#"$BOOTSTRAP_DIR"/})"
     if [ "$DRY_RUN" -eq 0 ]; then
@@ -240,6 +253,7 @@ install_file() {
       # Plain cp (no -p): the existing destination keeps its own mode; its
       # permissions must not be restamped from the bundle template.
       cp "$stage" "$dst"
+      chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
     else
       note "(would timestamp-backup the existing file first)"
     fi
@@ -251,6 +265,45 @@ install_file() {
 
 ensure_dir_quiet() { [ -d "$1" ] || mkdir -p "$1"; }
 
+# A dotfiles symlink is a supported layout. The target file is chmod'ed by the
+# caller, but verify's parents_safe also rejects a writable parent chain;
+# normalize the target's ancestors up to the target home (never above it).
+normalize_link_target() {
+  local dst="$1" target d
+  [ -L "$dst" ] || return 0
+  target=$(readlink -f "$dst" 2>/dev/null || true)
+  [ -n "$target" ] || return 0
+  # Never chmod outside the seat home: a supported dotfiles symlink may point
+  # at /srv/dotfiles, and walking/chmod'ing shared or system ancestors would
+  # damage them. Such a target is reported by verify instead.
+  case "$target" in
+    "$TARGET_HOME"/*) ;;
+    *) return 0 ;;
+  esac
+  chmod go-w "$target" 2>/dev/null || true
+  d=$(dirname "$target")
+  while [ "$d" != "$TARGET_HOME" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+    [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || true
+    d=$(dirname "$d")
+  done
+}
+
+# The same ancestor rule verify.sh applies to a symlink target: no group/world
+# write bits and no foreign owner (root is the system exception) up to the
+# target home, or to / for a target outside it.
+link_parents_safe() {
+  local target="$1" dir owner
+  dir=$(dirname "$target")
+  while :; do
+    [ -z "$(find "$dir" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
+    owner=$(stat -c '%u' "$dir" 2>/dev/null) || return 1
+    [ "$owner" = "$(id -u)" ] || [ "$owner" = "0" ] || return 1
+    [ "$dir" = "$TARGET_HOME" ] && return 0
+    [ "$dir" = "/" ] && return 0
+    dir=$(dirname "$dir")
+  done
+}
+
 # --- 1. dirs -----------------------------------------------------------------
 say "== bootstrap seat install =="
 say "target home : $TARGET_HOME"
@@ -259,6 +312,30 @@ say "bundle      : $BOOTSTRAP_DIR"
 [ "$DRY_RUN" -eq 1 ] && say "mode        : DRY-RUN (no changes will be made)"
 say ""
 say "-- step 1: directories"
+# A symlinked write root sends every file below it into the link target; the
+# per-directory guards cannot see the root itself. Refuse all the roots this
+# script writes through, not only the config root.
+for root in \
+  "$TARGET_HOME/.config" \
+  "$TARGET_HOME/.local" \
+  "$TARGET_HOME/.local/share" \
+  "$TARGET_HOME/.local/state" \
+  "$TARGET_HOME/.config/opencode" \
+  "$TARGET_HOME/.config/opencode/shell" \
+  "$TARGET_HOME/.config/environment.d" \
+  "$TARGET_HOME/.config/agent-hooks" \
+  "$TARGET_HOME/.local/bin" \
+  "$TARGET_HOME/.local/share/opencode" \
+  "$TARGET_HOME/.claude" \
+  "$TARGET_HOME/.zcode" \
+  "$TARGET_HOME/.grok" \
+  "$TARGET_HOME/.grok/hooks" \
+  "$TARGET_HOME/.kimi-code"; do
+  if [ -L "$root" ]; then
+    echo "install.sh: $root is a symlink; refusing to install through it" >&2
+    exit 1
+  fi
+done
 for d in "$TARGET_HOME/.config/opencode/plugin" "$TARGET_HOME/.config/opencode/command" \
          "$TARGET_HOME/.config/opencode/agent" "$TARGET_HOME/.config/opencode/skills" \
          "$TARGET_HOME/.config/opencode/shell" "$TARGET_HOME/.config/environment.d" \
@@ -275,6 +352,22 @@ DATA="$TARGET_HOME/.local/share/opencode"
 if [ "$LINK_MODE" -eq 1 ]; then
   dst="$CFG/opencode.jsonc"
   want="$BOOTSTRAP_DIR/config/opencode.jsonc"
+  # The link target is the checkout's file; a clone under umask 002 leaves it
+  # 0664 and its directories 0775, which verify rejects (another local user
+  # could edit the config or replace the target). Normalize the target and its
+  # ancestors up to the repository root (verify's parents_safe stops there).
+  repo_root=$(cd "$BOOTSTRAP_DIR/.." && pwd -P)
+  if [ "$DRY_RUN" -eq 0 ]; then
+    if [ -L "$want" ]; then
+      say "WARN  $want is a symlink; not normalizing through it"
+    elif ! chmod go-w "$want" 2>/dev/null; then
+      say "WARN  could not normalize $want; verify will fail if it is group/world-writable"
+    fi
+    for d in "$BOOTSTRAP_DIR/config" "$BOOTSTRAP_DIR" "$repo_root"; do
+      [ "$d" = "/" ] && continue
+      [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || say "WARN  could not normalize $d"
+    done
+  fi
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$want" ]; then
     note "unchanged symlink $dst"
   else
@@ -292,6 +385,44 @@ else
   install_file "$BOOTSTRAP_DIR/config/opencode.jsonc" "$CFG/opencode.jsonc"
 fi
 
+# cli.json: TUI keybinds, seeded only when absent. sync-upstream also installs it
+# from the repo root, so a fresh clone that only runs this installer still gets
+# the same keybinds without overwriting later tuning.
+CLI_JSON="$BOOTSTRAP_DIR/../cli.json"
+if [ -f "$CLI_JSON" ]; then
+  if [ -L "$CFG/cli.json" ] && [ ! -e "$CFG/cli.json" ]; then
+    # A dangling link has no content to preserve, and leaving it makes verify
+    # fail ("cli.json missing"). Replace it with the repo copy.
+    act "replace dangling symlink $CFG/cli.json with the repo copy"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      backup_file "$CFG/cli.json"
+      rm -f "$CFG/cli.json"
+      cp -p "$CLI_JSON" "$CFG/cli.json"
+      chmod go-w "$CFG/cli.json"
+    fi
+    changed
+  elif [ -L "$CFG/cli.json" ]; then
+    note "unchanged $CFG/cli.json (symlink; never written through)"
+    if [ "$DRY_RUN" -eq 0 ]; then normalize_link_target "$CFG/cli.json"; fi
+    cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
+    if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
+      [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$(id -u)" ] ||
+      [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+      ! link_parents_safe "$cli_target"; then
+      say "WARN  $CFG/cli.json target is missing, foreign-owned, or group/world-writable; verify will fail"
+    fi
+  elif [ -e "$CFG/cli.json" ]; then
+    note "unchanged $CFG/cli.json (exists; never overwritten)"
+    if [ "$DRY_RUN" -eq 0 ] && [ ! -L "$CFG/cli.json" ]; then chmod go-w "$CFG/cli.json"; fi
+  else
+    act "create $CFG/cli.json from repo cli.json"
+    if [ "$DRY_RUN" -eq 0 ]; then cp -p "$CLI_JSON" "$CFG/cli.json"; chmod go-w "$CFG/cli.json"; fi
+    changed
+  fi
+else
+  say "WARN  repo cli.json not found at $CLI_JSON (skipped)"
+fi
+
 # auth.json: template, only when absent. Never touch an existing one (holds keys).
 # Lives in the DATA dir (~/.local/share/opencode), not the config dir.
 if [ -L "$DATA/auth.json" ] && [ ! -e "$DATA/auth.json" ]; then
@@ -305,7 +436,7 @@ else
     cp -p "$BOOTSTRAP_DIR/config/auth.json.template" "$DATA/auth.json"
   fi
   changed
-  note "REMEMBER: fill the 4 provider keys (README 'Secrets re-seed')"
+  note "REMEMBER: fill the provider key(s) (README 'Secrets re-seed')"
 fi
 # F4: mode 0600 always — template ships 0644 and a pre-existing copy may too.
 require_private "$DATA/auth.json"
@@ -332,6 +463,9 @@ if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" 
   && ! grep -q "OPENCODE_EXPERIMENTAL_" "$SHIM" 2>/dev/null \
   && grep -q "OPENCODE_DISABLE_LSP_DOWNLOAD=1" "$SHIM" 2>/dev/null; then
   note "unchanged $SHIM (pin wrapper already in place)"
+  # An older install under umask 002 left the shim 0775; converge the mode even
+  # on the unchanged fast path (the `! -L` guard above keeps this off a link).
+  [ "$DRY_RUN" -eq 0 ] && chmod 0755 "$SHIM"
 elif [ -e "$SHIM" ] || [ -L "$SHIM" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
     act "would replace existing shim with pin wrapper (non-clobbering backup kept)"
@@ -392,9 +526,10 @@ for f in 90-fcitx5.conf; do
     say "WARN  $dst is a dangling symlink -> $(readlink "$dst") (left as-is; templates never overwrite)"
   elif [ -e "$dst" ]; then
     note "unchanged $dst (exists; templates never overwrite)"
+    if [ "$DRY_RUN" -eq 0 ] && [ ! -L "$dst" ]; then chmod go-w "$dst"; fi
   else
     act "create $dst from template (names only; fill values, see README)"
-    [ "$DRY_RUN" -eq 1 ] || cp -p "$BOOTSTRAP_DIR/config/environment.d/$f" "$dst"
+    [ "$DRY_RUN" -eq 1 ] || { cp -p "$BOOTSTRAP_DIR/config/environment.d/$f" "$dst"; chmod go-w "$dst"; }
     changed
   fi
 done
@@ -579,14 +714,35 @@ apply_wiring() {
   if [ ! -s "$out" ]; then say "WARN  empty wiring output for $dst (left as-is)"; return 0; fi
   if [ "$mode" = "unchanged" ] || cmp -s "$out" "$dst"; then
     note "unchanged $dst (already wired to $GUARD)"
+    # A pre-existing 0664 hook config decides whether the guard runs; converge
+    # the mode even when the content already matches.
+    [ "$DRY_RUN" -eq 0 ] && { chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"; }
+    [ "$DRY_RUN" -eq 0 ] && normalize_link_target "$dst"
     return 0
   fi
   act "wire $dst -> $GUARD (${what:-rewritten})"
   if [ "$DRY_RUN" -eq 0 ]; then
-    backup_file "$dst"
+    # A dotfiles symlink is a supported layout; back up the content the cp
+    # below writes through, not just the link. Refuse an unsafe target: a
+    # foreign-owned or writable target must not receive the guard wiring.
+    if [ -L "$dst" ]; then
+      hook_target=$(readlink -f "$dst" 2>/dev/null || true)
+      if [ -z "$hook_target" ] || [ ! -f "$hook_target" ] ||
+        [ "$(stat -c '%u' "$hook_target" 2>/dev/null)" != "$(id -u)" ] ||
+        [ -n "$(find "$hook_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+        ! link_parents_safe "$hook_target"; then
+        say "WARN  $dst target is missing, foreign-owned, or group/world-writable; not writing through it"
+        return 0
+      fi
+      backup_file "$dst" L
+    else
+      backup_file "$dst"
+    fi
     # Plain cp (no -p): $out is a umask-0644 temp file; stamping its mode
     # would clobber the user's 0600 settings.json. Existing dst keeps its mode.
     cp "$out" "$dst"
+    chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
+    normalize_link_target "$dst"
     if [ "$mode" = "lossy" ]; then
       say "WARN  $dst: comments / trailing commas could NOT be preserved by this rewrite;"
       say "WARN  the original text is kept verbatim at $LAST_BACKUP — merge them back by hand"
@@ -624,9 +780,9 @@ with open(path, encoding="utf-8") as fh:
 def strip_jsonc(s):
     # Independent JSONC -> JSON reduction (// and /* */ comments, trailing
     # commas), used to cross-check every splice below.
-    out = []
-    i, n = 0, len(s)
-    in_str = False
+    # Pass 1: remove comments, replacing each with a space so tokens never
+    # merge (`tru/*x*/e` must not become `true`).
+    out, i, n, in_str = [], 0, len(s), False
     while i < n:
         c = s[i]
         if in_str:
@@ -635,41 +791,45 @@ def strip_jsonc(s):
                 out.append(s[i + 1])
                 i += 2
                 continue
-            if c == '"':
-                in_str = False
+            in_str = c != '"'
             i += 1
             continue
         if c == '"':
             in_str = True
-            out.append(c)
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and s[i + 1] == "/":
+        elif s.startswith("//", i):
             while i < n and s[i] != "\n":
                 i += 1
+            out.append(" ")
             continue
-        if c == "/" and i + 1 < n and s[i + 1] == "*":
-            i += 2
-            while i + 1 < n and not (s[i] == "*" and s[i + 1] == "/"):
-                i += 1
-            i += 2
+        elif s.startswith("/*", i):
+            e = s.find("*/", i + 2)
+            i = n if e < 0 else e + 2
+            out.append(" ")
             continue
-        if c == ",":
+        out.append(c)
+        i += 1
+    text = "".join(out)
+    # Pass 2: drop trailing commas now that comments are gone
+    # (`"a": 1, // note` followed by `}`).
+    out, i, n, in_str = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            in_str = c != '"'
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+        elif c == ",":
             j = i + 1
-            while j < n:
-                if s[j] in " \t\r\n":
-                    j += 1
-                elif s[j] == "/" and j + 1 < n and s[j + 1] == "/":
-                    while j < n and s[j] != "\n":
-                        j += 1
-                elif s[j] == "/" and j + 1 < n and s[j + 1] == "*":
-                    j += 2
-                    while j + 1 < n and not (s[j] == "*" and s[j + 1] == "/"):
-                        j += 1
-                    j += 2
-                else:
-                    break
-            if j < n and s[j] in "}]":
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
                 i += 1
                 continue
         out.append(c)
@@ -965,15 +1125,27 @@ say "     (5th surface = the opencode plugin port; wired by step 7)"
 say ""
 say "-- step 6: skills-extra (collision-checked; existing skills are never removed)"
 SK="$TARGET_HOME/.config/opencode/skills"
+if [ -L "$SK" ]; then
+  # A symlinked skills parent would make every copy land in the link target
+  # (often the checkout itself) and every child look installed. Refuse the
+  # whole skills step (6 and 6b), not only the directory loop: the vendored
+  # root files (LICENSE, PROVENANCE.md) would otherwise still be copied
+  # through the link.
+  say "WARN  $SK is a symlink; refusing to copy skills through it (replace it with a real directory)"
+  REFUSED=1
+else
 for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
   [ -d "$s" ] || continue
+  [ -f "$s/SKILL.md" ] || continue
   name=$(basename "$s")
   dst="$SK/$name"
   if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
     act "copy skill $name -> $dst"
     [ "$DRY_RUN" -eq 1 ] || cp -a "$s" "$dst"
     changed
-  elif diff -r -q "$s" "$dst" >/dev/null 2>&1; then
+  elif [ -L "$dst" ]; then
+    say "WARN  COLLISION: $dst is a symlink; install the bundle copy (never written through)"
+  elif diff -r -q --no-dereference "$s" "$dst" >/dev/null 2>&1; then
     note "unchanged skill $name"
   else
     say "WARN  COLLISION: $dst exists and differs from the bundle copy (never overwritten)"
@@ -991,6 +1163,53 @@ for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
   fi
 done
 
+# --- 6b. vendored skills (frozen) -------------------------------------------
+say ""
+say "-- step 6b: vendored skills (copy missing; existing copies are never overwritten)"
+VENDORED_SKILLS="$BOOTSTRAP_DIR/../skills"
+if [ -d "$VENDORED_SKILLS" ]; then
+  for s in "$VENDORED_SKILLS"/*/; do
+    [ -d "$s" ] || continue
+    name=$(basename "$s")
+    dst="$SK/$name"
+    if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+      act "copy vendored skill $name -> $dst"
+      [ "$DRY_RUN" -eq 1 ] || cp -a "$s" "$dst"
+      changed
+    elif [ -L "$dst" ]; then
+      # `diff -r` follows a directory symlink, so a link to a matching tree
+      # would look "unchanged" while verify.sh rejects it.
+      say "WARN  COLLISION: $dst is a symlink; install the frozen copy (never written through)"
+    elif diff -r -q --no-dereference "$s" "$dst" >/dev/null 2>&1; then
+      note "unchanged vendored skill $name"
+    else
+      say "WARN  COLLISION: $dst differs from vendored skills/$name (never overwritten; sync-upstream is the managed updater)"
+    fi
+  done
+  # The frozen set also carries LICENSE and PROVENANCE.md at its root.
+  for f in "$VENDORED_SKILLS"/*; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    dst="$SK/$name"
+    if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+      act "copy vendored $name -> $dst"
+      [ "$DRY_RUN" -eq 1 ] || cp -p "$f" "$dst"
+      changed
+    elif [ -L "$dst" ]; then
+      # `cmp` follows the link, so a link to a matching file would look
+      # "unchanged" while verify.sh rejects it.
+      say "WARN  COLLISION: $dst is a symlink; install the frozen copy (never written through)"
+    elif cmp -s "$f" "$dst"; then
+      note "unchanged vendored $name"
+    else
+      say "WARN  COLLISION: $dst differs from vendored skills/$name (never overwritten)"
+    fi
+  done
+else
+  say "WARN  vendored skills/ not found at $VENDORED_SKILLS (skipped)"
+fi
+fi
+
 # --- 7. plugin ---------------------------------------------------------------
 say ""
 say "-- step 7: plugin/"
@@ -999,20 +1218,138 @@ PL="$TARGET_HOME/.config/opencode/plugin"
 # @opencode/plugin resolve through the host's module shim). local-tools.ts is
 # the V2 port of the old dotfiles/opencode/tools trio; its drawio validator
 # lives at lib/drawio.py (script/install-local-tools.ts deploys it).
-for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
-  STAGE_SED=""   # shipped as-is; the plugins resolve ${HOME} at run time
-  install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
-done
-# mpskills-update.ts was deleted on 2026-10-16 (skills freeze: no fetch, no
-# re-vendor, no auto-commit). A stale seat copy would keep refreshing the
-# vendored skills behind the operator's back, so the install removes it.
-if [ -e "$PL/mpskills-update.ts" ] || [ -L "$PL/mpskills-update.ts" ]; then
-  # No timestamp backup: the mechanism is retired on purpose (the content stays in git history), and a
-  # dormant copy of a fetch/re-vendor/git-commit plugin on disk is exactly what the freeze removes.
-  if [ "$DRY_RUN" -eq 0 ]; then
-    rm -f "$PL/mpskills-update.ts"
+# A symlinked plugin directory would send every install_file into the link
+# target; install_file guards the leaf, not the parent.
+if [ -L "$PL" ]; then
+  say "WARN  $PL is a symlink; refusing to install plugins through it (replace it with a real directory)"
+  REFUSED=1
+  # The retired-updater removal below is skipped for a link (removing through
+  # it would delete from the link target). Warn instead of leaving the
+  # fetch/re-vendor/git-commit plugin silently reachable.
+  if [ -e "$PL/mpskills-update.ts" ] || [ -L "$PL/mpskills-update.ts" ]; then
+    say "WARN  retired updater mpskills-update.ts is still reachable through the plugin symlink; remove it manually"
   fi
-  act "retired $PL/mpskills-update.ts (skills are frozen; updates are an operator task)"
+else
+  for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
+    STAGE_SED=""   # shipped as-is; the plugins resolve ${HOME} at run time
+    install_file "$BOOTSTRAP_DIR/plugin/$f" "$PL/$f"
+  done
+  # `install_file` preserves an existing destination's mode and stamps the
+  # bundle's mode on create; a checkout with umask 002 or a pre-existing 0664
+  # would leave a group/world-writable security gate. Normalize the plugins.
+  if [ "$DRY_RUN" -eq 0 ]; then
+    for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
+      if [ -f "$PL/$f" ] && [ ! -L "$PL/$f" ]; then chmod go-w "$PL/$f"; fi
+    done
+  fi
+  # mpskills-update.ts was deleted on 2026-10-16 (skills freeze: no fetch, no
+  # re-vendor, no auto-commit). A stale seat copy would keep refreshing the
+  # vendored skills behind the operator's back, so the install removes it.
+  if [ -e "$PL/mpskills-update.ts" ] || [ -L "$PL/mpskills-update.ts" ]; then
+    # No timestamp backup: the mechanism is retired on purpose (the content stays in git history), and a
+    # dormant copy of a fetch/re-vendor/git-commit plugin on disk is exactly what the freeze removes.
+    if [ "$DRY_RUN" -eq 0 ]; then
+      rm -f "$PL/mpskills-update.ts"
+    fi
+    act "retired $PL/mpskills-update.ts (skills are frozen; updates are an operator task)"
+  fi
+fi
+
+# --- 7b. local-tools support files -------------------------------------------
+say ""
+say "-- step 7b: local-tools support files (drawio/marker/planning)"
+LOCAL_TOOLS="$BOOTSTRAP_DIR/../script/install-local-tools.ts"
+LOCAL_SRC="$BOOTSTRAP_DIR/../dotfiles/opencode"
+# A symlinked parent or leaf makes `-f`/`cmp` follow the link: a matching target
+# would report "unchanged" and never reach the guard below, while a later update
+# writes through the link. Check the links before the fast path. The manifest is
+# written by install-local-tools.ts with a direct writeFile (follows symlinks).
+LOCAL_LINK=""
+for path in \
+  "$CFG/skills" "$CFG/lib" \
+  "$CFG/skills/drawio" "$CFG/skills/marker" "$CFG/skills/planning-with-files" \
+  "$CFG/lib/drawio.py" \
+  "$CFG/skills/drawio/SKILL.md" "$CFG/skills/marker/SKILL.md" "$CFG/skills/planning-with-files/SKILL.md" \
+  "$CFG/local-tools-manifest.json"; do
+  if [ -L "$path" ]; then
+    LOCAL_LINK="$path"
+    break
+  fi
+done
+need_local=0
+if [ -n "$LOCAL_LINK" ]; then
+  need_local=1
+else
+  for rel in lib/drawio.py skills/drawio/SKILL.md skills/marker/SKILL.md skills/planning-with-files/SKILL.md; do
+    if [ ! -f "$CFG/$rel" ] || ! cmp -s "$LOCAL_SRC/$rel" "$CFG/$rel"; then
+      need_local=1
+      break
+    fi
+  done
+  # The manifest is generated at the destination (not in dotfiles/). A missing,
+  # unparseable, or incomplete manifest is not a baseline: install-local-tools.ts
+  # reads a broken manifest as `{}` and then refuses every differing file as
+  # "locally edited". Re-run the installer to rebuild it.
+  if [ ! -f "$CFG/local-tools-manifest.json" ]; then
+    need_local=1
+  elif ! command -v bun >/dev/null 2>&1; then
+    # Without bun the baseline cannot be validated; let the install branch
+    # report the missing dependency instead of claiming "unchanged".
+    need_local=1
+  elif ! MANIFEST="$CFG/local-tools-manifest.json" DEST="$CFG" bun -e '
+    const data = await Bun.file(process.env.MANIFEST).json().catch(() => undefined)
+    const required = ["lib/drawio.py", "skills/drawio/SKILL.md", "skills/marker/SKILL.md", "skills/planning-with-files/SKILL.md"]
+    if (!data || typeof data !== "object" || Array.isArray(data) || required.some((key) => typeof data[key] !== "string")) process.exit(1)
+    // A stale manifest (a crash between the file writes and the manifest write)
+    // would make the next bundle update look like a local edit. Validate the
+    // recorded hash against the destination; a mismatch re-runs the installer,
+    // which rewrites the manifest when the file is unchanged.
+    for (const key of required) {
+      const bytes = await Bun.file(process.env.DEST + "/" + key).bytes()
+      if (Bun.CryptoHasher.hash("sha256", bytes, "hex") !== data[key]) process.exit(1)
+    }
+  ' >/dev/null 2>&1; then
+    need_local=1
+  fi
+fi
+if [ "$need_local" -eq 0 ]; then
+  note "unchanged local-tools support files"
+elif [ -n "$LOCAL_LINK" ]; then
+  say "WARN  $LOCAL_LINK is a symlink; refusing to install local-tools support through it (replace it with a real file or directory)"
+  REFUSED=1
+elif [ -f "$LOCAL_TOOLS" ] && command -v bun >/dev/null 2>&1; then
+  # install-local-tools.ts writes through mkdir/rename, so a symlinked parent
+  # would place the files in the link target. The skills/lib steps above
+  # refuse the same links; refuse them here too.
+  if [ -n "$LOCAL_LINK" ]; then
+    say "WARN  $LOCAL_LINK is a symlink; refusing to install local-tools support through it (replace it with a real file or directory)"
+    REFUSED=1
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    act "install local-tools support files into $CFG (bun $LOCAL_TOOLS $CFG)"
+    changed
+  elif bun "$LOCAL_TOOLS" "$CFG" >/dev/null; then
+    act "install local-tools support files into $CFG"
+    changed
+  else
+    say "WARN  local-tools install failed; run: bun $LOCAL_TOOLS $CFG"
+  fi
+else
+  say "WARN  bun or script/install-local-tools.ts missing; local-tools support not installed"
+fi
+# The manifest is the local-edit baseline; a group/world-writable file lets
+# another local user rewrite it. Repair the mode even on the unchanged path
+# (install-local-tools.ts keeps an existing file's mode).
+if [ "$DRY_RUN" -eq 0 ] && [ -f "$CFG/local-tools-manifest.json" ] && [ ! -L "$CFG/local-tools-manifest.json" ]; then
+  chmod go-w "$CFG/local-tools-manifest.json"
+fi
+# install-local-tools.ts writes with the process umask; normalize its Python
+# helper and the copied skill/agent files. `find` does not follow symlinks, so
+# a dotfiles link's target is never chmod'ed.
+if [ "$DRY_RUN" -eq 0 ]; then
+  if [ -f "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib" ]; then chmod go-w "$CFG/lib/drawio.py"; fi
+  for d in "$CFG/skills" "$CFG/agent" "$CFG/command"; do
+    if [ -d "$d" ] && [ ! -L "$d" ]; then find "$d" -type f -exec chmod go-w {} +; fi
+  done
 fi
 
 # --- 8. mode cards + seat rules ----------------------------------------------
@@ -1024,6 +1361,11 @@ say "-- step 8: agent mode cards (auto/goal) + AGENTS.md; retire the instruction
 # opencode.jsonc's `agent.<id>.model`, which is operator state and never
 # overwritten.
 for d in command agent; do
+  if [ -L "$CFG/$d" ]; then
+    say "WARN  $CFG/$d is a symlink; refusing to install $d files through it (replace it with a real directory)"
+    REFUSED=1
+    continue
+  fi
   found=0
   for f in "$BOOTSTRAP_DIR/$d"/*; do
     [ -f "$f" ] || continue
@@ -1150,27 +1492,65 @@ if [ "$NO_BASHRC" -eq 1 ]; then
 elif [ ! -f "$BASHRC" ]; then
   say "SKIP  $BASHRC does not exist (not created wholesale)"
 else
+  # A supported dotfiles symlink is written through, but only when the target
+  # is a regular file owned by the user with safe ancestors; otherwise a
+  # root-run --home install could append to a shared/system file.
+  bashrc_ok=1
+  if [ -L "$BASHRC" ]; then
+    bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
+    if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
+      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$(id -u)" ] ||
+      [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+      ! link_parents_safe "$bashrc_target"; then
+      say "WARN  $BASHRC target is missing, foreign-owned, or group/world-writable; not writing through it"
+      REFUSED=1
+      bashrc_ok=0
+    fi
+  fi
+  if [ "$bashrc_ok" -eq 1 ]; then
   state=$(bashrc_sources check)
   if [ "$state" = "ok" ]; then
     note "unchanged $BASHRC (sources the stable seat copy $BLOCK_SRC)"
+    [ "$DRY_RUN" -eq 0 ] && normalize_link_target "$BASHRC"
   elif [ "$state" = "converge" ]; then
     act "converge egress wrapper source line(s) in $BASHRC to the stable seat path $BLOCK_SRC"
     if [ "$DRY_RUN" -eq 0 ]; then
-      backup_file "$BASHRC"
+      if [ -L "$BASHRC" ]; then backup_file "$BASHRC" L; else backup_file "$BASHRC"; fi
       bashrc_sources write
+      normalize_link_target "$BASHRC"
     fi
     changed
   else
     act "append marked source line for $BLOCK_SRC to $BASHRC"
     if [ "$DRY_RUN" -eq 0 ]; then
-      backup_file "$BASHRC"
+      if [ -L "$BASHRC" ]; then backup_file "$BASHRC" L; else backup_file "$BASHRC"; fi
       write_bashrc_block >>"$BASHRC"
+      normalize_link_target "$BASHRC"
     fi
     changed
+  fi
   fi
 fi
 
 say ""
+# --- final mode normalization ------------------------------------------------
+# The checkout may have been cloned under umask 002 and `mkdir -p` inherits it;
+# the seat's directories must not be group/world-writable. `find` does not
+# follow symlinks, so a dotfiles link's target is never chmod'ed. This runs
+# after every step so directories created by step 8 (agent/command) are covered.
+if [ "$DRY_RUN" -eq 0 ]; then
+  for d in "$TARGET_HOME" "$TARGET_HOME/.config" "$CFG" "$TARGET_HOME/.config/agent-hooks" "$TARGET_HOME/.config/environment.d" \
+    "$TARGET_HOME/.local" "$TARGET_HOME/.local/share" "$TARGET_HOME/.local/state" "$TARGET_HOME/.local/bin" \
+    "$DATA" "$DATA/log" "$TARGET_HOME/.cache" "$TARGET_HOME/.claude" "$TARGET_HOME/.zcode" \
+    "$TARGET_HOME/.grok" "$TARGET_HOME/.grok/hooks" "$TARGET_HOME/.kimi-code"; do
+    if [ -d "$d" ] && [ ! -L "$d" ]; then chmod go-w "$d" 2>/dev/null || say "WARN  could not normalize mode: $d"; fi
+  done
+  if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then find "$CFG" -type d -exec chmod go-w {} + 2>/dev/null || say "WARN  could not normalize some directories under $CFG"; fi
+  # .bashrc decides whether the egress wrapper is sourced; a regular file
+  # created under umask 002 must not stay group/world-writable. A symlink's
+  # target is handled by normalize_link_target in the .bashrc branch above.
+  if [ -f "$BASHRC" ] && [ ! -L "$BASHRC" ]; then chmod go-w "$BASHRC" 2>/dev/null || say "WARN  could not normalize mode: $BASHRC"; fi
+fi
 if [ "$DRY_RUN" -eq 1 ]; then
   say "== summary: $WOULD file change(s) would be made, $ACTIONS action(s) recorded =="
 else
@@ -1188,5 +1568,9 @@ elif [ "$CHANGES" -eq 0 ]; then
 else
   say "next: fill secrets (README 'Secrets re-seed'), re-login (environment.d),"
   say "      then run: bash $BOOTSTRAP_DIR/verify.sh --home $TARGET_HOME"
+fi
+if [ "$REFUSED" -eq 1 ]; then
+  say "== summary: install incomplete — a security-critical path was refused (see WARN above) =="
+  exit 1
 fi
 exit 0

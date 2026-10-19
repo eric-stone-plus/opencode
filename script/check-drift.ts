@@ -16,7 +16,7 @@
 // File modes and installer-managed extras outside the mappings below are out of
 // scope (verify.sh covers the executable bits it cares about).
 
-import { existsSync, lstatSync, statSync } from "node:fs"
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs"
 import { readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
@@ -130,15 +130,84 @@ async function guard(label: string, build: () => Promise<Row>): Promise<Row> {
 
 const rewriteHome = (text: string, home: string) => text.replaceAll("/home/eric", () => home)
 
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  // ENOTDIR means a parent is a regular file, not that the seat path is
+  // absent; guard() must report that broken layout.
+  return code === "ENOENT"
+}
+
 async function fileRow(root: string, home: string, mapping: Mapping, seed = false): Promise<Row> {
   const label = mapping.source
   const src = path.join(root, mapping.source)
   const dest = path.join(home, mapping.destination)
   if (!existsSync(src)) return { label, status: "missing", detail: "repo copy missing (check the mapping)" }
-  if (!existsSync(dest)) return { label, status: "missing", detail: `seat copy missing: ~/${mapping.destination}` }
-  if (lstatSync(dest).isSymbolicLink()) return { label, status: "drift", detail: `seat copy is a symlink: ~/${mapping.destination}` }
+  // lstat first: existsSync follows symlinks, so a dangling link would be
+  // reported as "missing" and the dangling/symlink rows below would never run.
+  let destInfo
+  try {
+    destInfo = lstatSync(dest)
+  } catch (error) {
+    // Only a genuinely absent seat file is "missing"; EACCES/ENOTDIR must
+    // reach guard() so the row carries the real filesystem error.
+    if (!isMissing(error)) throw error
+    return { label, status: "missing", detail: `seat copy missing: ~/${mapping.destination}` }
+  }
+  // A seed is local configuration and may be a dotfiles symlink (the same
+  // layout the operator allows for ~/.config); a managed file must be a real
+  // file in the seat. The install leaves a seed symlink in place on purpose.
+  let readPath = dest
+  if (destInfo.isSymbolicLink()) {
+    if (!seed) return { label, status: "drift", detail: `seat copy is a symlink: ~/${mapping.destination}` }
+    // A seed symlink is the dotfiles layout, but its target decides the TUI
+    // policy: require a user-owned regular file in a directory chain another
+    // local user cannot write (the same rule verify.sh applies to the cli.json
+    // target). Read the resolved target after validating it: re-reading `dest`
+    // would follow a swapped link and compare content that never passed.
+    let target: string
+    try {
+      target = realpathSync(dest)
+    } catch (error) {
+      // EACCES/ELOOP are not a dangling link; let guard() report the real error.
+      if (!isMissing(error)) throw error
+      return { label, status: "drift", detail: `seed symlink is dangling: ~/${mapping.destination}` }
+    }
+    const info = statSync(target)
+    // getuid is absent on Windows; ownership and POSIX mode bits are then not
+    // checkable, matching the rest of the repo, rather than reporting every
+    // seed as drift.
+    const uid = typeof process.getuid === "function" ? process.getuid() : undefined
+    const posix = uid !== undefined
+    const stop = realpathSync(home)
+    let parentsSafe = true
+    if (posix) {
+      for (let dir = path.dirname(target); ; dir = path.dirname(dir)) {
+        const dirInfo = statSync(dir)
+        // A foreign-owned 0755 ancestor can rename/replace the target even
+        // though it is not group/world-writable; root-owned system ancestors
+        // are the expected exception.
+        if ((dirInfo.mode & 0o022) !== 0 || (dirInfo.uid !== uid && dirInfo.uid !== 0)) {
+          parentsSafe = false
+          break
+        }
+        if (dir === stop || dir === path.dirname(dir)) break
+      }
+    }
+    if (
+      !info.isFile() ||
+      (uid !== undefined && info.uid !== uid) ||
+      (posix && ((info.mode & 0o022) !== 0 || !parentsSafe))
+    ) {
+      return {
+        label,
+        status: "drift",
+        detail: `seed symlink target is not a safe user-owned file: ${target}`,
+      }
+    }
+    readPath = target
+  }
   const expected = mapping.home ? rewriteHome(await Bun.file(src).text(), home) : await Bun.file(src).text()
-  if (expected !== (await Bun.file(dest).text())) {
+  if (expected !== (await Bun.file(readPath).text())) {
     return seed
       ? { label, status: "seed", detail: "differs (seed keeps local tuning)" }
       : { label, status: "drift", detail: `~/${mapping.destination} differs` }

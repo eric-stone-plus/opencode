@@ -11,6 +11,36 @@
     "session.line.down": "ctrl+alt+e,ctrl+shift+down"
   },
   "session": {
-    "thinking": "show"
+    "thinking": "show",
+    "verbosity": "medium",
+    "grouping": "auto",
+    "scrollbar": false,
+    "new_location": "launch",
+    "sidebar": "auto",
+    "tps": true,
+    "image_preview": false,
+    "markdown": "rendered"
+  },
+  "diffs": {
+    "view": "auto",
+    "wrap": "word",
+    "single": false
+  },
+  "attention": {
+    "volume": 0
+  },
+  "animations": true,
+  "theme": {
+    "mode": "system"
+  },
+  "scroll": {
+    "acceleration": true
+  },
+  "prompt": {
+    "paste": "compact",
+    "image_preview": false
+  },
+  "terminal": {
+    "copy": "select"
   }
 }

@@ -114,3 +114,61 @@ Credential material lives in `$HOME` by operator decision (2026-10-06 — "don't
 - Working path = the `codex-update` bash function in `~/.bashrc` (`codex-update [version]`): fetch `install.sh` from `raw.githubusercontent.com/openai/codex/main/scripts/install/install.sh` (byte-identical to the chatgpt.com copy, sha256 `150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6`, verified), run it with the causeway 18880 proxy exported (3.2 MB/s) plus `CODEX_NON_INTERACTIVE=1 CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=0`, so the installer only touches GitHub and still enforces its own `codex-package_SHA256SUMS` check. `codex-update-prune` runs afterwards and keeps only `current` + the previous release — the installer never cleans up, and 7 releases had piled up to 2.3 GB.
 - `check_for_update_on_startup = false` in `~/.codex/config.toml` suppresses the misleading popup (`codex doctor` no longer lists an update note). Re-enable only if direct egress to chatgpt.com/releases.openai.com starts working again.
 - General lesson: a HEAD/200 or an API response proves nothing about bulk-download throughput through the GFW. Before trusting a "reachable" verdict for a multi-hundred-MB fetch, probe with a ranged GET (`curl -r 0-8388607 -w '%{speed_download}'`) and compare direct vs. proxy.
+
+## Reasoning discipline
+
+- Decide from the evidence you have, then act. Do not restate a settled
+  trade-off or re-derive the same conclusion: a repeated internal loop is a
+  process bug, not thoroughness.
+- Keep user-visible narration short: what changed, the evidence, the next
+  step. Long deliberation belongs in the plan file, not the transcript.
+- When a finding is understood, write the fix; when a check fails, fix it.
+  Never narrate the same options twice.
+
+## Code review routing (mandatory)
+
+Two modes, and the trigger decides which one runs.
+
+- **Normal review — automatic, no prompt.** The trigger is the code change,
+  not the mode. In **Goal** mode, after any code change — an `edit`/`write`/
+  `patch` to a code file, or a shell command that writes code — run the full
+  review before declaring the change done: the normal path
+  (`code-review-playbook`: deterministic checks + quick Standards/Spec + the
+  `code-audit` OCR gate + a fail-closed verdict) for small, local, low-risk
+  changes; the deep path (next bullet) automatically when its criteria apply.
+  In **Auto** mode, the `open-code-review` plugin's automatic OCR security gate
+  is the code-change check: it recognizes the same edits and shell writes and
+  injects only high/critical findings; do not run the full playbook ceremony
+  unless the user asks or the gate reports a finding. Auto stays fast; Goal
+  stays reliable. The normal path does not run the deep protocol; the deep
+  bullet decides when that runs.
+- **Scope — code changes only.** This routing is for code. For a non-code task
+  (prose, docs, data, research, ops, a pure question), do not load
+  `code-review-playbook`, `code-audit`, or `deep-audit`; answer directly. A
+  user-invoked "review" of a non-code artifact uses that artifact's own review
+  method, not this code-review path. Investment, research, and ops work keep
+  the discussion skills (`grilling`, `wayfinder`, `teach`, `research`,
+  `domain-modeling`); only the code-review/audit path is skipped.
+- **Deep review — automatic in Goal, user-invoked in Auto.** In **Goal** mode,
+  after any code change, automatically choose normal vs deep: choose the deep
+  review when the change touches security-sensitive surfaces (auth, secrets,
+  crypto, permissions, network, shell/command execution, file access, SQL,
+  deserialization, migrations), public APIs/contracts, data models or
+  persistence, concurrency, dependency manifests/lockfiles, or CI/release
+  config; when it changes more than 200 lines or more than 10 files; or when the
+  normal review finds critical/high or cannot verify. Record the choice and the
+  reason in the final report; when in doubt, choose deep. No user phrase is
+  needed. The user phrases "审查"/"review"/"做好代码审查" still force deep
+  review; "深度审计"/"deep-audit" forces deep audit (the full protocol when a
+  sandbox is available). In **Auto** mode, run the deep path only on explicit
+  user request; otherwise recommend switching to Goal.
+- **Do not substitute.** Never answer a user-invoked "审查"/"review" with the
+  normal playbook. In Goal mode, the deep path is auto-selected by the criteria
+  above; in Auto mode, do not run it automatically — report BLOCKED and
+  recommend Goal/deep-audit when the normal gate finds critical/high.
+- Every verdict is one of APPROVE / APPROVE-WITH-NITS / NEEDS-FIXES / BLOCKED /
+  INCOMPLETE, with evidence and the exact commands run. If a required check
+  cannot run, say so and use INCOMPLETE; never silently skip. Never claim "no
+  vulnerabilities".
+- A full-repo audit is a separate request; do not run the Cloudflare
+  security-audit protocol on every code review.

@@ -7,7 +7,7 @@ Source of truth on machine A:
 
 | Item | Path |
 | --- | --- |
-| fork repo (binary source) | `/home/eric/Documents/Development/private/agent-design/projects/opencode` (branch `main`) |
+| fork repo (binary source) | `<checkout>` — machine A keeps it at `/home/eric/Documents/Development/private/agent-design/projects/opencode` (branch `main`); the clone path is arbitrary |
 | live config | `~/.config/opencode/opencode.jsonc` |
 | canonical DB | `~/.local/share/opencode/opencode-main.db` |
 
@@ -32,12 +32,14 @@ is compiled in at build time (`OPENCODE_CHANNEL` define,
 | `python3` | sqlite integrity checks, JSON hook wiring, `_oc_tty_flush_input` | any |
 | `curl` | egress probes in the bashrc wrapper | any |
 | `sqlite3` | optional, direct DB inspection (`opencode debug paths db` prints the path) | any |
+| `ocr` | automatic security gate (`open-code-review` plugin) and manual `code-audit` | **v1.13.1+** — `npm install -g @alibaba-group/open-code-review` |
 
 ### Step 1 — clone repos
 
 ```sh
 # the fork (binary source) — clone onto machine B anywhere
-git clone <this-repo> ~/work/agent-design/projects/opencode
+mkdir -p ~/work/agent-design/projects
+git clone https://github.com/eric-stone-plus/opencode.git ~/work/agent-design/projects/opencode
 cd ~/work/agent-design/projects/opencode
 git checkout main                       # REQUIRED: see channel note below
 ```
@@ -53,8 +55,7 @@ from `main`, or set `OPENCODE_CHANNEL=main`.
 ```sh
 cd ~/work/agent-design/projects/opencode
 bun install --frozen-lockfile           # applies the 14 patchedDependencies
-cd packages/cli
-bun run script/build.ts --single --skip-install
+(cd packages/cli && bun run script/build.ts --single --skip-install)
 # ^ embeds the committed model catalog (packages/core/src/models-dev/snapshot.txt);
 #   no registry fetch at build. Refresh it with
 #   `bun run packages/core/script/update-models-snapshot.ts` (https://models.opencode.ai).
@@ -81,7 +82,9 @@ architecture (`installGoalConfig`, rm+copyFile): `AGENTS.md` plus both cards
 `agent/auto.md` and `agent/goal.md`. All three are **managed** — they converge on
 every sync — and the retired `autonomy.md` / `AGENTS.goal.md` are deleted from
 the seat. It does NOT touch `plugin/`, `opencode.jsonc`, or `command/*.md`.
-Run it if you want its pieces.
+`sync-upstream` is the operator's fork updater and can push; do not run it on a
+fresh clone. The bundle installer (Step 3) installs the same seat files without
+touching git.
 
 ### Step 3 — this bundle's installer
 
@@ -89,8 +92,16 @@ Run it if you want its pieces.
 cd ~/work/agent-design/projects/opencode   # wherever bootstrap/ lives
 bash bootstrap/install.sh --dry-run        # read the plan first
 bash bootstrap/install.sh                  # apply
-# test home (every home-specific path is derived from --home):
+# test home (every home-specific path is derived from --home; the target must
+# exist, so create it first):
+mkdir -p /tmp/opencode/fakehome
 bash bootstrap/install.sh --home /tmp/opencode/fakehome
+# local tools support (drawio/marker/planning): install.sh step 7b installs
+# these; this is the manual/idempotent equivalent (e.g., after editing the
+# dotfiles/opencode/ sources).
+bun run script/install-local-tools.ts
+# scratch home: pass the target config dir explicitly
+bun run script/install-local-tools.ts /tmp/opencode/fakehome/.config/opencode
 ```
 
 Flags: `--dry-run`, `--home <path>`, `--user <name>` (legacy, banner only), `--link` (file-symlink
@@ -100,6 +111,9 @@ Flags: `--dry-run`, `--home <path>`, `--user <name>` (legacy, banner only), `--l
 pruned by mtime; only that exact installer-made name is ever pruned, a
 hand-made `.bashrc.bak.mine` is never touched); files that must never be
 overwritten are listed in §5.
+
+The installer also seeds `~/.config/opencode/cli.json` from the repo root when
+the seat has none (TUI keybinds; existing tuning is never overwritten).
 
 ### Step 4 — secret entry (the only manual step)
 
@@ -112,7 +126,42 @@ ls -l ~/.local/share/opencode/auth.json   # mode 0600
 # mode 0600 is converged on every run for auth.json, ~/.config/opencode/env
 # and the secret-bearing environment.d drop-ins (content is never touched):
 ls -l ~/.config/opencode/env
+
+# V2 keeps credentials in the DB; auth.json is only the seed. Import it once
+# from the operator's terminal — never from an agent shell, because this reads
+# the credential seed (AGENTS.md "Key hygiene"). auth import takes the array
+# shape, not the auth.json object shape; the env -u flags keep a stray session
+# token from blocking the --standalone import.
+SRC="$HOME/.local/share/opencode/auth.json" bun -e 'const a=JSON.parse(require("fs").readFileSync(process.env.SRC,"utf8")); const k=a.deepseek?.key; if(!k || /^REPLACE_ME/.test(k)) process.exit(1); process.stdout.write(JSON.stringify([{id:"crd_deepseek_seed",integrationID:"deepseek",label:"API key",active:true,value:{type:"key",key:k}}]))' | env -u OPENCODE_SESSION_TOKEN -u OPENCODE_SESSION_ID opencode auth import --standalone
+# verify the integration is in the DB (names only, no key values):
+env -u OPENCODE_SESSION_TOKEN -u OPENCODE_SESSION_ID opencode auth list --standalone --format json | grep -q deepseek && echo "deepseek credential present"
 ```
+
+A fresh V2 database skips data migrations (`packages/core/src/database/migration.ts:29-42`),
+so filling `auth.json` alone is not enough: without the `auth import` step
+`opencode auth list` returns `[]` and the seat has no usable key. The `bun -e`
+conversion is the same one `script/sandbox.sh` uses; it prints the key only into
+the pipe, never to the terminal.
+
+### Step 4b — OpenCodeReview (automatic security gate + manual audit)
+
+The seat ships the V2 `open-code-review` plugin and the `code-audit` skill, but
+the `ocr` CLI and its provider key are machine-local (never vendored):
+
+```sh
+npm install -g @alibaba-group/open-code-review   # v1.13.1+
+ocr config provider                              # choose deepseek, paste the key
+ocr config model                                 # deepseek-flash
+ocr llm test                                     # connectivity check
+```
+
+`install.sh` installs `plugin/open-code-review.ts` (V2 `{id, setup}`) and every
+skill under `bootstrap/skills-extra/` (`code-review-playbook`, `deep-audit`,
+`code-audit`, `review-delegate`, `longrun-stability-audit`). `verify.sh` fails
+if the plugin is missing, is a V1 `server` export, is a symlink, or if `ocr`
+is not on PATH; it also warns when `ocr llm test` cannot reach the configured
+provider/model (rerun it after `ocr config provider` / `ocr config model`).
+Disable the automatic gate with `OPENCODE_SECURITY_GATE=0`.
 
 ### Step 5 — re-login, then verify
 
@@ -137,6 +186,7 @@ a *function*).
 | --- | --- | --- |
 | 1 | dirs under `~/.config/opencode`, `~/.config/environment.d`, `~/.config/agent-hooks`, `~/.local/bin` | create if missing |
 | 2 | `~/.config/opencode/opencode.jsonc` | copy (verbatim) or `--link` symlink; timestamp-backup on overwrite. A plain install over an earlier `--link` replaces the link itself (backed up as a link) — it never writes through a symlink into the checkout; the same holds for every managed file |
+| 2 | `~/.config/opencode/cli.json` | **only if absent**, from the repo-root `cli.json` (TUI keybinds); never overwrites tuning |
 | 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; mode converged 0600 (content never touched afterwards) |
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
@@ -152,7 +202,8 @@ a *function*).
 | 9 | `~/.bashrc` + `~/.config/opencode/shell/bashrc-opencode-block.sh` | the wrapper is copied to the seat config tree and sourced from that stable path (older `source`/`.` lines for it are rewritten in place, never duplicated; commented-out lines are left alone); marked, idempotent block inside an interactive guard; `--no-bashrc` skips |
 
 Explicit non-goals (owned by `script/sync-upstream.ts` or by hand):
-`tui.json`, the vendored `skills/` set, the real binary.
+`tui.json`, the real binary. The vendored `skills/` set is installed frozen by
+`install.sh` step 6b; `sync-upstream` is the managed updater for it.
 (`AGENTS.md` and both mode cards are installed by both: same content, same
 replace-in-place policy.)
 
@@ -489,11 +540,13 @@ bootstrap/
 * `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}`,
   `skills-extra/`, and the local-tools support files
   (`dotfiles/opencode/lib/drawio.py` + three skill files, deployed by
-  `script/install-local-tools.ts`) are the portable source of truth: install.sh copies them
-  bundle → `~/.config/agent-hooks/`, `~/.config/opencode/plugin/` and
-  `~/.config/opencode/skills/`. Edits land in the bundle first and are
-  redeployed to the seat copies, which must stay byte-identical afterwards
-  (verify.sh WARNs when the installed copies drift from the bundle).
+  `script/install-local-tools.ts`) are the portable source of truth: install.sh copies
+  the agent-hooks, plugins, and skills-extra bundle → `~/.config/agent-hooks/`,
+  `~/.config/opencode/plugin/`, and `~/.config/opencode/skills/`;
+  `script/install-local-tools.ts` deploys the local-tools support files. Edits
+  land in the bundle first and are redeployed to the seat copies, which must
+  stay byte-identical afterwards (verify.sh WARNs when the installed copies
+  drift from the bundle).
   `autonomy.md` and `AGENTS.goal.md` are byte-copies of
   `dotfiles/opencode/{autonomy.md,AGENTS.goal.md}`.
 * No secret values were copied into this bundle (verified: auth.json carries
