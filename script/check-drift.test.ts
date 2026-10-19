@@ -83,6 +83,19 @@ describe("collectDrift", () => {
     expect(summarize(rows)).toEqual({ ok: cleanTotals.ok - 1, drift: 0, missing: 0, seed: 1 })
   })
 
+  test("a group/world-writable regular seed is drift", async () => {
+    const { root, home } = await mirror()
+    const seed = path.join(home, ".config/opencode/cli.json")
+    await chmod(seed, 0o666)
+    const rows = await collectDrift(root, home)
+    expect(row(rows, "cli.json")).toEqual({
+      label: "cli.json",
+      status: "drift",
+      detail: "seed file is not a safe user-owned file: ~/.config/opencode/cli.json",
+    })
+    expect(summarize(rows).drift).toBe(1)
+  })
+
   test("a missing seat file is missing, not drift", async () => {
     const { root, home } = await mirror()
     await rm(path.join(home, ".config/agent-hooks/run-cases.ts"))

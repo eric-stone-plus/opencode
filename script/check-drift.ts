@@ -14,9 +14,11 @@
 // files (ABSENT_FILES) must stay absent on both sides.
 //
 // File modes and installer-managed extras outside the mappings below are out of
-// scope (verify.sh covers the executable bits it cares about).
+// scope (verify.sh covers the executable bits it cares about). The one exception
+// is the cli.json seed: its owner/mode is checked (regular or symlink) because
+// the effective config file decides the TUI policy, matching verify.sh.
 
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs"
+import { existsSync, lstatSync, realpathSync, statSync, type Stats } from "node:fs"
 import { readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
@@ -137,6 +139,58 @@ function isMissing(error: unknown): boolean {
   return code === "ENOENT"
 }
 
+type SeedResolution = { readPath: string } | { detail: string }
+
+// Validate the effective config a seed resolves to. A symlink is the dotfiles
+// layout, but its target decides the TUI policy: require a regular, user-owned
+// file whose ancestors another local user cannot write. A regular seed file
+// gets the same owner/mode gate. The caller turns a detail into a drift row.
+function resolveSeedTarget(dest: string, destInfo: Stats, destination: string, home: string): SeedResolution {
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  const posix = uid !== undefined
+  if (!destInfo.isSymbolicLink()) {
+    if (
+      !destInfo.isFile() ||
+      (uid !== undefined && (destInfo.uid !== uid || (destInfo.mode & 0o022) !== 0))
+    ) {
+      return { detail: `seed file is not a safe user-owned file: ~/${destination}` }
+    }
+    return { readPath: dest }
+  }
+  let target: string
+  try {
+    target = realpathSync(dest)
+  } catch (error) {
+    // EACCES/ELOOP are not a dangling link; let guard() report the real error.
+    if (!isMissing(error)) throw error
+    return { detail: `seed symlink is dangling: ~/${destination}` }
+  }
+  const info = statSync(target)
+  const stop = realpathSync(home)
+  let parentsSafe = true
+  if (posix) {
+    for (let dir = path.dirname(target); ; dir = path.dirname(dir)) {
+      const dirInfo = statSync(dir)
+      // A foreign-owned 0755 ancestor can rename/replace the target even
+      // though it is not group/world-writable; root-owned system ancestors
+      // are the expected exception.
+      if ((dirInfo.mode & 0o022) !== 0 || (dirInfo.uid !== uid && dirInfo.uid !== 0)) {
+        parentsSafe = false
+        break
+      }
+      if (dir === stop || dir === path.dirname(dir)) break
+    }
+  }
+  if (
+    !info.isFile() ||
+    (uid !== undefined && info.uid !== uid) ||
+    (posix && ((info.mode & 0o022) !== 0 || !parentsSafe))
+  ) {
+    return { detail: `seed symlink target is not a safe user-owned file: ${target}` }
+  }
+  return { readPath: target }
+}
+
 async function fileRow(root: string, home: string, mapping: Mapping, seed = false): Promise<Row> {
   const label = mapping.source
   const src = path.join(root, mapping.source)
@@ -144,7 +198,7 @@ async function fileRow(root: string, home: string, mapping: Mapping, seed = fals
   if (!existsSync(src)) return { label, status: "missing", detail: "repo copy missing (check the mapping)" }
   // lstat first: existsSync follows symlinks, so a dangling link would be
   // reported as "missing" and the dangling/symlink rows below would never run.
-  let destInfo
+  let destInfo: Stats
   try {
     destInfo = lstatSync(dest)
   } catch (error) {
@@ -157,54 +211,13 @@ async function fileRow(root: string, home: string, mapping: Mapping, seed = fals
   // layout the operator allows for ~/.config); a managed file must be a real
   // file in the seat. The install leaves a seed symlink in place on purpose.
   let readPath = dest
-  if (destInfo.isSymbolicLink()) {
-    if (!seed) return { label, status: "drift", detail: `seat copy is a symlink: ~/${mapping.destination}` }
-    // A seed symlink is the dotfiles layout, but its target decides the TUI
-    // policy: require a user-owned regular file in a directory chain another
-    // local user cannot write (the same rule verify.sh applies to the cli.json
-    // target). Read the resolved target after validating it: re-reading `dest`
-    // would follow a swapped link and compare content that never passed.
-    let target: string
-    try {
-      target = realpathSync(dest)
-    } catch (error) {
-      // EACCES/ELOOP are not a dangling link; let guard() report the real error.
-      if (!isMissing(error)) throw error
-      return { label, status: "drift", detail: `seed symlink is dangling: ~/${mapping.destination}` }
-    }
-    const info = statSync(target)
-    // getuid is absent on Windows; ownership and POSIX mode bits are then not
-    // checkable, matching the rest of the repo, rather than reporting every
-    // seed as drift.
-    const uid = typeof process.getuid === "function" ? process.getuid() : undefined
-    const posix = uid !== undefined
-    const stop = realpathSync(home)
-    let parentsSafe = true
-    if (posix) {
-      for (let dir = path.dirname(target); ; dir = path.dirname(dir)) {
-        const dirInfo = statSync(dir)
-        // A foreign-owned 0755 ancestor can rename/replace the target even
-        // though it is not group/world-writable; root-owned system ancestors
-        // are the expected exception.
-        if ((dirInfo.mode & 0o022) !== 0 || (dirInfo.uid !== uid && dirInfo.uid !== 0)) {
-          parentsSafe = false
-          break
-        }
-        if (dir === stop || dir === path.dirname(dir)) break
-      }
-    }
-    if (
-      !info.isFile() ||
-      (uid !== undefined && info.uid !== uid) ||
-      (posix && ((info.mode & 0o022) !== 0 || !parentsSafe))
-    ) {
-      return {
-        label,
-        status: "drift",
-        detail: `seed symlink target is not a safe user-owned file: ${target}`,
-      }
-    }
-    readPath = target
+  if (destInfo.isSymbolicLink() && !seed) {
+    return { label, status: "drift", detail: `seat copy is a symlink: ~/${mapping.destination}` }
+  }
+  if (seed) {
+    const resolved = resolveSeedTarget(dest, destInfo, mapping.destination, home)
+    if ("detail" in resolved) return { label, status: "drift", detail: resolved.detail }
+    readPath = resolved.readPath
   }
   const expected = mapping.home ? rewriteHome(await Bun.file(src).text(), home) : await Bun.file(src).text()
   if (expected !== (await Bun.file(readPath).text())) {

@@ -30,7 +30,6 @@ while [ "$TARGET_HOME" != "/" ] && [ "${TARGET_HOME%/}" != "$TARGET_HOME" ]; do
 done
 
 BOOTSTRAP_DIR=$(cd "$(dirname "$0")" && pwd -P)
-REPO_ROOT=$(cd "$BOOTSTRAP_DIR/.." && pwd -P)
 # Every ancestor up to `stop` must not be group/world-writable: a writable
 # parent lets another local user replace an otherwise safe target. (The target
 # file's ownership is checked separately; ancestors above the home are often
@@ -54,6 +53,18 @@ parents_safe() {
     [ "$dir" = "/" ] && return 0
     dir=$(dirname "$dir")
   done
+}
+# A supported file symlink (install.sh --link, dotfiles) must resolve to a
+# regular file owned by the audit user, not group/world-writable, with a safe
+# ancestor chain. The target may live outside this checkout (/srv/dotfiles);
+# the caller still compares the resolved content against the bundle.
+link_ok() {
+  local target
+  target=$(readlink -f "$1" 2>/dev/null || true)
+  [ -n "$target" ] && [ -f "$target" ] || return 1
+  [ "$(stat -c '%u' "$target" 2>/dev/null)" = "$(id -u)" ] || return 1
+  [ -z "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
+  parents_safe "$(dirname "$target")" "$TARGET_HOME_R"
 }
 # Canonicalized homes for every comparison below: a hardcoded path from the
 # install machine (machine A's /home/eric) must never satisfy a scratch --home.
@@ -161,7 +172,7 @@ run_oc() {
   # Pin every XDG root: `debug paths db` reads XDG_DATA_HOME, and an auditor
   # shell that exports a different root would probe a different store. Clear
   # the config overrides for the same reason.
-  env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+  env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_CLI_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
     HOME="$TARGET_HOME" \
     XDG_DATA_HOME="$TARGET_HOME/.local/share" \
     XDG_CONFIG_HOME="$TARGET_HOME/.config" \
@@ -172,8 +183,14 @@ run_oc() {
     "$OC_BIN" "$@"
 }
 SHIM="$TARGET_HOME/.local/bin/opencode"
-if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
-  pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
+if [ -f "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" "$SHIM" 2>/dev/null; then
+  # A file symlink is a supported layout; validate its target and still check
+  # the content through the link (grep/cmp follow it).
+  if [ -L "$SHIM" ] && ! link_ok "$SHIM"; then
+    fail "shim is a symlink to an unsafe target: $SHIM -> $(readlink "$SHIM" 2>/dev/null)"
+  else
+    pass "shim pin wrapper present: $SHIM (exports OPENCODE_DB=opencode-main.db)"
+  fi
   if grep -q "OPENCODE_DISABLE_MODELS_FETCH=1" "$SHIM" 2>/dev/null; then
     pass "shim disables the implicit models.dev fetch (OPENCODE_DISABLE_MODELS_FETCH=1)"
   else
@@ -345,7 +362,7 @@ elif [ "$DB_PATH_OK" -ne 1 ]; then
   # `debug paths db` result, refuse to touch it.
   fail "DB path not verified (V1 binary or non-canonical path); refusing auth list --standalone"
 elif [ "$STORE_SAFE" -ne 1 ]; then
-  warn "DB credential check skipped: a store path is a symlink (see the FAIL above)"
+  warn "DB credential check skipped: a store path failed the ownership/mode/symlink check (see the FAIL above)"
 elif ! command -v python3 >/dev/null 2>&1; then
   warn "python3 missing; cannot parse the DB credential list"
 else
@@ -353,7 +370,7 @@ else
   auth_err=$(mktemp) || auth_err=""
   if [ -n "$auth_json" ] && [ -n "$auth_err" ] &&
     timeout 30 env -u OPENCODE_SESSION_TOKEN -u OPENCODE_SESSION_ID \
-      -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+      -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_CLI_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
       HOME="$TARGET_HOME" \
       XDG_DATA_HOME="$TARGET_HOME/.local/share" \
       XDG_CONFIG_HOME="$TARGET_HOME/.config" \
@@ -710,6 +727,11 @@ if [ -f "$CFG/cli.json" ]; then
     warn "cli.json schema check skipped: packages/cli is not present in this checkout"
   elif ! command -v bun >/dev/null 2>&1; then
     warn "cli.json schema check skipped: bun is not on PATH"
+  elif [ ! -f "$cli_check_dir/src/config/schema.ts" ]; then
+    # A missing/renamed schema would also surface as "Cannot find module" and
+    # be downgraded to the dependency warning below; fail specifically instead
+    # of blessing a cli.json the loader would discard.
+    fail "cli.json schema check cannot run: $cli_check_dir/src/config/schema.ts is missing (incomplete checkout)"
   elif cli_check_error=$( cd "$cli_check_dir" && bun -e '
 import { parse } from "jsonc-parser"
 import { Info } from "./src/config/schema.ts"
@@ -752,25 +774,21 @@ fi
 # The config root and the other written directories are checked too: a
 # symlinked root makes every child check follow the link, and install.sh
 # refuses to write through it.
-for d in "$TARGET_HOME_R/.config" "$CFG" "$CFG/shell" "$TARGET_HOME_R/.config/environment.d" "$TARGET_HOME_R/.config/agent-hooks" \
-  "$TARGET_HOME_R/.local" "$TARGET_HOME_R/.local/share" "$TARGET_HOME_R/.local/state" \
-  "$TARGET_HOME_R/.local/bin" "$DATA" "$TARGET_HOME_R/.cache" "$DATA/log" \
+# The store/config roots are already reported by the early STORE_SAFE loop;
+# report each path once here. `.cache` is not a store path (see that loop) and
+# install.sh does not refuse it, so a symlinked cache is not a FAIL.
+for d in "$CFG/shell" "$TARGET_HOME_R/.config/environment.d" "$TARGET_HOME_R/.config/agent-hooks" \
+  "$TARGET_HOME_R/.local/bin" \
   "$TARGET_HOME_R/.claude" "$TARGET_HOME_R/.zcode" "$TARGET_HOME_R/.grok" "$TARGET_HOME_R/.grok/hooks" \
   "$TARGET_HOME_R/.kimi-code"; do
   if [ -L "$d" ]; then
     fail "$d is a symlink — replace it with a real directory"
   fi
 done
-# install.sh refuses these ancestors; a symlinked parent redirects the DB and
-# auth.json even when the final component is a real directory.
-for f in "$DB" "$LOG"; do
-  if [ -L "$f" ]; then
-    fail "$f is a symlink — replace it with a regular file"
-  fi
-done
 # The directory mode matters even when the files are correct: a
 # group/world-writable directory lets another local user replace a plugin.
-for d in "$TARGET_HOME_R" "$TARGET_HOME_R/.config" "$CFG" "$CFG/plugin" "$CFG/skills" "$CFG/agent" "$CFG/command" "$CFG/shell" "$CFG/lib" \
+# Subdirectories of $CFG are covered by the nested find below.
+for d in "$TARGET_HOME_R" "$TARGET_HOME_R/.config" "$CFG" \
   "$TARGET_HOME_R/.config/environment.d" "$TARGET_HOME_R/.config/agent-hooks" \
   "$TARGET_HOME_R/.local" "$TARGET_HOME_R/.local/share" "$TARGET_HOME_R/.local/state" \
   "$TARGET_HOME_R/.local/bin" "$DATA" "$DATA/log" "$TARGET_HOME_R/.cache" \
@@ -792,46 +810,28 @@ if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then
     fail "$nested is group/world-writable or not owned by the current user"
   done < <(find "$CFG" -mindepth 1 -type d \( -perm /022 -o ! -user "$(id -u)" \) 2>/dev/null)
 fi
-# Executed/sourced files and files that decide which plugins load get the same
-# owner/mode gate even when their content matches the bundle. `install.sh --link`
-# and the documented live-edit layout may install a file symlink into this
-# checkout; allow that when the resolved target is user-owned and not
-# group/world-writable.
-link_ok() {
-  local target
-  target=$(readlink -f "$1" 2>/dev/null || true)
-  [ -n "$target" ] && [ -f "$target" ] || return 1
-  [ "$(stat -c '%u' "$target" 2>/dev/null)" = "$(id -u)" ] || return 1
-  [ -z "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
-  case "$target" in
-    "$REPO_ROOT"/*) : ;;
-    *) return 1 ;;
-  esac
-  parents_safe "$(dirname "$target")" "$REPO_ROOT"
-}
-for f in "$TARGET_HOME_R/.local/bin/opencode" "$TARGET_HOME_R/.config/agent-hooks/block-unsafe-kill.sh" \
-  "$CFG/shell/bashrc-opencode-block.sh" "$CFG/lib/drawio.py" "$CFG/opencode.jsonc" "$CFG/AGENTS.md"; do
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-    fail "$f missing"
-  elif [ -L "$f" ]; then
-    # The README's SYMLINK RULE allows individual file symlinks into a git
-    # checkout (live-edit); accept one when the resolved target is user-owned,
-    # not group/world-writable, and its ancestors are safe.
-    if link_ok "$f"; then
-      pass "$f is a symlink into the checkout (target and parents owned, not group/world-writable)"
-    else
-      fail "$f is a symlink — replace it with a real file"
-    fi
-  elif [ ! -f "$f" ]; then
-    # A directory/FIFO at an executed/sourced path passes -e and the mode
-    # check, and the later [ -f ] content comparison is silently skipped.
-    fail "$f is not a regular file"
-  elif [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
-    fail "$f is not owned by the current user"
-  elif [ -n "$(find "$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
-    fail "$f is group/world-writable"
+# Only opencode.jsonc may be a file symlink: `install.sh --link` creates
+# exactly that link, and a dotfiles target outside the checkout is supported.
+# The other executed/sourced paths are checked by their own sections, which
+# follow or reject a link; a generic PASS here would bypass their content checks.
+f="$CFG/opencode.jsonc"
+if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+  fail "$f missing"
+elif [ -L "$f" ]; then
+  if link_ok "$f"; then
+    pass "$f is a symlink to a safe target (content checked below)"
+  else
+    fail "$f is a symlink to an unsafe target (missing, foreign-owned, group/world-writable, or writable parent)"
   fi
-done
+elif [ ! -f "$f" ]; then
+  # A directory/FIFO at this path passes -e and the mode check, and the later
+  # [ -f ] content comparison is silently skipped.
+  fail "$f is not a regular file"
+elif [ "$(stat -c '%u' "$f" 2>/dev/null)" != "$(id -u)" ]; then
+  fail "$f is not owned by the current user"
+elif [ -n "$(find "$f" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+  fail "$f is group/world-writable"
+fi
 # The cli.json seed may be a dotfiles symlink (its target was checked above).
 if [ -f "$CFG/cli.json" ] && [ ! -L "$CFG/cli.json" ]; then
   if [ "$(stat -c '%u' "$CFG/cli.json" 2>/dev/null)" != "$(id -u)" ] ||
@@ -853,7 +853,7 @@ for d in "$CFG/skills" "$CFG/agent" "$CFG/command" "$TARGET_HOME_R/.config/envir
       # the bundle-skill loop above already rejects one for a managed skill.
       [ -d "$link" ] && continue
       if ! link_ok "$link"; then
-        fail "$link is a symlink to a target outside the checkout or with unsafe owner/mode/parents"
+        fail "$link is a symlink with a missing/unsafe target or unsafe owner/mode/parents"
       fi
     done < <(find "$d" -type l 2>/dev/null)
   fi
@@ -887,17 +887,21 @@ for f in "$TARGET_HOME_R/.claude/settings.json" "$TARGET_HOME_R/.zcode/settings.
 done
 # The kill-guard script is executed by every wired tool and the sourced wrapper
 # runs in every shell; content matters, not only the executable bit.
-if [ -f "$GUARD" ] && [ ! -L "$GUARD" ] && [ -f "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" ]; then
+if [ -f "$GUARD" ] && [ -f "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" ]; then
   escaped_home=$(printf '%s' "$TARGET_HOME_R" | sed 's/[\\&|]/\\&/g')
-  if sed "s|/home/eric|$escaped_home|g" "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" | cmp -s - "$GUARD"; then
+  if [ -L "$GUARD" ] && ! link_ok "$GUARD"; then
+    fail "agent-hooks/block-unsafe-kill.sh is a symlink to an unsafe target"
+  elif sed "s|/home/eric|$escaped_home|g" "$BOOTSTRAP_DIR/agent-hooks/block-unsafe-kill.sh" | cmp -s - "$GUARD"; then
     pass "agent-hooks/block-unsafe-kill.sh matches the bundle (home rewritten)"
   else
     fail "agent-hooks/block-unsafe-kill.sh differs from the bundle (stale or tampered)"
   fi
 fi
-if [ -f "$CFG/shell/bashrc-opencode-block.sh" ] && [ ! -L "$CFG/shell/bashrc-opencode-block.sh" ] &&
+if [ -f "$CFG/shell/bashrc-opencode-block.sh" ] &&
   [ -f "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" ]; then
-  if cmp -s "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" "$CFG/shell/bashrc-opencode-block.sh"; then
+  if [ -L "$CFG/shell/bashrc-opencode-block.sh" ] && ! link_ok "$CFG/shell/bashrc-opencode-block.sh"; then
+    fail "shell/bashrc-opencode-block.sh is a symlink to an unsafe target"
+  elif cmp -s "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" "$CFG/shell/bashrc-opencode-block.sh"; then
     pass "shell/bashrc-opencode-block.sh matches the bundle"
   else
     fail "shell/bashrc-opencode-block.sh differs from the bundle (stale or tampered)"
@@ -985,9 +989,10 @@ elif [ "$(stat -c '%u' "$MANIFEST" 2>/dev/null)" != "$(id -u)" ] ||
   [ -n "$(find "$MANIFEST" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
   fail "local-tools-manifest.json is not owned by the current user or is group/world-writable"
 elif command -v bun >/dev/null 2>&1; then
-  if MANIFEST="$MANIFEST" DEST="$CFG" bun -e '
+  if MANIFEST="$MANIFEST" DEST="$CFG" LOCAL_TOOLS="$BOOTSTRAP_DIR/../script/install-local-tools.ts" bun -e '
+    const { managed } = await import(process.env.LOCAL_TOOLS)
     const data = await Bun.file(process.env.MANIFEST).json().catch(() => undefined)
-    const required = ["lib/drawio.py", "skills/drawio/SKILL.md", "skills/marker/SKILL.md", "skills/planning-with-files/SKILL.md"]
+    const required = [...managed]
     if (!data || typeof data !== "object" || Array.isArray(data) || required.some((key) => typeof data[key] !== "string")) process.exit(1)
     for (const key of required) {
       const bytes = await Bun.file(process.env.DEST + "/" + key).bytes()
@@ -1098,10 +1103,10 @@ fi
 # --- 9b. review workflow prerequisites --------------------------------------
 echo "-- review workflow"
 if command -v ocr >/dev/null 2>&1; then
-  # Anchor on the first version token: a greedy leading `.*` captures the last
-  # `x.y.z` on a multi-token line (e.g. a trailing runtime version) and would
-  # pass an old OCR because an unrelated version matched.
-  ocr_version=$(timeout 30 ocr version 2>/dev/null | grep -iE 'open[- ]?code[- ]?review' | tr '[:upper:]' '[:lower:]' | sed -nE 's/^[^0-9]*open[- ]?code[- ]?review[[:space:]/:]+v?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1.\2.\3/p' | head -n 1)
+  # Take the first version token on the first line that has one, whether the
+  # product is spelled "open-code-review", "ocr", or omitted: the external CLI
+  # owns its banner, and a valid install must not be rejected for its wording.
+  ocr_version=$(timeout 30 ocr version 2>/dev/null | sed -nE 's/^[^0-9]*([0-9]+)\.([0-9]+)\.([0-9]+).*/\1.\2.\3/p' | head -n 1)
   if [ -n "$ocr_version" ]; then
     ocr_major=${ocr_version%%.*}
     ocr_rest=${ocr_version#*.}
@@ -1119,7 +1124,7 @@ if command -v ocr >/dev/null 2>&1; then
   fi
   # `ocr llm test` makes a network call; without a timeout a hung provider
   # blocks the whole verify. The plugin's ocr_health uses the same 60 s bound.
-  if timeout 60 env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
+  if timeout 60 env -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG -u OPENCODE_CONFIG_CONTENT -u OPENCODE_CLI_CONFIG_CONTENT -u OPENCODE_TEST_HOME \
     HOME="$TARGET_HOME" \
     XDG_CONFIG_HOME="$TARGET_HOME/.config" \
     XDG_DATA_HOME="$TARGET_HOME/.local/share" \

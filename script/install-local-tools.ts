@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url"
 // this script owns the pieces that plugin reads from the config tree: the drawio
 // validator and the three skill files. A hash manifest makes later installs
 // refuse locally modified managed files.
-const managed = [
+export const managed = [
   "lib/drawio.py",
   "skills/planning-with-files/SKILL.md",
   "skills/drawio/SKILL.md",

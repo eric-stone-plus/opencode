@@ -95,6 +95,10 @@ done
 # and verify.sh compares it against the canonical home. A symlinked parent
 # would otherwise leave the non-canonical spelling behind.
 TARGET_HOME=$(cd "$TARGET_HOME" && pwd -P)
+# The seat user is the owner of TARGET_HOME, not necessarily the invoking user:
+# a root-run `--home /home/u` must not accept root-owned system files as
+# writable dotfiles targets, and must still accept U's own files.
+SEAT_UID=$(stat -c '%u' "$TARGET_HOME" 2>/dev/null || id -u)
 
 
 sed_re_escape() {
@@ -140,7 +144,7 @@ exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
   # umask 002 would make `cat`+`chmod +x` create 0775; the shim is executed by
   # the operator's shell, so keep it owner-writable, world-readable/executable.
-  chmod 0755 "$SHIM"
+  chmod 0755 "$SHIM" 2>/dev/null || { say "WARN  could not normalize mode: $SHIM"; REFUSED=1; }
 }
 
 ensure_dir() {
@@ -198,7 +202,7 @@ require_private() {
   if [ -z "$mode" ]; then return 0; fi
   if [ "$(( 8#$mode & 077 ))" -ne 0 ]; then
     act "chmod 600 $f (secret seed was mode $mode)"
-    if [ "$DRY_RUN" -eq 0 ]; then chmod 600 "$f"; fi
+    if [ "$DRY_RUN" -eq 0 ]; then chmod 600 "$f" 2>/dev/null || { say "WARN  could not tighten mode: $f"; REFUSED=1; }; fi
     changed
   fi
 }
@@ -229,7 +233,7 @@ install_file() {
       backup_file "$dst"
       rm -f "$dst"
       cp -p "$stage" "$dst"
-      chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
+      chmod go-w "$dst" 2>/dev/null || { say "WARN  could not normalize mode: $dst"; REFUSED=1; }
     else
       note "(would back up the link itself first; its target is never written)"
     fi
@@ -238,14 +242,15 @@ install_file() {
     act "create $dst (from ${src#"$BOOTSTRAP_DIR"/})"
     # New file: cp -p stamps the bundle template's mode (intended — templates
     # carry the perms they want; secret seeds are tightened by require_private).
-    [ "$DRY_RUN" -eq 1 ] || { ensure_dir_quiet "$(dirname "$dst")"; cp -p "$stage" "$dst"; chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"; }
+    [ "$DRY_RUN" -eq 1 ] || { ensure_dir_quiet "$(dirname "$dst")"; cp -p "$stage" "$dst"; chmod go-w "$dst" 2>/dev/null || { say "WARN  could not normalize mode: $dst"; REFUSED=1; }; }
     changed
   elif cmp -s "$stage" "$dst"; then
     note "unchanged $dst"
     # An existing destination keeps its mode (the update path below does not
     # restamp it), so a file created under umask 002 stays 0664. Remove the
-    # group/world write bits without touching the user's own bits.
-    [ "$DRY_RUN" -eq 1 ] || chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
+    # group/world write bits without touching the user's own bits; report a
+    # mode-only change so --dry-run and the summary stay truthful.
+    normalize_mode_file "$dst"
   else
     act "update $dst (from ${src#"$BOOTSTRAP_DIR"/})"
     if [ "$DRY_RUN" -eq 0 ]; then
@@ -253,7 +258,7 @@ install_file() {
       # Plain cp (no -p): the existing destination keeps its own mode; its
       # permissions must not be restamped from the bundle template.
       cp "$stage" "$dst"
-      chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
+      chmod go-w "$dst" 2>/dev/null || { say "WARN  could not normalize mode: $dst"; REFUSED=1; }
     else
       note "(would timestamp-backup the existing file first)"
     fi
@@ -280,6 +285,11 @@ normalize_link_target() {
     "$TARGET_HOME"/*) ;;
     *) return 0 ;;
   esac
+  # Only a regular file owned by the seat user: never chmod a directory or a
+  # foreign-owned target through a link (a root-run --home install must not
+  # strip modes from system files), and let the caller's validation report it.
+  [ -f "$target" ] || return 0
+  [ "$(stat -c '%u' "$target" 2>/dev/null)" = "$SEAT_UID" ] || return 0
   chmod go-w "$target" 2>/dev/null || true
   d=$(dirname "$target")
   while [ "$d" != "$TARGET_HOME" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
@@ -293,15 +303,67 @@ normalize_link_target() {
 # target home, or to / for a target outside it.
 link_parents_safe() {
   local target="$1" dir owner
+  # Callers pass readlink -f output; an empty or relative value would loop
+  # forever on dirname "." — reject it rather than hang the install.
+  case "$target" in
+    /*) ;;
+    *) return 1 ;;
+  esac
   dir=$(dirname "$target")
   while :; do
     [ -z "$(find "$dir" -maxdepth 0 -perm /022 2>/dev/null)" ] || return 1
     owner=$(stat -c '%u' "$dir" 2>/dev/null) || return 1
-    [ "$owner" = "$(id -u)" ] || [ "$owner" = "0" ] || return 1
+    [ "$owner" = "$SEAT_UID" ] || [ "$owner" = "0" ] || return 1
     [ "$dir" = "$TARGET_HOME" ] && return 0
     [ "$dir" = "/" ] && return 0
     dir=$(dirname "$dir")
   done
+}
+
+# Converge one regular file's mode and report a mode-only change. A symlink is
+# never chmod'ed directly: normalize_link_target only touches an in-home target
+# it can prove is a seat-owned regular file.
+normalize_mode_file() {
+  local f="$1" mode
+  if [ -L "$f" ]; then
+    # A symlink's target is normalized only in a real run (normalize_link_target
+    # writes); a dry run must not touch it.
+    [ "$DRY_RUN" -eq 1 ] && return 0
+    normalize_link_target "$f"
+    return 0
+  fi
+  [ -f "$f" ] || return 0
+  mode=$(stat -c '%a' "$f" 2>/dev/null) || return 0
+  [ $((0$mode & 022)) -ne 0 ] || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then
+    act "chmod go-w $f"
+    changed
+  elif chmod go-w "$f" 2>/dev/null; then
+    act "chmod go-w $f"
+    changed
+  else
+    say "WARN  could not normalize mode: $f"
+    REFUSED=1
+  fi
+}
+
+# The directory counterpart used by the final pass.
+normalize_mode_dir() {
+  local d="$1" mode
+  if [ -L "$d" ]; then return 0; fi
+  [ -d "$d" ] || return 0
+  mode=$(stat -c '%a' "$d" 2>/dev/null) || return 0
+  [ $((0$mode & 022)) -ne 0 ] || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then
+    act "chmod go-w $d"
+    changed
+  elif chmod go-w "$d" 2>/dev/null; then
+    act "chmod go-w $d"
+    changed
+  else
+    say "WARN  could not normalize mode: $d"
+    REFUSED=1
+  fi
 }
 
 # --- 1. dirs -----------------------------------------------------------------
@@ -321,11 +383,16 @@ for root in \
   "$TARGET_HOME/.local/share" \
   "$TARGET_HOME/.local/state" \
   "$TARGET_HOME/.config/opencode" \
+  "$TARGET_HOME/.config/opencode/plugin" \
+  "$TARGET_HOME/.config/opencode/command" \
+  "$TARGET_HOME/.config/opencode/agent" \
+  "$TARGET_HOME/.config/opencode/skills" \
   "$TARGET_HOME/.config/opencode/shell" \
   "$TARGET_HOME/.config/environment.d" \
   "$TARGET_HOME/.config/agent-hooks" \
   "$TARGET_HOME/.local/bin" \
   "$TARGET_HOME/.local/share/opencode" \
+  "$TARGET_HOME/.local/share/opencode/log" \
   "$TARGET_HOME/.claude" \
   "$TARGET_HOME/.zcode" \
   "$TARGET_HOME/.grok" \
@@ -360,12 +427,14 @@ if [ "$LINK_MODE" -eq 1 ]; then
   if [ "$DRY_RUN" -eq 0 ]; then
     if [ -L "$want" ]; then
       say "WARN  $want is a symlink; not normalizing through it"
+      REFUSED=1
     elif ! chmod go-w "$want" 2>/dev/null; then
       say "WARN  could not normalize $want; verify will fail if it is group/world-writable"
+      REFUSED=1
     fi
     for d in "$BOOTSTRAP_DIR/config" "$BOOTSTRAP_DIR" "$repo_root"; do
       [ "$d" = "/" ] && continue
-      [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || say "WARN  could not normalize $d"
+      [ -L "$d" ] || chmod go-w "$d" 2>/dev/null || { say "WARN  could not normalize $d"; REFUSED=1; }
     done
   fi
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$want" ]; then
@@ -398,7 +467,7 @@ if [ -f "$CLI_JSON" ]; then
       backup_file "$CFG/cli.json"
       rm -f "$CFG/cli.json"
       cp -p "$CLI_JSON" "$CFG/cli.json"
-      chmod go-w "$CFG/cli.json"
+      chmod go-w "$CFG/cli.json" 2>/dev/null || { say "WARN  could not normalize mode: $CFG/cli.json"; REFUSED=1; }
     fi
     changed
   elif [ -L "$CFG/cli.json" ]; then
@@ -406,21 +475,23 @@ if [ -f "$CLI_JSON" ]; then
     if [ "$DRY_RUN" -eq 0 ]; then normalize_link_target "$CFG/cli.json"; fi
     cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
     if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
-      [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$(id -u)" ] ||
+      [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ] ||
       [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
       ! link_parents_safe "$cli_target"; then
       say "WARN  $CFG/cli.json target is missing, foreign-owned, or group/world-writable; verify will fail"
+      REFUSED=1
     fi
   elif [ -e "$CFG/cli.json" ]; then
     note "unchanged $CFG/cli.json (exists; never overwritten)"
-    if [ "$DRY_RUN" -eq 0 ] && [ ! -L "$CFG/cli.json" ]; then chmod go-w "$CFG/cli.json"; fi
+    normalize_mode_file "$CFG/cli.json"
   else
     act "create $CFG/cli.json from repo cli.json"
-    if [ "$DRY_RUN" -eq 0 ]; then cp -p "$CLI_JSON" "$CFG/cli.json"; chmod go-w "$CFG/cli.json"; fi
+    if [ "$DRY_RUN" -eq 0 ]; then cp -p "$CLI_JSON" "$CFG/cli.json"; chmod go-w "$CFG/cli.json" 2>/dev/null || { say "WARN  could not normalize mode: $CFG/cli.json"; REFUSED=1; }; fi
     changed
   fi
 else
-  say "WARN  repo cli.json not found at $CLI_JSON (skipped)"
+  say "WARN  repo cli.json not found at $CLI_JSON (skipped); verify will fail without it"
+  REFUSED=1
 fi
 
 # auth.json: template, only when absent. Never touch an existing one (holds keys).
@@ -444,6 +515,7 @@ require_private "$DATA/auth.json"
 # env seed file: only when absent (machine A may hold live seeds there).
 if [ -L "$CFG/env" ] && [ ! -e "$CFG/env" ]; then
   say "WARN  $CFG/env is a dangling symlink -> $(readlink "$CFG/env") (left as-is; seed file is never overwritten)"
+  REFUSED=1
 elif [ -e "$CFG/env" ]; then
   note "unchanged $CFG/env (exists; seed file is never overwritten)"
 else
@@ -465,7 +537,20 @@ if [ -f "$SHIM" ] && ! [ -L "$SHIM" ] && grep -q "OPENCODE_DB=opencode-main.db" 
   note "unchanged $SHIM (pin wrapper already in place)"
   # An older install under umask 002 left the shim 0775; converge the mode even
   # on the unchanged fast path (the `! -L` guard above keeps this off a link).
-  [ "$DRY_RUN" -eq 0 ] && chmod 0755 "$SHIM"
+  # Compare first so a mode-only fix is reported and appears in --dry-run.
+  shim_mode=$(stat -c '%a' "$SHIM" 2>/dev/null || true)
+  if [ "$shim_mode" != "755" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      act "chmod 0755 $SHIM"
+      changed
+    elif chmod 0755 "$SHIM" 2>/dev/null; then
+      act "chmod 0755 $SHIM"
+      changed
+    else
+      say "WARN  could not normalize mode: $SHIM"
+      REFUSED=1
+    fi
+  fi
 elif [ -e "$SHIM" ] || [ -L "$SHIM" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
     act "would replace existing shim with pin wrapper (non-clobbering backup kept)"
@@ -524,12 +609,13 @@ for f in 90-fcitx5.conf; do
   dst="$TARGET_HOME/.config/environment.d/$f"
   if [ -L "$dst" ] && [ ! -e "$dst" ]; then
     say "WARN  $dst is a dangling symlink -> $(readlink "$dst") (left as-is; templates never overwrite)"
+    REFUSED=1
   elif [ -e "$dst" ]; then
     note "unchanged $dst (exists; templates never overwrite)"
-    if [ "$DRY_RUN" -eq 0 ] && [ ! -L "$dst" ]; then chmod go-w "$dst"; fi
+    normalize_mode_file "$dst"
   else
     act "create $dst from template (names only; fill values, see README)"
-    [ "$DRY_RUN" -eq 1 ] || { cp -p "$BOOTSTRAP_DIR/config/environment.d/$f" "$dst"; chmod go-w "$dst"; }
+    [ "$DRY_RUN" -eq 1 ] || { cp -p "$BOOTSTRAP_DIR/config/environment.d/$f" "$dst"; chmod go-w "$dst" 2>/dev/null || { say "WARN  could not normalize mode: $dst"; REFUSED=1; }; }
     changed
   fi
 done
@@ -546,11 +632,23 @@ for f in block-unsafe-kill.sh cases.json run-cases.sh run-cases.ts; do
   STAGE_SED="s|/home/eric|$(sed_re_escape "$TARGET_HOME")|g"
   install_file "$BOOTSTRAP_DIR/agent-hooks/$f" "$AH/$f"
 done
-if [ "$DRY_RUN" -eq 0 ]; then
-  for f in block-unsafe-kill.sh run-cases.sh; do
-    if [ -f "$AH/$f" ]; then chmod 755 "$AH/$f"; fi
-  done
-fi
+for f in block-unsafe-kill.sh run-cases.sh; do
+  if [ -f "$AH/$f" ]; then
+    ah_mode=$(stat -c '%a' "$AH/$f" 2>/dev/null || true)
+    if [ "$ah_mode" != "755" ]; then
+      if [ "$DRY_RUN" -eq 1 ]; then
+        act "chmod 755 $AH/$f"
+        changed
+      elif chmod 755 "$AH/$f" 2>/dev/null; then
+        act "chmod 755 $AH/$f"
+        changed
+      else
+        say "WARN  could not normalize mode: $AH/$f"
+        REFUSED=1
+      fi
+    fi
+  fi
+done
 
 say ""
 say "-- step 5b: wire guard surfaces (only where the target config already exists)"
@@ -711,13 +809,13 @@ PYEOF
 apply_wiring() {
   local dst="$1" out="$2" st="$3" mode what
   mode=$(sed -n 1p "$st" 2>/dev/null); what=$(sed -n 2p "$st" 2>/dev/null)
-  if [ ! -s "$out" ]; then say "WARN  empty wiring output for $dst (left as-is)"; return 0; fi
+  if [ ! -s "$out" ]; then say "WARN  empty wiring output for $dst (left as-is)"; REFUSED=1; return 0; fi
   if [ "$mode" = "unchanged" ] || cmp -s "$out" "$dst"; then
     note "unchanged $dst (already wired to $GUARD)"
     # A pre-existing 0664 hook config decides whether the guard runs; converge
-    # the mode even when the content already matches.
-    [ "$DRY_RUN" -eq 0 ] && { chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"; }
-    [ "$DRY_RUN" -eq 0 ] && normalize_link_target "$dst"
+    # the mode even when the content already matches. normalize_mode_file never
+    # chmods a symlink directly and reports a mode-only change (dry-run too).
+    normalize_mode_file "$dst"
     return 0
   fi
   act "wire $dst -> $GUARD (${what:-rewritten})"
@@ -726,12 +824,17 @@ apply_wiring() {
     # below writes through, not just the link. Refuse an unsafe target: a
     # foreign-owned or writable target must not receive the guard wiring.
     if [ -L "$dst" ]; then
+      # Normalize an in-home dotfiles target and its ancestors first: a clone
+      # under umask 002 is otherwise refused by the check below. Outside-home
+      # targets are a no-op here and are judged by link_parents_safe.
+      normalize_link_target "$dst"
       hook_target=$(readlink -f "$dst" 2>/dev/null || true)
       if [ -z "$hook_target" ] || [ ! -f "$hook_target" ] ||
-        [ "$(stat -c '%u' "$hook_target" 2>/dev/null)" != "$(id -u)" ] ||
+        [ "$(stat -c '%u' "$hook_target" 2>/dev/null)" != "$SEAT_UID" ] ||
         [ -n "$(find "$hook_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
         ! link_parents_safe "$hook_target"; then
         say "WARN  $dst target is missing, foreign-owned, or group/world-writable; not writing through it"
+        REFUSED=1
         return 0
       fi
       backup_file "$dst" L
@@ -741,7 +844,7 @@ apply_wiring() {
     # Plain cp (no -p): $out is a umask-0644 temp file; stamping its mode
     # would clobber the user's 0600 settings.json. Existing dst keeps its mode.
     cp "$out" "$dst"
-    chmod go-w "$dst" 2>/dev/null || say "WARN  could not normalize mode: $dst"
+    chmod go-w "$dst" 2>/dev/null || { say "WARN  could not normalize mode: $dst"; REFUSED=1; }
     normalize_link_target "$dst"
     if [ "$mode" = "lossy" ]; then
       say "WARN  $dst: comments / trailing commas could NOT be preserved by this rewrite;"
@@ -1036,6 +1139,7 @@ with open(status, "w") as fh:
 PYEOF
   then
     say "WARN  python3 JSON wiring failed for $dst (left as-is)"
+    REFUSED=1
     rm -f "$out" "$st"
     return 0
   fi
@@ -1111,6 +1215,7 @@ sys.stdout.write(t)
 PYEOF
   then
     say "WARN  python3 TOML wiring failed for $dst (left as-is)"
+    REFUSED=1
     rm -f "$out" "$st"
     return 0
   fi
@@ -1136,7 +1241,13 @@ if [ -L "$SK" ]; then
 else
 for s in "$BOOTSTRAP_DIR"/skills-extra/*/; do
   [ -d "$s" ] || continue
-  [ -f "$s/SKILL.md" ] || continue
+  if [ ! -f "$s/SKILL.md" ]; then
+    # A bundle skill directory without SKILL.md is a packaging error: the seat
+    # would silently lose the skill, and verify.sh skips the same directory.
+    say "WARN  bundle skill $s has no SKILL.md; skipped (packaging error)"
+    REFUSED=1
+    continue
+  fi
   name=$(basename "$s")
   dst="$SK/$name"
   if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
@@ -1237,11 +1348,11 @@ else
   # `install_file` preserves an existing destination's mode and stamps the
   # bundle's mode on create; a checkout with umask 002 or a pre-existing 0664
   # would leave a group/world-writable security gate. Normalize the plugins.
-  if [ "$DRY_RUN" -eq 0 ]; then
-    for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
-      if [ -f "$PL/$f" ] && [ ! -L "$PL/$f" ]; then chmod go-w "$PL/$f"; fi
-    done
-  fi
+  for f in block-unsafe-kill.ts secret-path-guard.ts local-tools.ts skill-hints.ts open-code-review.ts; do
+    if [ -f "$PL/$f" ] && [ ! -L "$PL/$f" ]; then
+      normalize_mode_file "$PL/$f"
+    fi
+  done
   # mpskills-update.ts was deleted on 2026-10-16 (skills freeze: no fetch, no
   # re-vendor, no auto-commit). A stale seat copy would keep refreshing the
   # vendored skills behind the operator's back, so the install removes it.
@@ -1280,6 +1391,10 @@ need_local=0
 if [ -n "$LOCAL_LINK" ]; then
   need_local=1
 else
+  # Fast path only: the module's exported `managed` list is the source of
+  # truth, and the manifest validator below derives its keys from it. A newly
+  # managed file therefore still forces the installer even if this list is
+  # stale (it just does not get the early cmp shortcut).
   for rel in lib/drawio.py skills/drawio/SKILL.md skills/marker/SKILL.md skills/planning-with-files/SKILL.md; do
     if [ ! -f "$CFG/$rel" ] || ! cmp -s "$LOCAL_SRC/$rel" "$CFG/$rel"; then
       need_local=1
@@ -1296,9 +1411,10 @@ else
     # Without bun the baseline cannot be validated; let the install branch
     # report the missing dependency instead of claiming "unchanged".
     need_local=1
-  elif ! MANIFEST="$CFG/local-tools-manifest.json" DEST="$CFG" bun -e '
+  elif ! MANIFEST="$CFG/local-tools-manifest.json" DEST="$CFG" LOCAL_TOOLS="$LOCAL_TOOLS" bun -e '
+    const { managed } = await import(process.env.LOCAL_TOOLS)
     const data = await Bun.file(process.env.MANIFEST).json().catch(() => undefined)
-    const required = ["lib/drawio.py", "skills/drawio/SKILL.md", "skills/marker/SKILL.md", "skills/planning-with-files/SKILL.md"]
+    const required = [...managed]
     if (!data || typeof data !== "object" || Array.isArray(data) || required.some((key) => typeof data[key] !== "string")) process.exit(1)
     // A stale manifest (a crash between the file writes and the manifest write)
     // would make the next bundle update look like a local edit. Validate the
@@ -1318,13 +1434,7 @@ elif [ -n "$LOCAL_LINK" ]; then
   say "WARN  $LOCAL_LINK is a symlink; refusing to install local-tools support through it (replace it with a real file or directory)"
   REFUSED=1
 elif [ -f "$LOCAL_TOOLS" ] && command -v bun >/dev/null 2>&1; then
-  # install-local-tools.ts writes through mkdir/rename, so a symlinked parent
-  # would place the files in the link target. The skills/lib steps above
-  # refuse the same links; refuse them here too.
-  if [ -n "$LOCAL_LINK" ]; then
-    say "WARN  $LOCAL_LINK is a symlink; refusing to install local-tools support through it (replace it with a real file or directory)"
-    REFUSED=1
-  elif [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
     act "install local-tools support files into $CFG (bun $LOCAL_TOOLS $CFG)"
     changed
   elif bun "$LOCAL_TOOLS" "$CFG" >/dev/null; then
@@ -1332,25 +1442,39 @@ elif [ -f "$LOCAL_TOOLS" ] && command -v bun >/dev/null 2>&1; then
     changed
   else
     say "WARN  local-tools install failed; run: bun $LOCAL_TOOLS $CFG"
+    REFUSED=1
   fi
 else
   say "WARN  bun or script/install-local-tools.ts missing; local-tools support not installed"
+  REFUSED=1
 fi
 # The manifest is the local-edit baseline; a group/world-writable file lets
 # another local user rewrite it. Repair the mode even on the unchanged path
 # (install-local-tools.ts keeps an existing file's mode).
-if [ "$DRY_RUN" -eq 0 ] && [ -f "$CFG/local-tools-manifest.json" ] && [ ! -L "$CFG/local-tools-manifest.json" ]; then
-  chmod go-w "$CFG/local-tools-manifest.json"
+if [ -f "$CFG/local-tools-manifest.json" ] && [ ! -L "$CFG/local-tools-manifest.json" ]; then
+  normalize_mode_file "$CFG/local-tools-manifest.json"
 fi
 # install-local-tools.ts writes with the process umask; normalize its Python
 # helper and the copied skill/agent files. `find` does not follow symlinks, so
 # a dotfiles link's target is never chmod'ed.
-if [ "$DRY_RUN" -eq 0 ]; then
-  if [ -f "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib" ]; then chmod go-w "$CFG/lib/drawio.py"; fi
-  for d in "$CFG/skills" "$CFG/agent" "$CFG/command"; do
-    if [ -d "$d" ] && [ ! -L "$d" ]; then find "$d" -type f -exec chmod go-w {} +; fi
-  done
+if [ -f "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib/drawio.py" ] && [ ! -L "$CFG/lib" ]; then
+  normalize_mode_file "$CFG/lib/drawio.py"
 fi
+for d in "$CFG/skills" "$CFG/agent" "$CFG/command"; do
+  if [ -d "$d" ] && [ ! -L "$d" ]; then
+    if [ -n "$(find "$d" -type f -perm /022 2>/dev/null | head -n 1)" ]; then
+      act "normalize modes under $d"
+      changed
+    fi
+    if [ "$DRY_RUN" -eq 0 ]; then
+      find "$d" -type f -exec chmod go-w {} + 2>/dev/null || { say "WARN  could not normalize some modes under $d"; REFUSED=1; }
+      if [ -n "$(find "$d" -type f -perm /022 2>/dev/null | head -n 1)" ]; then
+        say "WARN  files under $d are still group/world-writable"
+        REFUSED=1
+      fi
+    fi
+  fi
+done
 
 # --- 8. mode cards + seat rules ----------------------------------------------
 say ""
@@ -1497,9 +1621,12 @@ else
   # root-run --home install could append to a shared/system file.
   bashrc_ok=1
   if [ -L "$BASHRC" ]; then
+    # Normalize an in-home dotfiles target and its ancestors first: a clone
+    # under umask 002 is otherwise refused by the check below.
+    normalize_link_target "$BASHRC"
     bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
     if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
-      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$(id -u)" ] ||
+      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ] ||
       [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
       ! link_parents_safe "$bashrc_target"; then
       say "WARN  $BASHRC target is missing, foreign-owned, or group/world-writable; not writing through it"
@@ -1511,7 +1638,7 @@ else
   state=$(bashrc_sources check)
   if [ "$state" = "ok" ]; then
     note "unchanged $BASHRC (sources the stable seat copy $BLOCK_SRC)"
-    [ "$DRY_RUN" -eq 0 ] && normalize_link_target "$BASHRC"
+    normalize_mode_file "$BASHRC"
   elif [ "$state" = "converge" ]; then
     act "converge egress wrapper source line(s) in $BASHRC to the stable seat path $BLOCK_SRC"
     if [ "$DRY_RUN" -eq 0 ]; then
@@ -1538,18 +1665,34 @@ say ""
 # the seat's directories must not be group/world-writable. `find` does not
 # follow symlinks, so a dotfiles link's target is never chmod'ed. This runs
 # after every step so directories created by step 8 (agent/command) are covered.
-if [ "$DRY_RUN" -eq 0 ]; then
-  for d in "$TARGET_HOME" "$TARGET_HOME/.config" "$CFG" "$TARGET_HOME/.config/agent-hooks" "$TARGET_HOME/.config/environment.d" \
-    "$TARGET_HOME/.local" "$TARGET_HOME/.local/share" "$TARGET_HOME/.local/state" "$TARGET_HOME/.local/bin" \
-    "$DATA" "$DATA/log" "$TARGET_HOME/.cache" "$TARGET_HOME/.claude" "$TARGET_HOME/.zcode" \
-    "$TARGET_HOME/.grok" "$TARGET_HOME/.grok/hooks" "$TARGET_HOME/.kimi-code"; do
-    if [ -d "$d" ] && [ ! -L "$d" ]; then chmod go-w "$d" 2>/dev/null || say "WARN  could not normalize mode: $d"; fi
-  done
-  if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then find "$CFG" -type d -exec chmod go-w {} + 2>/dev/null || say "WARN  could not normalize some directories under $CFG"; fi
-  # .bashrc decides whether the egress wrapper is sourced; a regular file
-  # created under umask 002 must not stay group/world-writable. A symlink's
-  # target is handled by normalize_link_target in the .bashrc branch above.
-  if [ -f "$BASHRC" ] && [ ! -L "$BASHRC" ]; then chmod go-w "$BASHRC" 2>/dev/null || say "WARN  could not normalize mode: $BASHRC"; fi
+for d in "$TARGET_HOME" "$TARGET_HOME/.config" "$CFG" "$TARGET_HOME/.config/agent-hooks" "$TARGET_HOME/.config/environment.d" \
+  "$TARGET_HOME/.local" "$TARGET_HOME/.local/share" "$TARGET_HOME/.local/state" "$TARGET_HOME/.local/bin" \
+  "$DATA" "$DATA/log" "$TARGET_HOME/.cache" "$TARGET_HOME/.claude" "$TARGET_HOME/.zcode" \
+  "$TARGET_HOME/.grok" "$TARGET_HOME/.grok/hooks" "$TARGET_HOME/.kimi-code"; do
+  normalize_mode_dir "$d"
+done
+if [ -d "$CFG" ] && [ ! -L "$CFG" ]; then
+  if [ -n "$(find "$CFG" -mindepth 1 -type d -perm /022 2>/dev/null | head -n 1)" ]; then
+    act "normalize modes under $CFG"
+    changed
+  fi
+  if [ "$DRY_RUN" -eq 0 ]; then
+    find "$CFG" -type d -exec chmod go-w {} + 2>/dev/null || { say "WARN  could not normalize some directories under $CFG"; REFUSED=1; }
+    if [ -n "$(find "$CFG" -mindepth 1 -type d -perm /022 2>/dev/null | head -n 1)" ]; then
+      say "WARN  directories under $CFG are still group/world-writable"
+      REFUSED=1
+    fi
+  fi
+fi
+# .bashrc decides whether the egress wrapper is sourced; a regular file
+# created under umask 002 must not stay group/world-writable. A symlink's
+# target is handled by normalize_link_target in the .bashrc branch above.
+# --no-bashrc promises not to touch the file at all, including its mode.
+if [ "$NO_BASHRC" -eq 0 ] && [ -f "$BASHRC" ] && [ ! -L "$BASHRC" ]; then
+  normalize_mode_file "$BASHRC"
+fi
+if [ "$REFUSED" -eq 1 ]; then
+  say "== summary: install incomplete — a security-critical path was refused (see WARN above) =="
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
   say "== summary: $WOULD file change(s) would be made, $ACTIONS action(s) recorded =="
@@ -1557,20 +1700,19 @@ else
   say "== summary: $CHANGES change(s), $ACTIONS action(s) recorded =="
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
-  if [ "$WOULD" -eq 0 ]; then
+  if [ "$WOULD" -eq 0 ] && [ "$REFUSED" -eq 0 ]; then
     say "idempotent: nothing to do — target already matches the bundle."
-  else
+  elif [ "$REFUSED" -eq 0 ]; then
     say "next: re-run without --dry-run to apply the $WOULD change(s)."
   fi
   say "DRY-RUN complete: no files were modified."
-elif [ "$CHANGES" -eq 0 ]; then
+elif [ "$CHANGES" -eq 0 ] && [ "$REFUSED" -eq 0 ]; then
   say "idempotent: nothing to do — target already matches the bundle."
-else
+elif [ "$REFUSED" -eq 0 ]; then
   say "next: fill secrets (README 'Secrets re-seed'), re-login (environment.d),"
   say "      then run: bash $BOOTSTRAP_DIR/verify.sh --home $TARGET_HOME"
 fi
 if [ "$REFUSED" -eq 1 ]; then
-  say "== summary: install incomplete — a security-critical path was refused (see WARN above) =="
   exit 1
 fi
 exit 0
