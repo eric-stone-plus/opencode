@@ -274,7 +274,9 @@ const layer = Layer.effect(
     const cached = Effect.fnUntraced(function* (dir: string) {
       return yield* fs.readFileString(path.join(dir, "opencode")).pipe(
         Effect.map((value) => value.trim()),
-        Effect.map((value) => (value ? ID.make(value) : undefined)),
+        // A repository can ship `.git/opencode`; a project ID becomes a path segment under the data
+        // directory, so reject separators, dot segments, and control bytes instead of trusting it.
+        Effect.map((value) => (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) ? ID.make(value) : undefined)),
         Effect.orElseSucceed(() => undefined),
       )
     })

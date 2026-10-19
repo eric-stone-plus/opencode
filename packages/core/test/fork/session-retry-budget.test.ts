@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import {
   AIError,
+  HttpContext,
   InvalidRequestError,
   ProviderInternalError,
   RateLimitError,
@@ -126,6 +127,23 @@ describe("ForkRetryBudget", () => {
   it.effect("never retries a deterministic rejection",
     Effect.gen(function* () {
       expect(yield* exhaust(rejected)).toEqual([])
+    }),
+  )
+
+  it.effect("never retries a transient tag the provider marked non-retryable",
+    Effect.gen(function* () {
+      const cause = new AIError({
+        reason: new ProviderInternalError({
+          message: "do not retry",
+          http: new HttpContext({
+            url: "https://example.com",
+            status: 500,
+            headers: { "x-should-retry": "false" },
+          }),
+        }),
+      })
+      expect(SessionRunnerRetry.isRetryable(cause)).toBe(false)
+      expect(yield* exhaust(cause)).toEqual([])
     }),
   )
 

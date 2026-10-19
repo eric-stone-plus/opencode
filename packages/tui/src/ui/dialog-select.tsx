@@ -865,7 +865,7 @@ function DialogSelectCategory(props: { title: string; first: boolean }) {
   return (
     <box paddingTop={props.first ? 0 : 1} paddingLeft={DIALOG_LIST_INSET - (newDesigns() ? 0 : 1)}>
       <text fg={newDesigns() ? theme.text.faint : theme.hue.accent[200]} attributes={TextAttributes.BOLD}>
-        {props.title}
+        {sanitizeTerminalOutput(props.title)}
       </text>
     </box>
   )

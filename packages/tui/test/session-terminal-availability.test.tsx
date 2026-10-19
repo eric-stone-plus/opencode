@@ -50,7 +50,7 @@ test.each([
       app: { name: "test", version: "test", channel: "test" },
       server: { endpoint: { url: server.url.toString() } },
       config: {
-        get: async () => ({ animations: false, tabs: { mode: "off" } }),
+        get: async () => ({ animations: false }),
         update: async () => ({}),
       },
       packages: { prepare: async () => ({ directory: "" }) },

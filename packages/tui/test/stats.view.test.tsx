@@ -42,7 +42,7 @@ test("stats shows only this year and returns after errors or success", async () 
       app: { name: "test", version: "test", channel: "test" },
       server: { endpoint: { url: server.url.toString() } },
       config: {
-        get: async () => ({ animations: false, tabs: { mode: "off" } }),
+        get: async () => ({ animations: false }),
         update: async () => ({}),
       },
       packages: { prepare: async () => ({ directory: "" }) },

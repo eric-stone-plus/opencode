@@ -21,6 +21,7 @@ import { sessionAttention } from "../util/session"
 import { useStorage } from "../context/storage"
 import { useNewDesigns } from "../config"
 import { withTimestampedFallback } from "@opencode/util/session-title-fallback"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import { projectName } from "../util/project"
 import { useLocation } from "../context/location"
 
@@ -200,13 +201,15 @@ export function DialogSessionList() {
             Sessions
           </text>
           <Show when={!allProjects() && currentProjectName()}>
-            <text fg={theme.text.muted}> for {currentProjectName()}</text>
+            <text fg={theme.text.muted}> for {sanitizeTerminalOutput(currentProjectName()!)}</text>
           </Show>
         </box>
       }
       searchInTitle
       titlePlaceholder={
-        !allProjects() && currentProjectName() ? `Search sessions in ${currentProjectName()}` : "Search sessions"
+        !allProjects() && currentProjectName()
+          ? `Search sessions in ${sanitizeTerminalOutput(currentProjectName()!)}`
+          : "Search sessions"
       }
       options={options()}
       skipFilter={true}

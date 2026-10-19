@@ -344,14 +344,14 @@ jobs:
       # unit and app-e2e coverage. Re-enable here once that runner can serve the
       # suite.
       - name: Run session UI component tests
-        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' && runner.os == 'Linux' && matrix.suite.id == 'session-ui-components' }}
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.suite.id == 'session-ui-components' }}
         run: bun --cwd packages/session-ui test:components
         env:
           CI: true
         timeout-minutes: 15
 
       - name: Run app component tests
-        if: ${{ !cancelled() && env.E2E_ENABLED == 'true' && runner.os == 'Linux' && matrix.suite.id == 'app-components' }}
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.suite.id == 'app-components' }}
         run: bun --cwd packages/app test:components
         env:
           CI: true

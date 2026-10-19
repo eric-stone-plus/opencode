@@ -18,6 +18,7 @@ import { InputRenderable, MouseButton, Renderable, RGBA, TextAttributes } from "
 import { createStore } from "solid-js/store"
 import { useToast } from "./toast"
 import { useClipboard } from "../context/clipboard"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import { useConfig, useNewDesigns } from "../config"
 import { copy, copyOnSelectRelease } from "../util/selection"
 
@@ -107,7 +108,7 @@ export function DialogHeader(
     <box flexDirection="row" justifyContent="space-between" gap={props.gap}>
       {props.titleView ?? (
         <text attributes={newDesigns() ? undefined : TextAttributes.BOLD} fg={theme.text.base}>
-          {props.title}
+          {typeof props.title === "string" ? sanitizeTerminalOutput(props.title) : props.title}
         </text>
       )}
       {props.children}
@@ -125,7 +126,7 @@ export function DialogHeader(
       <box>
         {row()}
         <text fg={theme.text.faint} wrapMode="word">
-          {props.description}
+          {sanitizeTerminalOutput(props.description!)}
         </text>
       </box>
     </Show>

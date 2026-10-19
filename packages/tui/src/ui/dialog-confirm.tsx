@@ -2,6 +2,7 @@ import { Keymap } from "../context/keymap"
 import { useTheme } from "../context/theme"
 import { useNewDesigns } from "../config"
 import { DialogHeader, DialogLayout, useDialog } from "./dialog"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 import { createStore } from "solid-js/store"
 import { For } from "solid-js"
 import { Locale } from "../util/locale"
@@ -98,7 +99,7 @@ export function DialogConfirm(props: DialogConfirmProps) {
         </box>
       }
     >
-      <text fg={theme.text.muted}>{props.message}</text>
+      <text fg={theme.text.muted}>{sanitizeTerminalOutput(props.message)}</text>
     </DialogLayout>
   )
 }

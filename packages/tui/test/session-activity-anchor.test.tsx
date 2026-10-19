@@ -89,7 +89,7 @@ async function withSession(run: (setup: Setup) => Promise<void>, history = messa
       app: { name: "test", version: "test", channel: "test" },
       server: { endpoint: { url: server.url.toString() } },
       config: {
-        get: async () => ({ animations: false, tabs: { enabled: false }, session: { verbosity: "low" } }),
+        get: async () => ({ animations: false, session: { verbosity: "low" } }),
         update: async () => ({}),
       },
       packages: { prepare: async () => ({ directory: "" }) },

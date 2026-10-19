@@ -74,7 +74,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
             .pipe(
               Effect.catchTag(
                 "Session.InvalidListCursorError",
-                (error) => new InvalidCursorError({ message: error.message }),
+                (error) => Effect.fail(new InvalidCursorError({ message: error.message })),
               ),
             )
         }),

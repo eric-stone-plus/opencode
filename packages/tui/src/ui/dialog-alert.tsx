@@ -1,6 +1,7 @@
 import { Keymap } from "../context/keymap"
 import { useTheme } from "../context/theme"
 import { DialogHeader, DialogLayout, useDialog } from "./dialog"
+import { sanitizeTerminalOutput } from "../util/terminal-output"
 
 export type DialogAlertProps = {
   title: string
@@ -45,7 +46,7 @@ export function DialogAlert(props: DialogAlertProps) {
         </box>
       }
     >
-      <text fg={theme.text.muted}>{props.message}</text>
+      <text fg={theme.text.muted}>{sanitizeTerminalOutput(props.message)}</text>
     </DialogLayout>
   )
 }

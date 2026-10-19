@@ -71,7 +71,9 @@ export const policy = (sessionID: SessionSchema.ID) =>
           } else {
             const [, duration] = scheduled
             attempt++
-            next = { attempt, delay: Math.ceil(Duration.toMillis(duration)), retry: true }
+            // The budget decides how long to keep trying, not whether the provider said the failure is
+            // deterministic: a transient tag can still carry `x-should-retry: false` or a rejected write.
+            next = { attempt, delay: Math.ceil(Duration.toMillis(duration)), retry: input.retry }
           }
         } else {
           const decided = yield* short(input)

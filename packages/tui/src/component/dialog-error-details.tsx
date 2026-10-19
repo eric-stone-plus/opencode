@@ -94,14 +94,14 @@ export function DialogErrorDetails(props: {
                 wrapMode="none"
                 truncate
               >
-                {props.title}
+                {sanitizeTerminalOutput(props.title)}
               </text>
             }
           />
           <Show when={props.source}>
             {(source) => (
               <FilePath
-                value={source()}
+                value={sanitizeTerminalOutput(source())}
                 maxWidth={Math.min(dialogWidth(dialog.size), dimensions().width - 2) - DIALOG_INSET * 2}
                 fg={theme.text.muted}
               />

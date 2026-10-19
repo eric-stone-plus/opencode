@@ -385,6 +385,24 @@ describe("Project.resolve", () => {
     }),
   )
 
+  it.live("ignores a cached project id that would escape the data directory", () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+      yield* Effect.promise(() => initRepo(tmp.path, { commit: true }))
+      yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, ".git", "opencode"), "../../escape"))
+      const project = yield* Project.Service
+
+      const result = yield* project.resolve(abs(tmp.path))
+
+      expect(result.previous).toBeUndefined()
+      expect(result.id).not.toContain("/")
+      expect(result.id).not.toContain("..")
+    }),
+  )
+
   it.live("does not publish project updates for first or repeated resolutions", () =>
     Effect.gen(function* () {
       const tmp = yield* Effect.acquireRelease(
