@@ -13,6 +13,7 @@ export const ID = Schema.String.pipe(
     anthropic: schema.make("anthropic"),
     openai: schema.make("openai"),
     google: schema.make("google"),
+    opencode: schema.make("opencode"),
   })),
 )
 export type ID = typeof ID.Type

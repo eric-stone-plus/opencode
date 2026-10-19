@@ -73,7 +73,7 @@ const refusal = (cause: AIError, hook: (event: RetryEvent) => void = () => {}, a
 const sum = (values: ReadonlyArray<number>) => values.reduce((total, value) => total + value, 0)
 
 describe("ForkRetryBudget", () => {
-  it.effect("retries provider failures past the default allowance until the 30 minute budget is spent", () =>
+  it.effect("retries provider failures past the default allowance until the 30 minute budget is spent",
     Effect.gen(function* () {
       const delays = yield* exhaust(internal)
       expect(delays.length).toBeGreaterThan(10)
@@ -83,7 +83,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("backs off exponentially from two seconds with additive jitter and caps each gap at five minutes", () =>
+  it.effect("backs off exponentially from two seconds with additive jitter and caps each gap at five minutes",
     Effect.gen(function* () {
       const delays = yield* exhaust(reset)
       delays.slice(0, 8).forEach((delay, index) => {
@@ -97,7 +97,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("treats a provider-requested delay as a floor, bounded by the maximum gap", () =>
+  it.effect("treats a provider-requested delay as a floor, bounded by the maximum gap",
     Effect.gen(function* () {
       const requested = yield* exhaust(limited(90_000), 1)
       expect(requested[0]).toBeGreaterThanOrEqual(90_000)
@@ -106,7 +106,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("keeps the short allowance for unrecognized failures", () =>
+  it.effect("keeps the short allowance for unrecognized failures",
     Effect.gen(function* () {
       const delays = yield* exhaust(unknown)
       expect(delays).toHaveLength(10)
@@ -115,7 +115,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("keeps the upstream allowance for interactive agents", () =>
+  it.effect("keeps the upstream allowance for interactive agents",
     Effect.gen(function* () {
       const delays = yield* exhaust(internal, 100, Agent.ID.make("build"))
       expect(delays).toHaveLength(10)
@@ -123,13 +123,13 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("never retries a deterministic rejection", () =>
+  it.effect("never retries a deterministic rejection",
     Effect.gen(function* () {
       expect(yield* exhaust(rejected)).toEqual([])
     }),
   )
 
-  it.effect("still caps transport timeouts at three retries inside the budget", () =>
+  it.effect("still caps transport timeouts at three retries inside the budget",
     Effect.gen(function* () {
       const timeout = new AIError({
         reason: new TransportError({ message: "Timed out", transport: "http", operation: "request", code: "Timeout" }),
@@ -138,7 +138,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("lets the retry hook replace the delay or refuse the retry", () =>
+  it.effect("lets the retry hook replace the delay or refuse the retry",
     Effect.gen(function* () {
       const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry_budget_hook"))
       const replaced = yield* policy(
@@ -157,7 +157,7 @@ describe("ForkRetryBudget", () => {
     }),
   )
 
-  it.effect("names why the policy stopped, so the terminal state is not one opaque refusal", () =>
+  it.effect("names why the policy stopped, so the terminal state is not one opaque refusal",
     Effect.gen(function* () {
       // The walk-away budget ran out: the failure could have cleared, the allowance did not last.
       expect(yield* refusal(internal)).toMatchObject({ retry: false, exhausted: "budget" })
@@ -181,7 +181,7 @@ describe("ForkRetryBudget", () => {
 })
 
 describe("ForkRetryBudget.transient", () => {
-  it.effect("covers failures that clear on their own and nothing else", () =>
+  it.effect("covers failures that clear on their own and nothing else",
     Effect.gen(function* () {
       expect(ForkRetryBudget.transient(internal)).toBe(true)
       expect(ForkRetryBudget.transient(reset)).toBe(true)
@@ -197,7 +197,7 @@ describe("ForkRetryBudget.unattended", () => {
   // profiles, not of the provider or the model. A role field on the agent definition would let a seat
   // add a walk-away profile without editing this fork file; until that design lands, this set is the
   // pin, so a new profile has to be added here deliberately.
-  it.effect("covers the walk-away profiles and nothing else", () =>
+  it.effect("covers the walk-away profiles and nothing else",
     Effect.gen(function* () {
       expect(ForkRetryBudget.unattended(Agent.ID.make("auto"))).toBe(true)
       expect(ForkRetryBudget.unattended(Agent.ID.make("goal"))).toBe(true)

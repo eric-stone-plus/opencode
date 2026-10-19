@@ -65,13 +65,14 @@ const fixtureSnapshot = [
         family: undefined,
         package: undefined,
         settings: { provider: "deepseek-labs" },
-        capabilities: { tools: true, input: [], output: [] },
+        capabilities: { tools: true, input: [], output: [], temperature: true },
         variants: [],
         time: { released: Date.parse("2026-01-01") },
         cost: [
           {
             input: Money.USDPerMillionTokens.zero,
             output: Money.USDPerMillionTokens.zero,
+            tier: undefined,
             cache: {
               read: Money.USDPerMillionTokens.zero,
               write: Money.USDPerMillionTokens.zero,
@@ -124,16 +125,18 @@ const fixture2Snapshot = [
         modelID: Model.ID.make("labs-2"),
         providerID: Provider.ID.make("deepseek-labs"),
         name: "Labs Two",
+        compatibility: undefined,
         family: undefined,
         package: undefined,
         settings: { provider: "deepseek-labs" },
-        capabilities: { tools: false, input: [], output: [] },
+        capabilities: { tools: false, input: [], output: [], temperature: false },
         variants: [],
         time: { released: Date.parse("2026-02-01") },
         cost: [
           {
             input: Money.USDPerMillionTokens.zero,
             output: Money.USDPerMillionTokens.zero,
+            tier: undefined,
             cache: {
               read: Money.USDPerMillionTokens.zero,
               write: Money.USDPerMillionTokens.zero,

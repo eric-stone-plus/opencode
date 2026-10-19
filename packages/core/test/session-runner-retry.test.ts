@@ -33,15 +33,15 @@ const decisions = (cause: AIError, count: number) =>
   })
 
 describe("SessionRunnerRetry.policy", () => {
-  it.effect("stops retrying transport timeouts after three attempts", () =>
+  it.effect("stops retrying transport timeouts after three attempts",
     Effect.gen(function* () {
       expect(yield* decisions(timeout, 4)).toEqual([true, true, true, false])
     }),
   )
 
-  it.effect("keeps the general allowance for other transient failures", () =>
+  it.effect("keeps the general allowance for other transient failures",
     Effect.gen(function* () {
-      expect(yield* decisions(internal, 10)).toEqual(Array(10).fill(true))
+      expect(yield* decisions(internal, 11)).toEqual([...Array(10).fill(true), false])
     }),
   )
 })

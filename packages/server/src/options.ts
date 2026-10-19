@@ -38,6 +38,7 @@ export const ServerOptions = Schema.Struct({
           roots: Schema.Array(Schema.String),
         }),
       ),
+      claude: Schema.optional(Schema.Boolean),
       file: Schema.optional(Schema.String),
       content: Schema.optional(Schema.String),
     }),

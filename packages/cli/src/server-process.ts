@@ -61,7 +61,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           ),
         )
   const global = yield* Global.Service
-  if (options.mode === "service") yield* Effect.sync(() => process.chdir(global.home))
+  // A sandbox may deny $HOME; the service then keeps the cwd it was launched from.
+  if (options.mode === "service")
+    yield* Effect.try(() => process.chdir(global.home)).pipe(
+      Effect.catch((cause) => Effect.logWarning("failed to change service directory to home", { cause })),
+    )
   // The operator's trust declaration lives beside the global config, so a project can never write
   // it. Resolve it: a relative OPENCODE_CONFIG_DIR would otherwise make the declaration path
   // cwd-relative, and a repository that ships `.opencode/trusted-roots` could authorize itself when
@@ -89,6 +93,8 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           ? Service.incumbent({ ...serviceOptions, url: serviceURL(hostname, port) })
           : undefined
       if (findIncumbent !== undefined && (yield* findIncumbent) !== undefined) return
+      // Desktop can launch the service directly without injecting its saved environment.
+      Object.assign(process.env, config.env)
       // Keep a package-manager or curl install replaceable while the service runs; Desktop updates its own copy.
       if (options.mode === "service" && process.platform === "win32" && RetainedImage.installed(global.home))
         yield* RetainedImage.retain(global.cache, "service")
@@ -135,6 +141,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             directory: process.env.OPENCODE_CONFIG_DIR,
             project: gate.project,
             trust: gate.trust,
+            // .claude is only read for skills, so both flags gate the same roots.
+            claude: !(
+              truthy(process.env.OPENCODE_DISABLE_CLAUDE_CODE) ||
+              truthy(process.env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS)
+            ),
             file: process.env.OPENCODE_CONFIG,
             content: process.env.OPENCODE_CONFIG_CONTENT,
           },

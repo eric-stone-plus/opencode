@@ -20,6 +20,7 @@ import {
   type ModelPreferenceModel,
 } from "../model-preference"
 import { useTheme } from "./theme"
+import { useNewDesigns } from "../config"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
 import { useData } from "./data"
@@ -33,6 +34,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const data = useData()
     const toast = useToast()
     const theme = useTheme()
+    const newDesigns = useNewDesigns()
     const route = useRoute()
     const paths = useTuiPaths()
     const args = useArgs()
@@ -74,7 +76,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }),
       )
       const colors = createMemo(() => {
-        const step = 200
+        // The new designs palette keeps its vivid accent at 400; 200 there is a muted tint.
+        const step = newDesigns() ? 400 : 200
         return dedupeWith(
           theme.categorical.map((scale) => scale[step]),
           (first, second) => first.equals(second),

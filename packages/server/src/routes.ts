@@ -139,6 +139,7 @@ export function standardReplacements(options: ServerOptions): LayerNode.Replacem
     Config.node.replace(
       Config.configured({
         project,
+        claude: options.config?.claude,
         file: options.config?.file,
         content: options.config?.content,
       }),

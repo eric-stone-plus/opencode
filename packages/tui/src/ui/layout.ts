@@ -1,5 +1,9 @@
 export const SESSION_SIDEBAR_WIDTH = 42
 const SESSION_CONTENT_MIN_WIDTH = 44
+const SESSION_CONTENT_PREFERRED_WIDTH = 64
+// A docked panel fits when the session keeps its preferred width beside a minimum-width pane.
+// Narrower, panels take over the screen.
+export const SESSION_PANEL_SPLIT_MIN_WIDTH = SESSION_CONTENT_PREFERRED_WIDTH + SESSION_CONTENT_MIN_WIDTH
 
 export function clampSessionPaneWidth(width: number, total: number) {
   const half = Math.max(1, Math.floor(total / 2))

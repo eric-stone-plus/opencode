@@ -82,6 +82,7 @@ const run = Effect.fnUntraced(function* (input: {
         ? Effect.die("saved store unavailable")
         : Effect.succeed(Array.from({ length: input.saved ?? 0 }, () => ({})) as never),
     add: () => Effect.void,
+    update: () => Effect.die("saved store unavailable"),
     remove: () => Effect.void,
   })
   yield* ForkEnvelopePlugin.Plugin.effect(

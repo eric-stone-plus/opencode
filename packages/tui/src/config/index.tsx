@@ -120,6 +120,9 @@ export const Info = Schema.Struct({
       }),
       tree: Schema.optional(Schema.Boolean).annotate({ description: "Show the diff file tree" }),
       single: Schema.optional(Schema.Boolean).annotate({ description: "Show only the selected file patch" }),
+      fullscreen: Schema.optional(Schema.Boolean).annotate({
+        description: "Open the diff side panel full screen; remembers the last full screen toggle",
+      }),
       view: Schema.optional(Schema.Literals(["auto", "split", "unified"])).annotate({
         description: "Diff layout; 'auto' selects a layout from the available width",
       }),
@@ -231,7 +234,10 @@ export const Info = Schema.Struct({
 })
 export type Info = Schema.Schema.Type<typeof Info>
 
-export type Resolved = Omit<Info, "attention" | "cursor" | "keybinds" | "leader" | "mouse" | "session"> & {
+export type Resolved = Omit<
+  Info,
+  "attention" | "cursor" | "keybinds" | "leader" | "mouse" | "session"
+> & {
   attention: {
     notifications: boolean
     sound: boolean
@@ -340,4 +346,10 @@ export function useConfig() {
   const value = useContext(ConfigContext)
   if (!value) throw new Error("ConfigProvider is missing")
   return value
+}
+
+/** Reactive accessor for the temporary "new-designs" experiment. */
+export function useNewDesigns() {
+  const config = useConfig()
+  return () => config.data.experimental?.["new-designs"] === true
 }

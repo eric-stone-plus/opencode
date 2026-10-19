@@ -14,6 +14,7 @@ const transientMessages = [
   "econnreset",
   "econnrefused",
   "connectionrefused",
+  "epipe",
   "etimedout",
   "socket hang up",
 ]
