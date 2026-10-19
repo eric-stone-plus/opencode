@@ -98,7 +98,10 @@ TARGET_HOME=$(cd "$TARGET_HOME" && pwd -P)
 # The seat user is the owner of TARGET_HOME, not necessarily the invoking user:
 # a root-run `--home /home/u` must not accept root-owned system files as
 # writable dotfiles targets, and must still accept U's own files.
-SEAT_UID=$(stat -c '%u' "$TARGET_HOME" 2>/dev/null || id -u)
+SEAT_UID=$(stat -c '%u' "$TARGET_HOME" 2>/dev/null) || {
+  echo "install.sh: cannot determine the owner of $TARGET_HOME; refusing to guess" >&2
+  exit 1
+}
 # A root-run `--home /home/u` would create root-owned files in the seat and
 # verify.sh (run as the seat user) would reject them; the safe contract is to
 # run as the seat user. This also keeps every chmod below on seat-owned paths.
@@ -210,14 +213,26 @@ require_private() {
   # dangling one, which is skipped instead of aborting the run under set -e.
   local f="$1" mode owner
   if [ ! -e "$f" ]; then return 0; fi
-  owner=$(stat -L -c '%u' "$f" 2>/dev/null) || return 0
+  if ! owner=$(stat -L -c '%u' "$f" 2>/dev/null); then
+    say "WARN  cannot determine the owner of $f; not tightening its mode"
+    REFUSED=1
+    return 0
+  fi
   if [ "$owner" != "$SEAT_UID" ]; then
     say "WARN  $f resolves to a file not owned by the seat user; not tightening its mode"
     REFUSED=1
     return 0
   fi
-  mode=$(stat -L -c '%a' "$f" 2>/dev/null) || return 0
-  if [ -z "$mode" ]; then return 0; fi
+  if ! mode=$(stat -L -c '%a' "$f" 2>/dev/null); then
+    say "WARN  cannot determine the mode of $f; not tightening it"
+    REFUSED=1
+    return 0
+  fi
+  if [ -z "$mode" ]; then
+    say "WARN  cannot determine the mode of $f; not tightening it"
+    REFUSED=1
+    return 0
+  fi
   if [ "$(( 8#$mode & 077 ))" -ne 0 ]; then
     act "chmod 600 $f (secret seed was mode $mode)"
     if [ "$DRY_RUN" -eq 0 ]; then chmod 600 "$f" 2>/dev/null || { say "WARN  could not tighten mode: $f"; REFUSED=1; }; fi
@@ -310,12 +325,15 @@ normalize_link_target() {
   [ "$(stat -c '%u' "$target" 2>/dev/null)" = "$SEAT_UID" ] || return 0
   chmod go-w "$target" 2>/dev/null || true
   d=$(dirname "$target")
-  while [ "$d" != "$TARGET_HOME" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+  while [ "$d" != "/" ] && [ "$d" != "." ]; do
     # Only a seat-owned real directory: never chmod a foreign-owned ancestor
-    # (a root-run install is refused, but a seat can still contain one).
+    # (a root-run install is refused, but a seat can still contain one). The
+    # home itself is included: the final pass normalizes it anyway, and the
+    # --link/.bashrc checks run before that pass.
     if [ ! -L "$d" ] && [ "$(stat -c '%u' "$d" 2>/dev/null)" = "$SEAT_UID" ]; then
       chmod go-w "$d" 2>/dev/null || true
     fi
+    [ "$d" = "$TARGET_HOME" ] && break
     d=$(dirname "$d")
   done
 }
@@ -342,26 +360,95 @@ link_parents_safe() {
   done
 }
 
-# Converge one regular file's mode and report a mode-only change. A symlink is
-# never chmod'ed directly: normalize_link_target only touches an in-home target
-# it can prove is a seat-owned regular file.
-normalize_mode_file() {
-  local f="$1" mode target
+# True when a target inside the seat home can be repaired by
+# normalize_link_target: every ancestor below the home is a real directory that
+# is either seat-owned (chmod-able) or root-owned and already not writable.
+# A foreign non-root owner, a symlinked ancestor, or a writable root-owned
+# ancestor is not fixable.
+dotfile_fixable() {
+  local target="$1" d owner mode
+  case "$target" in
+    "$TARGET_HOME"/*) ;;
+    *) return 1 ;;
+  esac
+  d=$(dirname "$target")
+  while :; do
+    [ -L "$d" ] && return 1
+    owner=$(stat -c '%u' "$d" 2>/dev/null) || return 1
+    mode=$(stat -c '%a' "$d" 2>/dev/null) || return 1
+    if [ "$owner" = "$SEAT_UID" ]; then
+      : # normalize_link_target can chmod this directory
+    elif [ "$owner" = "0" ]; then
+      [ $((0$mode & 022)) -eq 0 ] || return 1
+    else
+      return 1
+    fi
+    [ "$d" = "$TARGET_HOME" ] && return 0
+    d=$(dirname "$d")
+  done
+}
+
+# Normalize/validate a symlink's resolved target. An in-home seat-owned target
+# is repaired (target and fixable ancestors); an outside-home target is only
+# validated; anything that cannot be repaired is refused. Reports a real
+# normalization through act()/changed() so --dry-run and the applied run agree.
+# Returns 0 when safe, 1 when refused.
+normalize_dotfile_target() {
+  local f="$1" target
   grep -Fxq "$f" "$MODE_SEEN" 2>/dev/null && return 0
-  if [ -L "$f" ]; then
+  target=$(readlink -f "$f" 2>/dev/null || true)
+  if [ -z "$target" ] || [ ! -f "$target" ] ||
+    [ "$(stat -c '%u' "$target" 2>/dev/null)" != "$SEAT_UID" ]; then
+    say "WARN  $f target is missing or foreign-owned; not normalizing it"
+    REFUSED=1
+    return 1
+  fi
+  case "$target" in
+    "$TARGET_HOME"/*)
+      if ! dotfile_fixable "$target"; then
+        say "WARN  $f target has an ancestor that cannot be normalized; verify will fail"
+        REFUSED=1
+        return 1
+      fi
+      if [ -n "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+        ! link_parents_safe "$target"; then
+        act "normalize mode of $target and its ancestors"
+        changed
+      fi
+      if [ "$DRY_RUN" -eq 0 ]; then normalize_link_target "$f"; fi
+      ;;
+    *)
+      if [ -n "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
+        ! link_parents_safe "$target"; then
+        say "WARN  $f target is group/world-writable or has an unsafe ancestor; verify will fail"
+        REFUSED=1
+        return 1
+      fi
+      ;;
+  esac
+  if [ "$DRY_RUN" -eq 0 ]; then
     target=$(readlink -f "$f" 2>/dev/null || true)
     if [ -z "$target" ] || [ ! -f "$target" ] ||
       [ "$(stat -c '%u' "$target" 2>/dev/null)" != "$SEAT_UID" ] ||
       [ -n "$(find "$target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
       ! link_parents_safe "$target"; then
-      say "WARN  $f is a symlink with a missing/unsafe target; not normalizing it"
+      say "WARN  $f target is missing, foreign-owned, or group/world-writable; verify will fail"
       REFUSED=1
-      return 0
+      return 1
     fi
-    # A symlink's target is normalized only in a real run (normalize_link_target
-    # writes); a dry run must not touch it.
-    [ "$DRY_RUN" -eq 1 ] && return 0
-    normalize_link_target "$f"
+  fi
+  printf '%s\n' "$f" >> "$MODE_SEEN"
+  return 0
+}
+
+# Converge one regular file's mode and report a mode-only change. A symlink is
+# never chmod'ed directly: normalize_link_target only touches an in-home target
+# it can prove is a seat-owned regular file.
+normalize_mode_file() {
+  local f="$1" mode
+  grep -Fxq "$f" "$MODE_SEEN" 2>/dev/null && return 0
+  if [ -L "$f" ]; then
+    normalize_dotfile_target "$f" || true
     return 0
   fi
   [ -f "$f" ] || return 0
@@ -470,6 +557,9 @@ if [ "$LINK_MODE" -eq 1 ]; then
   # ancestors up to the repository root; verify walks the chain to the seat home
   # or /, so a writable ancestor above the repo root is refused below.
   repo_root=$(cd "$BOOTSTRAP_DIR/.." && pwd -P)
+  # The final pass normalizes the seat home, but the check below runs before
+  # it; do it now so a 0775 home does not make --link refuse a fixable target.
+  normalize_mode_dir "$TARGET_HOME"
   if [ "$DRY_RUN" -eq 0 ]; then
     if [ -L "$want" ]; then
       say "WARN  $want is a symlink; not normalizing through it"
@@ -522,41 +612,7 @@ if [ -f "$CLI_JSON" ]; then
     changed
   elif [ -L "$CFG/cli.json" ]; then
     note "unchanged $CFG/cli.json (symlink; never written through)"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
-      if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
-        [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ]; then
-        say "WARN  $CFG/cli.json target is missing or foreign-owned; verify will fail"
-        REFUSED=1
-      else
-        case "$cli_target" in
-          "$TARGET_HOME"/*)
-            if [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-              ! link_parents_safe "$cli_target"; then
-              act "normalize mode of $cli_target and its ancestors"
-              changed
-            fi
-            ;;
-          *)
-            if [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-              ! link_parents_safe "$cli_target"; then
-              say "WARN  $CFG/cli.json target is group/world-writable; verify will fail"
-              REFUSED=1
-            fi
-            ;;
-        esac
-      fi
-    else
-      normalize_link_target "$CFG/cli.json"
-      cli_target=$(readlink -f "$CFG/cli.json" 2>/dev/null || true)
-      if [ -z "$cli_target" ] || [ ! -f "$cli_target" ] ||
-        [ "$(stat -c '%u' "$cli_target" 2>/dev/null)" != "$SEAT_UID" ] ||
-        [ -n "$(find "$cli_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-        ! link_parents_safe "$cli_target"; then
-        say "WARN  $CFG/cli.json target is missing, foreign-owned, or group/world-writable; verify will fail"
-        REFUSED=1
-      fi
-    fi
+    normalize_dotfile_target "$CFG/cli.json" || true
   elif [ -e "$CFG/cli.json" ]; then
     note "unchanged $CFG/cli.json (exists; never overwritten)"
     normalize_mode_file "$CFG/cli.json"
@@ -900,19 +956,9 @@ apply_wiring() {
     # below writes through, not just the link. Refuse an unsafe target: a
     # foreign-owned or writable target must not receive the guard wiring.
     if [ -L "$dst" ]; then
-      # Normalize an in-home dotfiles target and its ancestors first: a clone
-      # under umask 002 is otherwise refused by the check below. Outside-home
-      # targets are a no-op here and are judged by link_parents_safe.
-      normalize_link_target "$dst"
-      hook_target=$(readlink -f "$dst" 2>/dev/null || true)
-      if [ -z "$hook_target" ] || [ ! -f "$hook_target" ] ||
-        [ "$(stat -c '%u' "$hook_target" 2>/dev/null)" != "$SEAT_UID" ] ||
-        [ -n "$(find "$hook_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-        ! link_parents_safe "$hook_target"; then
-        say "WARN  $dst target is missing, foreign-owned, or group/world-writable; not writing through it"
-        REFUSED=1
-        return 0
-      fi
+      # A dotfiles symlink is a supported layout; normalize/validate the target
+      # before writing through it (the helper sets REFUSED on an unsafe one).
+      normalize_dotfile_target "$dst" || return 0
       backup_file "$dst" L
     else
       backup_file "$dst"
@@ -1697,46 +1743,7 @@ else
   # root-run --home install could append to a shared/system file.
   bashrc_ok=1
   if [ -L "$BASHRC" ]; then
-    bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
-    if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
-      [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ]; then
-      say "WARN  $BASHRC target is missing or foreign-owned; not writing through it"
-      REFUSED=1
-      bashrc_ok=0
-    elif [ "$DRY_RUN" -eq 1 ]; then
-      # A real run normalizes an in-home target and its ancestors first (a
-      # clone under umask 002 is otherwise refused); a dry run must not chmod.
-      # Report that it would, and refuse only an outside-home target that
-      # cannot be normalized.
-      case "$bashrc_target" in
-        "$TARGET_HOME"/*)
-          if [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-            ! link_parents_safe "$bashrc_target"; then
-            act "normalize mode of $bashrc_target and its ancestors"
-            changed
-          fi
-          ;;
-        *)
-          if [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-            ! link_parents_safe "$bashrc_target"; then
-            say "WARN  $BASHRC target is group/world-writable; not writing through it"
-            REFUSED=1
-            bashrc_ok=0
-          fi
-          ;;
-      esac
-    else
-      normalize_link_target "$BASHRC"
-      bashrc_target=$(readlink -f "$BASHRC" 2>/dev/null || true)
-      if [ -z "$bashrc_target" ] || [ ! -f "$bashrc_target" ] ||
-        [ "$(stat -c '%u' "$bashrc_target" 2>/dev/null)" != "$SEAT_UID" ] ||
-        [ -n "$(find "$bashrc_target" -maxdepth 0 -perm /022 2>/dev/null)" ] ||
-        ! link_parents_safe "$bashrc_target"; then
-        say "WARN  $BASHRC target is missing, foreign-owned, or group/world-writable; not writing through it"
-        REFUSED=1
-        bashrc_ok=0
-      fi
-    fi
+    normalize_dotfile_target "$BASHRC" || bashrc_ok=0
   fi
   if [ "$bashrc_ok" -eq 1 ]; then
   state=$(bashrc_sources check)

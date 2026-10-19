@@ -814,7 +814,11 @@ fi
 # regular-file/owner/mode gate for the non-symlink layout. A symlink is judged
 # by its own section (link_ok plus the content comparison through the link).
 for f in "$SHIM" "$GUARD" "$CFG/shell/bashrc-opencode-block.sh"; do
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+  if [ -L "$f" ] && ! link_ok "$f"; then
+    fail "$f is a symlink to a missing/unsafe target"
+  elif [ "$f" = "$SHIM" ] && [ -f "$f" ] && [ ! -x "$f" ]; then
+    fail "$SHIM is not executable"
+  elif [ ! -e "$f" ] && [ ! -L "$f" ]; then
     fail "$f missing"
   elif [ ! -L "$f" ] && [ ! -f "$f" ]; then
     fail "$f is not a regular file"
@@ -824,6 +828,22 @@ for f in "$SHIM" "$GUARD" "$CFG/shell/bashrc-opencode-block.sh"; do
     fail "$f is group/world-writable"
   fi
 done
+# .bashrc sources the egress wrapper; a writable or foreign-owned .bashrc lets
+# another local user inject commands into every interactive shell. install.sh
+# validates a dotfiles symlink target; mirror it here. A missing .bashrc is
+# skipped by install.sh and is not a failure.
+BASHRC="$TARGET_HOME_R/.bashrc"
+if [ -L "$BASHRC" ]; then
+  if ! link_ok "$BASHRC"; then
+    fail "$BASHRC is a symlink to a missing/unsafe target"
+  fi
+elif [ -e "$BASHRC" ] && [ ! -f "$BASHRC" ]; then
+  fail "$BASHRC is not a regular file"
+elif [ -f "$BASHRC" ] &&
+  { [ "$(stat -c '%u' "$BASHRC" 2>/dev/null)" != "$(id -u)" ] ||
+    [ -n "$(find "$BASHRC" -maxdepth 0 -perm /022 2>/dev/null)" ]; }; then
+  fail "$BASHRC is not owned by the current user or is group/world-writable"
+fi
 # Only opencode.jsonc may be a file symlink: `install.sh --link` creates
 # exactly that link, and a dotfiles target outside the checkout is supported.
 # The other executed/sourced paths are checked by their own sections, which
@@ -1118,10 +1138,11 @@ fi
 # --- 9b. review workflow prerequisites --------------------------------------
 echo "-- review workflow"
 if command -v ocr >/dev/null 2>&1; then
-  # Anchor on the product name (either spelling) and take the first version
-  # token on that line: an unrelated runtime/date version printed earlier must
-  # not satisfy the minimum check.
-  ocr_version=$(timeout 30 ocr version 2>/dev/null | sed -nE 's/^[^0-9]*(open[- ]?code[- ]?review|ocr)[[:space:]/:]+v?([0-9]+)\.([0-9]+)\.([0-9]+).*/\2.\3.\4/p' | head -n 1)
+  # Anchor on the product name (either spelling, any case) and take the first
+  # version token on that line: an unrelated runtime/date version printed
+  # earlier must not satisfy the minimum check, and a banner like
+  # "OpenCodeReview 9.9.9" / "ocr version 1.13.1" must still parse.
+  ocr_version=$(timeout 30 ocr version 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed -nE 's/^[^0-9]*(open[- ]?code[- ]?review|ocr)[[:space:]/:@]+(version[[:space:]/:@]*)?v?([0-9]+)\.([0-9]+)\.([0-9]+).*/\3.\4.\5/p' | head -n 1)
   if [ -n "$ocr_version" ]; then
     ocr_major=${ocr_version%%.*}
     ocr_rest=${ocr_version#*.}
@@ -1257,7 +1278,9 @@ fi
 # A symlink target outside the checkout was accepted above; compare the
 # resolved content too, or verify would bless a different config.
 if [ -f "$CFG/opencode.jsonc" ]; then
-  if cmp -s "$BOOTSTRAP_DIR/config/opencode.jsonc" "$CFG/opencode.jsonc"; then
+  if [ ! -f "$BOOTSTRAP_DIR/config/opencode.jsonc" ]; then
+    fail "bundled config/opencode.jsonc is missing; cannot verify the installed copy"
+  elif cmp -s "$BOOTSTRAP_DIR/config/opencode.jsonc" "$CFG/opencode.jsonc"; then
     pass "opencode.jsonc matches the bundle"
   else
     fail "opencode.jsonc differs from the bundle (managed; refresh from bootstrap/config/opencode.jsonc)"
