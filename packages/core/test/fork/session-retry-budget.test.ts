@@ -31,6 +31,18 @@ const reset = new AIError({
 })
 const unknown = new AIError({ reason: new UnknownProviderError({ message: "something odd" }) })
 const rejected = new AIError({ reason: new InvalidRequestError({ message: "bad request" }) })
+// Transient by shape, but the provider marked it deterministic: the budget branch is reachable,
+// while the caller's retryability flag is false.
+const transientNonRetryable = new AIError({
+  reason: new ProviderInternalError({
+    message: "do not retry",
+    http: new HttpContext({
+      url: "https://example.com",
+      status: 500,
+      headers: { "x-should-retry": "false" },
+    }),
+  }),
+})
 const limited = (retryAfterMs: number) =>
   new AIError({ reason: new RateLimitError({ message: "slow down", retryAfterMs }) })
 
@@ -172,6 +184,42 @@ describe("ForkRetryBudget", () => {
       )
       expect(refused).toMatchObject({ retry: false })
       expect(refused.exhausted).toBe("hook")
+    }),
+  )
+
+  it.effect("reports a non-retryable cause after the walk-away budget is already spent", () =>
+    Effect.gen(function* () {
+      const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry_budget_after_spend"))
+      let last = yield* policy(input(internal))
+      for (let i = 0; last.retry && i < 100; i++) {
+        yield* TestClock.adjust(last.delay)
+        last = yield* policy(input(internal))
+      }
+      expect(last).toMatchObject({ retry: false, exhausted: "budget" })
+      // The budget step is done, but the reason belongs to the cause that arrived now. The cause
+      // must still be budget-eligible, otherwise the short policy would answer and never reach the
+      // branch under test.
+      expect(yield* policy(input(transientNonRetryable))).toMatchObject({
+        retry: false,
+        exhausted: "not-retryable",
+      })
+    }),
+  )
+
+  it.effect("reports a non-retryable cause after the attended allowance is already spent", () =>
+    Effect.gen(function* () {
+      const build = Agent.ID.make("build")
+      const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry_short_after_spend"))
+      let last = yield* policy(input(internal, () => {}, build))
+      for (let i = 0; last.retry && i < 100; i++) {
+        yield* TestClock.adjust(last.delay)
+        last = yield* policy(input(internal, () => {}, build))
+      }
+      expect(last).toMatchObject({ retry: false, exhausted: "attempts" })
+      expect(yield* policy(input(rejected, () => {}, build))).toMatchObject({
+        retry: false,
+        exhausted: "not-retryable",
+      })
     }),
   )
 

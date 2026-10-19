@@ -14,9 +14,7 @@ export interface FilePathProps {
 
 export function FilePath(props: FilePathProps) {
   const display = createMemo(() => {
-    // A path can come from a repository (a Git filename allows ESC), and this component is the
-    // shared renderer for every file-path sink, so sanitize here rather than at each caller.
-    const value = truncateFilePath(sanitizeTerminalOutput(props.value), props.maxWidth)
+    const value = truncateFilePath(props.value, props.maxWidth)
     const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
     return {
       parent: value.slice(0, index + 1),
@@ -32,6 +30,10 @@ export function FilePath(props: FilePathProps) {
 }
 
 export function truncateFilePath(value: string, maxWidth: number) {
+  // A path can come from a repository (a Git filename allows ESC). Every renderer of this helper,
+  // including the ones that do not go through FilePath, gets the sanitized value here.
+  // Paths render on one line; the shared sanitizer keeps newlines and tabs for shell panes.
+  value = sanitizeTerminalOutput(value).replace(/[\n\t]/g, "")
   if (maxWidth <= 0) return ""
   if (stringWidth(value) <= maxWidth) return value
 

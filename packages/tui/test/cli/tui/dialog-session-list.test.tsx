@@ -22,7 +22,10 @@ import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
 import { TestTuiContexts } from "../../fixture/tui-environment"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
 
-test("scopes sessions to the active session location", async () => {
+const CLEAR = "\u001b[2J"
+const FRAME_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/
+
+async function setup(config: ReturnType<typeof createTuiResolvedConfig>) {
   const active = "/tmp/opencode/project-b"
   const events = createEventStream()
   const requestedProjects: string[] = []
@@ -30,7 +33,19 @@ test("scopes sessions to the active session location", async () => {
     if (url.pathname === "/api/location") {
       const directory = url.searchParams.get("location[directory]") ?? process.cwd()
       const project = directory === active ? "proj_b" : "proj_a"
-      return json({ directory, project: { id: project, directory, canonical: directory } })
+      const name = project === "proj_b" ? `project-b${CLEAR}name` : undefined
+      return json({ directory, project: { id: project, directory, canonical: directory, name } })
+    }
+    if (url.pathname === "/api/project") {
+      return json([
+        {
+          id: "proj_b",
+          directory: active,
+          canonical: active,
+          name: `project-b${CLEAR}name`,
+          time: { created: 1, updated: 2, active: 3 },
+        },
+      ])
     }
     if (url.pathname !== "/api/session") return undefined
     // Family syncs list children by parentID; only project-scoped list requests matter here.
@@ -61,7 +76,8 @@ test("scopes sessions to the active session location", async () => {
     const dialog = useDialog()
     const route = useRoute()
     storage = useStorage()
-    onMount(() => {
+    onMount(async () => {
+      await data.project.sync()
       data.session.remember({
         id: "ses_active",
         projectID: "proj_b",
@@ -83,7 +99,7 @@ test("scopes sessions to the active session location", async () => {
         <TuiAppProvider value={{ name: "test", version: "test", channel: "test" }}>
           <StorageProvider>
             <ArgsProvider>
-              <ConfigProvider config={createTuiResolvedConfig()}>
+              <ConfigProvider config={config}>
                 <Keymap.Provider>
                   <ToastProvider>
                     <RouteProvider>
@@ -115,13 +131,38 @@ test("scopes sessions to the active session location", async () => {
   )
   app.renderer.start()
 
+  return {
+    app,
+    active,
+    requestedProjects,
+    dispose: async () => {
+      app.renderer.destroy()
+      await storage.flush()
+      await temporary[Symbol.asyncDispose]()
+    },
+  }
+}
+
+test("scopes sessions to the active session location and sanitizes its name", async () => {
+  const fixture = await setup(createTuiResolvedConfig())
   try {
-    const frame = await app.waitForFrame((value) => value.includes("Project B session"))
+    const frame = await fixture.app.waitForFrame((value) => value.includes("Project B session"))
     expect(frame).not.toContain("Project A session")
-    expect(requestedProjects.at(-1)).toBe("proj_b")
+    expect(fixture.requestedProjects.at(-1)).toBe("proj_b")
+    // The project name is server-provided; the header must not pass its control bytes through.
+    expect(frame).toContain("project-bname")
+    expect(frame).not.toMatch(FRAME_CONTROL)
   } finally {
-    app.renderer.destroy()
-    await storage.flush()
-    await temporary[Symbol.asyncDispose]()
+    await fixture.dispose()
+  }
+})
+
+test("sanitizes the project name in the new-designs search placeholder", async () => {
+  const fixture = await setup(createTuiResolvedConfig({ experimental: { "new-designs": true } }))
+  try {
+    const frame = await fixture.app.waitForFrame((value) => value.includes("Search sessions in project-bname"))
+    expect(frame).not.toMatch(FRAME_CONTROL)
+  } finally {
+    await fixture.dispose()
   }
 })

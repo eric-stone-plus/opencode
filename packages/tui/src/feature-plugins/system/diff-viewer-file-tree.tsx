@@ -2,6 +2,7 @@
 import { MouseButton, TextAttributes, type MouseEvent, type ScrollBoxRenderable } from "@opentui/core"
 import { truncateFilePath } from "../../ui/file-path"
 import { stringWidth } from "../../util/string-width"
+import { sanitizeTerminalOutput } from "../../util/terminal-output"
 import { useTheme } from "../../context/theme"
 import { tint } from "../../theme/color"
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js"
@@ -257,6 +258,7 @@ function fileTreeRowStatus(row: FileTreeRow, files: readonly FileTreeItem[], rev
 // Collapsed chains drop whole leading segments instead of squeezing
 // mid-segment, so "a/b/c/d" narrows to "…/c/d" rather than "…/b…/c/d".
 function truncateDirectoryChain(name: string, maxWidth: number) {
+  name = sanitizeTerminalOutput(name).replace(/[\n\t]/g, "")
   if (stringWidth(name) <= maxWidth) return name
   const kept: string[] = []
   let width = stringWidth("…/")

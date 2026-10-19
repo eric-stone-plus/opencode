@@ -385,21 +385,27 @@ describe("Project.resolve", () => {
     }),
   )
 
-  it.live("ignores a cached project id that would escape the data directory", () =>
+  it.live("ignores cached project ids that are not a single safe path segment", () =>
     Effect.gen(function* () {
       const tmp = yield* Effect.acquireRelease(
         Effect.promise(() => tmpdir()),
         (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
       )
-      yield* Effect.promise(() => initRepo(tmp.path, { commit: true }))
-      yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, ".git", "opencode"), "../../escape"))
       const project = yield* Project.Service
+      const payloads = ["../../escape", "a/b", "a\\b", "\u001b[2J", "a".repeat(129)]
 
-      const result = yield* project.resolve(abs(tmp.path))
+      for (const [index, payload] of payloads.entries()) {
+        const directory = path.join(tmp.path, `repo-${index}`)
+        yield* Effect.promise(() => fs.mkdir(directory))
+        yield* Effect.promise(() => initRepo(directory, { commit: true }))
+        yield* Effect.promise(() => fs.writeFile(path.join(directory, ".git", "opencode"), payload))
+        const result = yield* project.resolve(abs(directory))
 
-      expect(result.previous).toBeUndefined()
-      expect(result.id).not.toContain("/")
-      expect(result.id).not.toContain("..")
+        expect(result.previous).toBeUndefined()
+        expect(result.id).not.toContain("/")
+        expect(result.id).not.toContain("\\")
+        expect(result.id).not.toContain("..")
+      }
     }),
   )
 

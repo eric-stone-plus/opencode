@@ -67,7 +67,7 @@ export const policy = (sessionID: SessionSchema.ID) =>
           const now = yield* Clock.currentTimeMillis
           const scheduled = yield* budgeted(now, input).pipe(Pull.catchDone(() => Effect.succeed(undefined)))
           if (!scheduled) {
-            exhausted = "budget"
+            exhausted = input.retry ? "budget" : "not-retryable"
           } else {
             const [, duration] = scheduled
             attempt++
@@ -78,7 +78,8 @@ export const policy = (sessionID: SessionSchema.ID) =>
         } else {
           const decided = yield* short(input)
           if (!decided) {
-            exhausted = "attempts"
+            // The allowance is spent, but a deterministic cause still deserves its own reason.
+            exhausted = input.retry ? "attempts" : "not-retryable"
           } else {
             next = decided
             attempt = decided.attempt
@@ -86,7 +87,9 @@ export const policy = (sessionID: SessionSchema.ID) =>
         }
         if (!next) {
           const reason = exhausted ?? "attempts"
-          yield* Effect.logInfo("session.retry.exhausted", { sessionID, exhausted: reason, attempt })
+          // A deterministic cause is the ordinary path; keep it quiet on both exit paths.
+          if (reason !== "not-retryable")
+            yield* Effect.logInfo("session.retry.exhausted", { sessionID, exhausted: reason, attempt })
           return { retry: false as const, exhausted: reason }
         }
         const event: PluginHooks.Domains["session"]["retry"] = {

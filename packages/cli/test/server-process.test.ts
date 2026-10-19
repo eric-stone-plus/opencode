@@ -192,6 +192,19 @@ test("ServerProcess.run passes the gate result and the declaration as config.pro
           trapEmpty: { env: { OPENCODE_CONFIG_PROJECT_DISABLE: "" } },
           optIn: { env: { OPENCODE_CONFIG_PROJECT_DISABLE: "0" }, declaration: `${declared}\n` },
           alias: { env: { OPENCODE_DISABLE_PROJECT_CONFIG: "0" } },
+          // A repository can ship a relative OPENCODE_CONFIG_DIR and a service config there. Saved
+          // service env is applied after the gate, so it must not reopen project discovery.
+          serviceSavedEnv: {
+            mode: "service",
+            service: { env: { OPENCODE_CONFIG_PROJECT_DISABLE: "0" } },
+          },
+          // Same case with the relative directory a repository would supply: both the fixture and
+          // the CLI must resolve it against home, or the fixture would write a file nobody reads.
+          serviceRelativeConfig: {
+            mode: "service",
+            env: { OPENCODE_CONFIG_DIR: "relative-config" },
+            service: { env: { OPENCODE_CONFIG_PROJECT_DISABLE: "0" } },
+          },
         }),
       ],
       {
@@ -210,7 +223,7 @@ test("ServerProcess.run passes the gate result and the declaration as config.pro
     if (exitCode !== 0) throw new Error(`project gate probe failed: ${stderr}`)
     const results = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}") as Record<
       string,
-      { project: boolean | undefined; trust: unknown }
+      { project: boolean | undefined; trust: unknown; applied?: string }
     >
     expect(results.unset).toEqual({ project: true, trust: closed })
     expect(results.declared).toEqual({ project: true, trust: { all: false, roots: [declared] } })
@@ -220,6 +233,10 @@ test("ServerProcess.run passes the gate result and the declaration as config.pro
     expect(results.trapEmpty).toEqual({ project: false, trust: closed })
     expect(results.optIn).toEqual({ project: true, trust: { all: true, roots: [] } })
     expect(results.alias).toEqual({ project: true, trust: { all: true, roots: [] } })
+    // Discovery is enabled by default; the trust declaration is the gate that must stay closed.
+    // If saved service env were applied before the gate, `..._DISABLE=0` would open trust to all.
+    expect(results.serviceSavedEnv).toEqual({ project: true, trust: closed, applied: "0" })
+    expect(results.serviceRelativeConfig).toEqual({ project: true, trust: closed, applied: "0" })
   } finally {
     await rm(root, { recursive: true, force: true })
   }

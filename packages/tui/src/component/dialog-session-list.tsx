@@ -201,14 +201,14 @@ export function DialogSessionList() {
             Sessions
           </text>
           <Show when={!allProjects() && currentProjectName()}>
-            <text fg={theme.text.muted}> for {sanitizeTerminalOutput(currentProjectName()!)}</text>
+            <text fg={theme.text.muted}> for {sanitizeTerminalOutput(currentProjectName())}</text>
           </Show>
         </box>
       }
       searchInTitle
       titlePlaceholder={
         !allProjects() && currentProjectName()
-          ? `Search sessions in ${sanitizeTerminalOutput(currentProjectName()!)}`
+          ? `Search sessions in ${sanitizeTerminalOutput(currentProjectName())}`
           : "Search sessions"
       }
       options={options()}

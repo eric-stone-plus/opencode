@@ -13,6 +13,9 @@ import {
   buildFileTree,
 } from "../../../src/feature-plugins/system/diff-viewer-file-tree-utils"
 
+const CLEAR = "\u001b[2J"
+const FRAME_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/
+
 describe("DiffViewerFileTree", () => {
   test("defaults to text-line file icons and triangle folders with straight rails", async () => {
     const frame = await renderFrame(() => (
@@ -208,6 +211,19 @@ describe("DiffViewerFileTree", () => {
     expect(lines.find((line) => line.includes("src"))?.indexOf("src")).toBe(
       lines.find((line) => line.includes("sidebar.tsx"))?.indexOf("sidebar.tsx"),
     )
+  })
+
+  test("strips terminal control bytes from directory names", async () => {
+    const frame = await renderFrame(() => (
+      <DiffViewerFileTree
+        width={40}
+        files={[{ file: `src${CLEAR}deep\nmore\tpart/file.ts` }]}
+        loading={false}
+        error={undefined}
+      />
+    ))
+    expect(frame).not.toMatch(FRAME_CONTROL)
+    expect(frame).toContain("srcdeepmorepart")
   })
 
   test("narrow collapsed chains drop whole leading segments", async () => {

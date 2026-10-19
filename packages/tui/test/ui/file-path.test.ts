@@ -53,6 +53,12 @@ describe("truncateFilePath", () => {
     expect(truncateFilePath("file.中a", 3)).toBe("…a")
   })
 
+  test("strips terminal control bytes and line breaks from a repository filename", () => {
+    expect(truncateFilePath("src/a\u001b]52;c;QQ==\u0007b.ts", 40)).toBe("src/ab.ts")
+    expect(truncateFilePath("src/a\u001b[2Jb.ts", 40)).toBe("src/ab.ts")
+    expect(truncateFilePath("src/a\nb\tc\rd.ts", 40)).toBe("src/abcd.ts")
+  })
+
   test("never exceeds the requested width", () => {
     for (let width = 0; width <= Bun.stringWidth(path); width++) {
       expect(Bun.stringWidth(truncateFilePath(path, width))).toBeLessThanOrEqual(width)
