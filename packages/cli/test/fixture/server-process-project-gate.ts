@@ -5,7 +5,8 @@
 // leak into the other CLI test files.
 import { mock } from "bun:test"
 import { Effect } from "effect"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { Global } from "@opencode/util/global"
 
@@ -33,6 +34,13 @@ const { ServiceConfig } = await import("../../src/services/service-config")
 const isolatedHome = process.env.OPENCODE_TEST_HOME
 if (!process.env.OPENCODE_CONFIG_DIR || !isolatedHome) {
   throw new Error("server-process-project-gate requires an isolated OPENCODE_CONFIG_DIR and OPENCODE_TEST_HOME")
+}
+// The fixture writes and deletes files under this root. Require a real temp subdirectory, not the
+// operator's home or a symlink to it.
+const isolatedRoot = await realpath(path.resolve(isolatedHome))
+const tempRoot = await realpath(os.tmpdir())
+if (!isolatedRoot.startsWith(tempRoot + path.sep)) {
+  throw new Error(`server-process-project-gate requires OPENCODE_TEST_HOME under ${tempRoot}: ${isolatedRoot}`)
 }
 
 // Fail before running anything if the module mock did not apply: without it, `run` would start a
@@ -68,8 +76,16 @@ for (const [name, testCase] of Object.entries(cases)) {
     process.env.OPENCODE_CONFIG_DIR ? { config: process.env.OPENCODE_CONFIG_DIR } : {},
   ).config
   const root = path.resolve(isolatedHome)
-  if (config !== root && !config.startsWith(root + path.sep)) {
+  const relative = path.relative(root, config)
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`server-process-project-gate refuses to modify non-isolated config dir: ${config}`)
+  }
+  // Resolve the config directory before any rm/write so a symlink inside the temp root cannot
+  // redirect the fixture at the operator's real files.
+  await mkdir(config, { recursive: true })
+  const realConfig = await realpath(config)
+  if (realConfig !== isolatedRoot && !realConfig.startsWith(isolatedRoot + path.sep)) {
+    throw new Error(`server-process-project-gate refuses to modify symlinked config dir: ${config}`)
   }
   const declarationPath = path.join(config, "trusted-roots")
   const servicePath = path.join(config, ServiceConfig.filename())
