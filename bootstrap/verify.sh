@@ -215,13 +215,13 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ] && grep -q 'opencode.real' "$BIN_W
     && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
     && grep -q 'OPENCODE_DISABLE_LSP_DOWNLOAD=1' "$BIN_WRAP" 2>/dev/null; then
     pass "exec-tmp shim carries the pin trio: $BIN_WRAP"
-    if [ -f "$BIN_WRAP.real" ] && [ -x "$BIN_WRAP.real" ]; then
-      pass "exec-tmp shim target exists: $BIN_WRAP.real"
-    else
-      fail "exec-tmp shim target missing/not executable: $BIN_WRAP.real (every launch through the shim fails)"
-    fi
   else
     warn "exec-tmp shim lacks the pin trio: $BIN_WRAP (re-run install.sh step 3b)"
+  fi
+  if [ -f "$BIN_WRAP.real" ] && [ -x "$BIN_WRAP.real" ]; then
+    pass "exec-tmp shim target exists: $BIN_WRAP.real"
+  else
+    fail "exec-tmp shim target missing/not executable: $BIN_WRAP.real (every launch through the shim fails)"
   fi
 elif [ -L "$BIN_WRAP" ] && ! [ -e "$BIN_WRAP" ]; then
   warn "$BIN_WRAP is a dangling symlink: interactive shells cannot run opencode at all (replace it with install.sh step 3b's wrapper)"

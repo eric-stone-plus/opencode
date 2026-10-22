@@ -841,6 +841,7 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
           say "WARN  could not install exec-tmp wrapper; restored the ELF at $BIN_WRAP"
         else
           say "WARN  could not install exec-tmp wrapper or restore $BIN_WRAP; ELF is at $BIN_REAL"
+          changed
         fi
         REFUSED=1
       fi
@@ -869,7 +870,8 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
             act "added pin trio to exec-tmp wrapper at $BIN_WRAP (backup $(basename "$b"))"
             changed
           else
-            say "WARN  could not write the pin-trio wrapper; original wrapper left at $BIN_WRAP (backup $(basename "$b"))"
+            say "WARN  could not write the pin-trio wrapper; original wrapper left at $BIN_WRAP"
+            rm -f "$b"
             REFUSED=1
           fi
         else
