@@ -191,7 +191,7 @@ WRAP
 # before the pin shim. Keep a wrapper at that path when the file is the ELF.
 write_bin_wrapper() {
   [ "$DRY_RUN" -eq 1 ] && return 0
-  _oc_tmp_shim="$BIN_WRAP.tmp.$$"
+  _oc_tmp_shim=$(mktemp "$BIN_WRAP.tmp.XXXXXX") || return 1
   if ! cat > "$_oc_tmp_shim" <<'WRAP'
 #!/usr/bin/env bash
 # /tmp is mounted noexec. Bun extracts the OpenTUI native library into the
@@ -229,7 +229,12 @@ WRAP
     return 1
   fi
   chmod 0755 "$_oc_tmp_shim" 2>/dev/null || { say "WARN  could not normalize mode: $_oc_tmp_shim"; rm -f "$_oc_tmp_shim"; REFUSED=1; return 1; }
-  mv -f "$_oc_tmp_shim" "$BIN_WRAP"
+  if ! mv -f "$_oc_tmp_shim" "$BIN_WRAP"; then
+    say "WARN  could not install exec-tmp wrapper: $BIN_WRAP"
+    rm -f "$_oc_tmp_shim"
+    REFUSED=1
+    return 1
+  fi
 }
 
 ensure_dir() {
@@ -824,12 +829,25 @@ BIN_REAL="$TARGET_HOME/.opencode/bin/opencode.real"
 if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
   bin_sig=$(od -An -t x1 -N 4 "$BIN_WRAP" 2>/dev/null | tr -d ' \n')
   if [ "$bin_sig" = "7f454c46" ]; then
-    act "move ELF to $(basename "$BIN_REAL") and install exec-tmp wrapper at $BIN_WRAP"
-    if [ "$DRY_RUN" -eq 0 ]; then
-      mv -f "$BIN_WRAP" "$BIN_REAL"
-      write_bin_wrapper
+    if [ "$DRY_RUN" -eq 1 ]; then
+      act "move ELF to $(basename "$BIN_REAL") and install exec-tmp wrapper at $BIN_WRAP"
+      changed
+    elif mv -f "$BIN_WRAP" "$BIN_REAL"; then
+      if write_bin_wrapper; then
+        act "moved ELF to $(basename "$BIN_REAL") and installed exec-tmp wrapper at $BIN_WRAP"
+        changed
+      else
+        if mv -f "$BIN_REAL" "$BIN_WRAP"; then
+          say "WARN  could not install exec-tmp wrapper; restored the ELF at $BIN_WRAP"
+        else
+          say "WARN  could not install exec-tmp wrapper or restore $BIN_WRAP; ELF is at $BIN_REAL"
+        fi
+        REFUSED=1
+      fi
+    else
+      say "WARN  could not move ELF to $BIN_REAL; left $BIN_WRAP in place"
+      REFUSED=1
     fi
-    changed
   elif grep -q 'opencode.real' "$BIN_WRAP" 2>/dev/null; then
     if grep -q 'OPENCODE_DB=opencode-main.db' "$BIN_WRAP" 2>/dev/null \
       && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
@@ -842,15 +860,20 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
       else
         b="$BIN_WRAP.pre-pins.$TS"
         if [ -e "$b" ] || [ -L "$b" ]; then b="$b.$$"; fi
-        _bk_tmp="$b.part.$$"
-        if cp -p "$BIN_WRAP" "$_bk_tmp" 2>/dev/null \
+        _bk_tmp=$(mktemp "$b.part.XXXXXX" 2>/dev/null) || _bk_tmp=""
+        if [ -n "$_bk_tmp" ] \
+          && cp -p "$BIN_WRAP" "$_bk_tmp" 2>/dev/null \
           && cmp -s "$BIN_WRAP" "$_bk_tmp" \
           && mv -f "$_bk_tmp" "$b"; then
-          act "add pin trio to exec-tmp wrapper at $BIN_WRAP (backup $(basename "$b"))"
-          write_bin_wrapper
-          changed
+          if write_bin_wrapper; then
+            act "added pin trio to exec-tmp wrapper at $BIN_WRAP (backup $(basename "$b"))"
+            changed
+          else
+            say "WARN  could not write the pin-trio wrapper; original wrapper left at $BIN_WRAP (backup $(basename "$b"))"
+            REFUSED=1
+          fi
         else
-          rm -f "$_bk_tmp"
+          if [ -n "$_bk_tmp" ]; then rm -f "$_bk_tmp"; fi
           say "WARN  could not back up $BIN_WRAP; wrapper left unmodified"
           REFUSED=1
         fi
