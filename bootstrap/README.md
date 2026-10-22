@@ -30,7 +30,7 @@ is compiled in at build time (`OPENCODE_CHANNEL` define,
 | `jq` | kill-guard script + `run-cases.sh` | any |
 | `git` | clone + channel derivation at build | any |
 | `python3` | sqlite integrity checks, JSON hook wiring, `_oc_tty_flush_input` | any |
-| `curl` | egress probes in the bashrc wrapper | any |
+| `curl` | manual network diagnostics + `verify.sh` toolchain check | any |
 | `sqlite3` | optional, direct DB inspection (`opencode debug paths db` prints the path) | any |
 | `ocr` | automatic security gate (`open-code-review` plugin) and manual `code-audit` | **v1.13.1+** — `npm install -g @alibaba-group/open-code-review` |
 
@@ -440,12 +440,13 @@ never commits, and never pushes — those are the operator's steps, and
   mode cards are fork plugins
   (`packages/core/src/plugin/fork/modes.ts`), so a machine-B build must come
   from this repo.
-* The `opencode()` wrapper *text* (mouse-garbage TTY fix + egress self-heal),
-  machine-A `~/.bashrc` verbatim **except** the egress probe set: since
-  2026-10-15 V3 it extracts every `baseURL` from `opencode.jsonc` and probes
-  them with an AND gate (direct only when all pass), so it adapts to whatever
-  provider set the config declares; with the DeepSeek-only config that is one
-  endpoint (`api.deepseek.com`).
+* The `opencode()` wrapper *text* (mouse-garbage TTY fix + TUI-only
+  `OPENCODE_SESSION_*` strip) is machine-A `~/.bashrc` verbatim **except** the
+  egress probe set, which was removed on 2026-10-22. The wrapper performs no
+  launch-time network detection; the shell's `proxy-on`/`proxy-off` environment
+  is the only source. The V2 shared service keeps the environment of the client
+  that spawned it, so after changing proxies restart the service
+  (`opencode service restart`) or start a new one.
 
 **Not reproduced (by design or by nature)**
 
@@ -538,10 +539,10 @@ bootstrap/
   `diff ../../opencode.jsonc config/opencode.jsonc`. `bun run check-drift`
   flags the snapshot as drift when the live config moves past it.
 * `shell/bashrc-opencode-block.sh` extraction was diff-verified byte-identical
-  against `~/.bashrc` lines 111, 210-240, 252-290; later deviations are logged in
-  the file's DEVIATION LOG (2026-09-30 probe-set extension, 2026-10-15 V3 — the
-  probe set is derived from the config's `baseURL`s — and the DeepSeek-only
-  convergence that followed).
+  against `~/.bashrc` lines 111, 210-240, 252-290; later deviations are recorded
+  in the file header and git history (the 2026-09-30 probe-set extension and the
+  2026-10-15 V3 `baseURL` probe were both removed on 2026-10-22; the wrapper now
+  performs no egress detection).
 * `agent-hooks/`, `plugin/{block-unsafe-kill.ts,secret-path-guard.ts,local-tools.ts,skill-hints.ts,mpskills-update.ts,open-code-review.ts}`,
   `skills-extra/`, and the local-tools support files
   (`dotfiles/opencode/lib/drawio.py` + three skill files, deployed by
@@ -574,5 +575,8 @@ not depend on who spawns it: `~/.local/bin/opencode` exports `OPENCODE_DB` and
 `OPENCODE_DISABLE_MODELS_FETCH`, and `install.sh` step 4 persists three —
 `OPENCODE_DB`, `OPENCODE_DISABLE_MODELS_FETCH`, `BUN_CONFIG_MAX_HTTP_REQUESTS` —
 with `opencode service set env` (read at every spawn). Proxies are deliberately NOT
-persisted: the `opencode()` bash wrapper launches a proxied TUI session with
-`--standalone`, so a recovered direct connection needs no cleanup.
+persisted. The wrapper no longer launches `--standalone`; it starts the shared
+service/client with the shell's environment. Because the service keeps the
+environment of the client that spawned it, restart the service
+(`opencode service restart`) after changing proxies, or the old environment
+persists.

@@ -5,6 +5,9 @@
 #   The wrapper no longer probes provider endpoints, selects a proxy, restarts
 #   causeway, or passes --standalone. The shell's proxy environment
 #   (proxy-on / proxy-off) and the V2 service environment are authoritative.
+#   Caveat: the shared `opencode serve --service` keeps the env of the client
+#   that spawned it, so `proxy-on` only reaches a service spawned after it;
+#   restart the service after changing proxies (`opencode service restart`).
 #   This removes the 0.2-2 s probe and the false-negative path that sent a
 #   reachable direct session to 17878.
 #
@@ -28,7 +31,7 @@
 # CAUSEWAY_GFW_PROXY is exported for compatibility with other shell helpers;
 # this block no longer reads it.
 
-export CAUSEWAY_GFW_PROXY="http://127.0.0.1:18880"
+export CAUSEWAY_GFW_PROXY="${CAUSEWAY_GFW_PROXY:-http://127.0.0.1:18880}"
 
 _oc_run() {  # $1=--tui optional; $2=command; rest=args
     local tui=0

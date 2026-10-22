@@ -14,7 +14,7 @@
 #                            of copying (live-edit into the checkout). Never used
 #                            for skills/ or command/ (directory symlinks there are
 #                            forbidden: sync-upstream rm+cp's from the same tree).
-#     --no-bashrc            do not touch ~/.bashrc (skips the egress/TTY wrapper).
+#     --no-bashrc            do not touch ~/.bashrc (skips the TTY/token wrapper).
 #
 # What it installs (see README for the full runbook):
 #   1  dirs ~/.config/opencode/{plugin,command,agent} ~/.config/environment.d
@@ -1808,9 +1808,9 @@ for f in autonomy.md AGENTS.goal.md; do
   fi
 done
 
-# --- 9. bashrc egress/TTY wrapper -------------------------------------------
+# --- 9. bashrc TTY/token wrapper --------------------------------------------
 say ""
-say "-- step 9: ~/.bashrc egress/TTY wrapper block"
+say "-- step 9: ~/.bashrc TTY/token wrapper block"
 # Review F5: the wrapper is copied into the seat's config tree and sourced
 # from that stable path — a .bashrc that pins the bundle checkout breaks every
 # new shell the moment the checkout moves.
@@ -1824,7 +1824,7 @@ install_file "$BOOTSTRAP_DIR/shell/bashrc-opencode-block.sh" "$BLOCK_SRC"
 write_bashrc_block() {
   echo ''
   echo "$MARK"
-  echo '# Load-bearing: mouse-garbage TTY fix + egress self-heal (see the file header).'
+  echo '# Load-bearing: mouse-garbage TTY fix + TUI-only token strip (see the file header).'
   echo '# Sourced from the seat config tree (stable path; the bundle checkout may move).'
   echo "$STABLE_SRC"
   echo "$MARK_END"
