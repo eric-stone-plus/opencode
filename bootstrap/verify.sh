@@ -209,7 +209,7 @@ fi
 
 # The interactive-shell path resolves ~/.opencode/bin/opencode before the pin
 # shim; that exec-tmp wrapper must carry the same trio.
-BIN_WRAP="$TARGET_HOME/.opencode/bin/opencode"
+BIN_WRAP="$REAL_BIN"
 if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ] && grep -q 'opencode.real' "$BIN_WRAP" 2>/dev/null; then
   if grep -q 'OPENCODE_DB=opencode-main.db' "$BIN_WRAP" 2>/dev/null \
     && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
@@ -218,6 +218,8 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ] && grep -q 'opencode.real' "$BIN_W
   else
     warn "exec-tmp shim lacks the pin trio: $BIN_WRAP (re-run install.sh step 3b)"
   fi
+elif [ -e "$BIN_WRAP" ]; then
+  warn "$BIN_WRAP is not the exec-tmp shim (raw ELF or symlink): interactive shells run it without the pin trio and /tmp noexec can break OpenTUI (re-run install.sh step 3b)"
 fi
 
 # --- 3. version / channel ----------------------------------------------------

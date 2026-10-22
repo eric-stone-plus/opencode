@@ -830,13 +830,21 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
       && grep -q 'OPENCODE_DISABLE_LSP_DOWNLOAD=1' "$BIN_WRAP" 2>/dev/null; then
       note "unchanged $BIN_WRAP (exec-tmp wrapper with pin trio)"
     else
-      act "add pin trio to exec-tmp wrapper at $BIN_WRAP"
-      if [ "$DRY_RUN" -eq 0 ]; then
-        b="$BIN_WRAP.pre-pins.$(date +%Y%m%d%H%M%S)"
-        cp -p "$BIN_WRAP" "$b" 2>/dev/null || true
-        write_bin_wrapper
+      if [ "$DRY_RUN" -eq 1 ]; then
+        act "add pin trio to exec-tmp wrapper at $BIN_WRAP"
+        changed
+      else
+        b="$BIN_WRAP.pre-pins.$TS"
+        if [ -e "$b" ] || [ -L "$b" ]; then b="$b.$$"; fi
+        if cp -p "$BIN_WRAP" "$b" 2>/dev/null && [ -s "$b" ]; then
+          act "add pin trio to exec-tmp wrapper at $BIN_WRAP (backup $(basename "$b"))"
+          write_bin_wrapper
+          changed
+        else
+          say "WARN  could not back up $BIN_WRAP; wrapper left unmodified"
+          REFUSED=1
+        fi
       fi
-      changed
     fi
   else
     say "WARN  $BIN_WRAP is neither the bun ELF nor the exec-tmp wrapper; left as-is"
