@@ -197,6 +197,12 @@ write_bin_wrapper() {
 # "failed to map segment from shared object". Interactive shells run
 # `command opencode`, which resolves here ahead of the ~/.local/bin pin shim.
 # Managed by bootstrap/install.sh. The bun ELF lives at opencode.real.
+# This shim resolves first in interactive shells, so carry the same pin trio
+# as ~/.local/bin/opencode; otherwise the client loses the DB and the
+# no-implicit-catalog-fetch policy.
+export OPENCODE_DB=opencode-main.db
+export OPENCODE_DISABLE_MODELS_FETCH=1
+export OPENCODE_DISABLE_LSP_DOWNLOAD=1
 _oc_tmp="${TMPDIR:-/tmp}"
 _oc_opts="$(findmnt -T "$_oc_tmp" -no OPTIONS 2>/dev/null || true)"
 case ",${_oc_opts}," in

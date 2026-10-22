@@ -190,6 +190,7 @@ a *function*).
 | 2 | `~/.local/share/opencode/auth.json` | **only if absent**, from template; mode converged 0600 (content never touched afterwards) |
 | 2 | `~/.config/opencode/env` | **only if absent** (re-seed seed file; may hold live seeds); mode converged 0600 |
 | 3 | `~/.local/bin/opencode` pin wrapper → `~/.opencode/bin/opencode` | kept when it already is the pin wrapper; any other shim/symlink there is moved aside to `opencode.pre-pin.<TS>` and replaced (sync-upstream never creates the shim) |
+| 3b | `~/.opencode/bin/opencode` exec-tmp shim | when the file is the ELF, move it to `opencode.real` and leave a wrapper; the wrapper also exports the pin trio (`OPENCODE_DB`, `OPENCODE_DISABLE_MODELS_FETCH`, `OPENCODE_DISABLE_LSP_DOWNLOAD`) because interactive shells resolve it before the `~/.local/bin` pin shim |
 | 4 | `environment.d/10-opencode-db.conf` | managed (converges; backup on overwrite) |
 | 4 | `environment.d/20-opencode-http.conf` | managed (converges; backup on overwrite) — Bun fetch fan-out for the swarm default |
 | 4 | `environment.d/90-fcitx5.conf` | **only if absent**; template carries names only |
