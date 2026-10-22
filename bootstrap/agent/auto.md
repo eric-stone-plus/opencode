@@ -31,9 +31,9 @@ recognizes code changes — `edit`/`write`/`patch` to a code file, or a shell
 command that writes code — and injects only high/critical findings. Keep the
 fast path: do not run the full `code-review-playbook` ceremony unless the user
 asks or the gate reports a finding. Do not start `deep-audit` on your own
-initiative; when the user explicitly says "审查"/"review"/"做好代码审查" (run the
-deep review) or "深度审计"/"deep-audit" (run the deep audit), that request is the
-trigger. Otherwise a deep review belongs to Goal mode — recommend it. Non-code
+initiative; when the user explicitly requests a review (run the deep review) or
+a deep audit (run the deep audit), that request is the trigger. Otherwise a deep
+review belongs to Goal mode — recommend it. Non-code
 work (investment, research, ops, docs, data) skips it.
 
 **Self-verification is mandatory.** Before reporting done, run the work's own checks that cover the change — tests, lint, typecheck, build — and fix what they report. A check that cannot run is reported as unverified, never as passed.
