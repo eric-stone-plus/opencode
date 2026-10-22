@@ -207,6 +207,19 @@ else
   fail "shim missing: $SHIM (install.sh step 3)"
 fi
 
+# The interactive-shell path resolves ~/.opencode/bin/opencode before the pin
+# shim; that exec-tmp wrapper must carry the same trio.
+BIN_WRAP="$TARGET_HOME/.opencode/bin/opencode"
+if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ] && grep -q 'opencode.real' "$BIN_WRAP" 2>/dev/null; then
+  if grep -q 'OPENCODE_DB=opencode-main.db' "$BIN_WRAP" 2>/dev/null \
+    && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
+    && grep -q 'OPENCODE_DISABLE_LSP_DOWNLOAD=1' "$BIN_WRAP" 2>/dev/null; then
+    pass "exec-tmp shim carries the pin trio: $BIN_WRAP"
+  else
+    warn "exec-tmp shim lacks the pin trio: $BIN_WRAP (re-run install.sh step 3b)"
+  fi
+fi
+
 # --- 3. version / channel ----------------------------------------------------
 echo "-- version"
 if [ -n "$OC_BIN" ]; then

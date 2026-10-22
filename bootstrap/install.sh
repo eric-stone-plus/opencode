@@ -26,9 +26,10 @@
 #      binary). If ~/.opencode/bin/opencode is the bun ELF, move it to
 #      opencode.real and leave an exec-tmp wrapper at the ELF path: non-login
 #      shells resolve `command opencode` to that path, ahead of the pin shim,
-#      and /tmp is noexec. When the binary exists, the same DB/fetch pins go
-#      into the V2 background service config (`opencode service set env`): the
-#      service keeps the env of whichever client spawned it
+#      and /tmp is noexec. The exec-tmp wrapper exports the same trio. When
+#      the binary exists, the same DB/fetch pins go into the V2 background
+#      service config (`opencode service set env`): the service keeps the env
+#      of whichever client spawned it
 #   4  environment.d/10-opencode-db.conf (managed) + the other *.conf templates
 #      (only if absent, never overwritten)
 #   5  agent-hooks battery (4 files) + wiring of the 5 guard surfaces
@@ -824,7 +825,19 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
     fi
     changed
   elif grep -q 'opencode.real' "$BIN_WRAP" 2>/dev/null; then
-    note "unchanged $BIN_WRAP (exec-tmp wrapper already in place)"
+    if grep -q 'OPENCODE_DB=opencode-main.db' "$BIN_WRAP" 2>/dev/null \
+      && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
+      && grep -q 'OPENCODE_DISABLE_LSP_DOWNLOAD=1' "$BIN_WRAP" 2>/dev/null; then
+      note "unchanged $BIN_WRAP (exec-tmp wrapper with pin trio)"
+    else
+      act "add pin trio to exec-tmp wrapper at $BIN_WRAP"
+      if [ "$DRY_RUN" -eq 0 ]; then
+        b="$BIN_WRAP.pre-pins.$(date +%Y%m%d%H%M%S)"
+        cp -p "$BIN_WRAP" "$b" 2>/dev/null || true
+        write_bin_wrapper
+      fi
+      changed
+    fi
   else
     say "WARN  $BIN_WRAP is neither the bun ELF nor the exec-tmp wrapper; left as-is"
     REFUSED=1
