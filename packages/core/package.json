@@ -91,6 +91,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
+    "@typescript/native-preview": "catalog:",
     "@types/which": "3.0.4",
     "drizzle-kit": "catalog:",
     "fast-check": "catalog:"

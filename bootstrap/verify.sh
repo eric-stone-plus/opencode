@@ -341,7 +341,11 @@ PYEOF
         pass "provider entry present (deepseek)"
       fi
       if [ -n "$ph" ]; then
-        fail "placeholder keys not re-seeded yet: $ph (README 'Secrets re-seed')"
+        # auth.json is only the V2 seed file; the DB credential is the live
+        # store. Defer the verdict until section 6a has positively verified it:
+        # a placeholder seed is a real FAIL only when no DB credential exists.
+        AUTH_PLACEHOLDERS="$ph"
+        info "auth.json seed placeholders: $ph (checked against the DB credential below)"
       fi
       ;;
   esac
@@ -349,6 +353,7 @@ fi
 
 # --- 6a. DB credential (V2 stores credentials in the DB) --------------------
 echo "-- DB credential"
+DB_CREDENTIAL_OK=0
 if [ ! -f "$DB" ]; then
   fail "canonical DB not present; credentials not imported (README 'auth import')"
 elif [ -z "$OC_BIN" ]; then
@@ -391,6 +396,7 @@ sys.exit(0 if any(
 PYEOF
     then
       pass "DB credential present (deepseek, type=credential)"
+      DB_CREDENTIAL_OK=1
     else
       fail "DB has no stored deepseek credential (env-only or missing); run the auth import step (README 'Secrets re-seed')"
     fi
@@ -399,6 +405,17 @@ PYEOF
   fi
   [ -z "$auth_json" ] || rm -f "$auth_json"
   [ -z "$auth_err" ] || rm -f "$auth_err"
+fi
+
+# auth.json is a seed, not the live store: a placeholder is a real FAIL only
+# when the DB credential probe above did not positively find the credential.
+# A skipped probe (missing DB/binary/unsafe store) therefore keeps the FAIL.
+if [ -n "${AUTH_PLACEHOLDERS:-}" ]; then
+  if [ "$DB_CREDENTIAL_OK" -eq 1 ]; then
+    warn "auth.json seed still placeholder: $AUTH_PLACEHOLDERS (DB credential is authoritative; re-seed from the DeepSeek console on rotation)"
+  else
+    fail "placeholder keys not re-seeded yet: $AUTH_PLACEHOLDERS (README 'Secrets re-seed')"
+  fi
 fi
 
 # --- 6b. secret seed file modes ----------------------------------------------

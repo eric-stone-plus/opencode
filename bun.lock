@@ -307,6 +307,7 @@
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "@types/which": "3.0.4",
+        "@typescript/native-preview": "catalog:",
         "drizzle-kit": "catalog:",
         "fast-check": "catalog:",
       },

@@ -23,8 +23,11 @@
 #      only if absent), env (template, only if absent)
 #   3  ~/.local/bin/opencode pin wrapper (OPENCODE_DB=opencode-main.db +
 #      OPENCODE_DISABLE_MODELS_FETCH=1 + OPENCODE_DISABLE_LSP_DOWNLOAD=1 -> exec
-#      binary) and, when ~/.opencode/bin/opencode exists, the same DB/fetch pins
-#      in the V2 background service config (`opencode service set env`): the
+#      binary). If ~/.opencode/bin/opencode is the bun ELF, move it to
+#      opencode.real and leave an exec-tmp wrapper at the ELF path: non-login
+#      shells resolve `command opencode` to that path, ahead of the pin shim,
+#      and /tmp is noexec. When the binary exists, the same DB/fetch pins go
+#      into the V2 background service config (`opencode service set env`): the
 #      service keeps the env of whichever client spawned it
 #   4  environment.d/10-opencode-db.conf (managed) + the other *.conf templates
 #      (only if absent, never overwritten)
@@ -155,11 +158,65 @@ export OPENCODE_DISABLE_LSP_DOWNLOAD=1
 # The V2 background service keeps the env of the client that spawned it, so the pins
 # above only reach it when this wrapper spawns it (install.sh also persists them with
 # `opencode service set env`).
+# /tmp is mounted noexec. Bun extracts the OpenTUI native library into the temp
+# directory and maps it executable; noexec fails that dlopen with
+# "failed to map segment from shared object". Use a directory on an exec mount.
+_oc_tmp="${TMPDIR:-/tmp}"
+_oc_opts="$(findmnt -T "$_oc_tmp" -no OPTIONS 2>/dev/null || true)"
+case ",${_oc_opts}," in
+  *,noexec,*)
+    _oc_exec_tmp="${XDG_CACHE_HOME:-$HOME/.cache}/opencode/tmp"
+    mkdir -p "$_oc_exec_tmp" 2>/dev/null || true
+    _oc_dest_opts="$(findmnt -T "$_oc_exec_tmp" -no OPTIONS 2>/dev/null || true)"
+    case ",${_oc_dest_opts}," in
+      *,noexec,*) ;;
+      *)
+        chmod 700 "$_oc_exec_tmp" 2>/dev/null || true
+        export TMPDIR="$_oc_exec_tmp"
+        ;;
+    esac
+    ;;
+esac
+unset _oc_tmp _oc_opts _oc_exec_tmp _oc_dest_opts
 exec "$HOME/.opencode/bin/opencode" "$@"
 WRAP
   # umask 002 would make `cat`+`chmod +x` create 0775; the shim is executed by
   # the operator's shell, so keep it owner-writable, world-readable/executable.
   chmod 0755 "$SHIM" 2>/dev/null || { say "WARN  could not normalize mode: $SHIM"; REFUSED=1; }
+}
+
+# Bun extracts OpenTUI to $TMPDIR (default /tmp) and maps it executable.
+# Non-login shells run `command opencode`, which hits ~/.opencode/bin/opencode
+# before the pin shim. Keep a wrapper at that path when the file is the ELF.
+write_bin_wrapper() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  cat > "$BIN_WRAP" <<'WRAP'
+#!/usr/bin/env bash
+# /tmp is mounted noexec. Bun extracts the OpenTUI native library into the
+# temp directory and maps it executable; noexec fails that dlopen with
+# "failed to map segment from shared object". Interactive shells run
+# `command opencode`, which resolves here ahead of the ~/.local/bin pin shim.
+# Managed by bootstrap/install.sh. The bun ELF lives at opencode.real.
+_oc_tmp="${TMPDIR:-/tmp}"
+_oc_opts="$(findmnt -T "$_oc_tmp" -no OPTIONS 2>/dev/null || true)"
+case ",${_oc_opts}," in
+  *,noexec,*)
+    _oc_exec_tmp="${XDG_CACHE_HOME:-$HOME/.cache}/opencode/tmp"
+    mkdir -p "$_oc_exec_tmp" 2>/dev/null || true
+    _oc_dest_opts="$(findmnt -T "$_oc_exec_tmp" -no OPTIONS 2>/dev/null || true)"
+    case ",${_oc_dest_opts}," in
+      *,noexec,*) ;;
+      *)
+        chmod 700 "$_oc_exec_tmp" 2>/dev/null || true
+        export TMPDIR="$_oc_exec_tmp"
+        ;;
+    esac
+    ;;
+esac
+unset _oc_tmp _oc_opts _oc_exec_tmp _oc_dest_opts
+exec -a "$0" "$HOME/.opencode/bin/opencode.real" "$@"
+WRAP
+  chmod 0755 "$BIN_WRAP" 2>/dev/null || { say "WARN  could not normalize mode: $BIN_WRAP"; REFUSED=1; }
 }
 
 ensure_dir() {
@@ -743,6 +800,31 @@ else
   write_wrapper
   act "pin wrapper $SHIM (forces OPENCODE_DB=opencode-main.db, then exec ~/.opencode/bin/opencode)"
   changed
+fi
+
+# The bun ELF must not stay at the path `command opencode` executes. A noexec
+# /tmp makes OpenTUI's dlopen fail before any pin shim can run.
+say ""
+say "-- step 3b: ~/.opencode/bin/opencode exec-tmp wrapper"
+BIN_WRAP="$TARGET_HOME/.opencode/bin/opencode"
+BIN_REAL="$TARGET_HOME/.opencode/bin/opencode.real"
+if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
+  bin_sig=$(od -An -t x1 -N 4 "$BIN_WRAP" 2>/dev/null | tr -d ' \n')
+  if [ "$bin_sig" = "7f454c46" ]; then
+    act "move ELF to $(basename "$BIN_REAL") and install exec-tmp wrapper at $BIN_WRAP"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      mv -f "$BIN_WRAP" "$BIN_REAL"
+      write_bin_wrapper
+    fi
+    changed
+  elif grep -q 'opencode.real' "$BIN_WRAP" 2>/dev/null; then
+    note "unchanged $BIN_WRAP (exec-tmp wrapper already in place)"
+  else
+    say "WARN  $BIN_WRAP is neither the bun ELF nor the exec-tmp wrapper; left as-is"
+    REFUSED=1
+  fi
+elif [ ! -e "$BIN_WRAP" ] && [ ! -L "$BIN_WRAP" ]; then
+  note "no binary at $BIN_WRAP (build and copy it, then re-run install.sh)"
 fi
 
 # --- 4. environment.d --------------------------------------------------------

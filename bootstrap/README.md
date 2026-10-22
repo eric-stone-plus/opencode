@@ -233,6 +233,9 @@ environment, DB history and tool-output/log copies).
 `~/.config/opencode/env` is a seed file only (NOT read by the binary, NOT sourced by
 the shell wrapper): keep the provider key there for the auth.json re-seed.
 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` and the other V1 flags have no effect on V2.
+`verify.sh` reports a placeholder auth.json as **WARN** while the DB credential is
+present (the DB is the live store) and as **FAIL** only when the DB credential is
+missing; re-seed from the console on rotation or after a reinstall.
 
 `~/.config/environment.d/` templates (names-only in `bootstrap/config/`):
 
@@ -470,8 +473,9 @@ never commits, and never pushes — those are the operator's steps, and
   plugin: compaction and PDF nudges ride on system parts instead of synthetic
   parts; texts and scan bounds are byte-identical to V1.
 * **Egress conditions** — the wrapper assumes mainland-CN reachability
-  quirks + a local causeway proxy chain (18880 → 17878). On a box without
-  causeway it degrades to direct exec (`command opencode`) after failed probes.
+  quirks + a local causeway proxy chain (17878 → 18880; the launcher selects a
+  live proxy but does not restart causeway). On a box without causeway it
+  degrades to direct exec (`command opencode`) after failed probes.
 
 **First-launch silent failure to watch for**
 
