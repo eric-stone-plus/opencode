@@ -215,11 +215,20 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ] && grep -q 'opencode.real' "$BIN_W
     && grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' "$BIN_WRAP" 2>/dev/null \
     && grep -q 'OPENCODE_DISABLE_LSP_DOWNLOAD=1' "$BIN_WRAP" 2>/dev/null; then
     pass "exec-tmp shim carries the pin trio: $BIN_WRAP"
+    if [ -x "$BIN_WRAP.real" ]; then
+      pass "exec-tmp shim target exists: $BIN_WRAP.real"
+    else
+      warn "exec-tmp shim target missing/not executable: $BIN_WRAP.real"
+    fi
   else
     warn "exec-tmp shim lacks the pin trio: $BIN_WRAP (re-run install.sh step 3b)"
   fi
+elif [ -L "$BIN_WRAP" ]; then
+  warn "$BIN_WRAP is a symlink, not the exec-tmp shim: interactive shells run it without the pin trio (replace the link with install.sh step 3b's wrapper by hand; install.sh skips symlinks)"
+elif [ -f "$BIN_WRAP" ]; then
+  warn "$BIN_WRAP is not the exec-tmp shim (raw ELF or unmanaged script): interactive shells run it without the pin trio and /tmp noexec can break OpenTUI (re-run install.sh step 3b)"
 elif [ -e "$BIN_WRAP" ]; then
-  warn "$BIN_WRAP is not the exec-tmp shim (raw ELF or symlink): interactive shells run it without the pin trio and /tmp noexec can break OpenTUI (re-run install.sh step 3b)"
+  warn "$BIN_WRAP is not a regular file: interactive shells may run it without the pin trio (re-run install.sh step 3b)"
 fi
 
 # --- 3. version / channel ----------------------------------------------------

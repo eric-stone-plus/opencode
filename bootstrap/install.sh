@@ -191,7 +191,8 @@ WRAP
 # before the pin shim. Keep a wrapper at that path when the file is the ELF.
 write_bin_wrapper() {
   [ "$DRY_RUN" -eq 1 ] && return 0
-  cat > "$BIN_WRAP" <<'WRAP'
+  _oc_tmp_shim="$BIN_WRAP.tmp.$$"
+  if ! cat > "$_oc_tmp_shim" <<'WRAP'
 #!/usr/bin/env bash
 # /tmp is mounted noexec. Bun extracts the OpenTUI native library into the
 # temp directory and maps it executable; noexec fails that dlopen with
@@ -223,7 +224,12 @@ esac
 unset _oc_tmp _oc_opts _oc_exec_tmp _oc_dest_opts
 exec -a "$0" "$HOME/.opencode/bin/opencode.real" "$@"
 WRAP
-  chmod 0755 "$BIN_WRAP" 2>/dev/null || { say "WARN  could not normalize mode: $BIN_WRAP"; REFUSED=1; }
+  then
+    rm -f "$_oc_tmp_shim"
+    return 1
+  fi
+  chmod 0755 "$_oc_tmp_shim" 2>/dev/null || { say "WARN  could not normalize mode: $_oc_tmp_shim"; rm -f "$_oc_tmp_shim"; REFUSED=1; return 1; }
+  mv -f "$_oc_tmp_shim" "$BIN_WRAP"
 }
 
 ensure_dir() {
@@ -836,11 +842,15 @@ if [ -f "$BIN_WRAP" ] && ! [ -L "$BIN_WRAP" ]; then
       else
         b="$BIN_WRAP.pre-pins.$TS"
         if [ -e "$b" ] || [ -L "$b" ]; then b="$b.$$"; fi
-        if cp -p "$BIN_WRAP" "$b" 2>/dev/null && [ -s "$b" ]; then
+        _bk_tmp="$b.part.$$"
+        if cp -p "$BIN_WRAP" "$_bk_tmp" 2>/dev/null \
+          && cmp -s "$BIN_WRAP" "$_bk_tmp" \
+          && mv -f "$_bk_tmp" "$b"; then
           act "add pin trio to exec-tmp wrapper at $BIN_WRAP (backup $(basename "$b"))"
           write_bin_wrapper
           changed
         else
+          rm -f "$_bk_tmp"
           say "WARN  could not back up $BIN_WRAP; wrapper left unmodified"
           REFUSED=1
         fi
