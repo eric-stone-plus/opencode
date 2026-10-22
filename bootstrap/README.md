@@ -472,10 +472,11 @@ never commits, and never pushes — those are the operator's steps, and
 * **`plugin/skill-hints.ts`** — V2 port (2026-10-12) of the V1 skill-hints
   plugin: compaction and PDF nudges ride on system parts instead of synthetic
   parts; texts and scan bounds are byte-identical to V1.
-* **Egress conditions** — the wrapper assumes mainland-CN reachability
-  quirks + a local causeway proxy chain (17878 → 18880; the launcher selects a
-  live proxy but does not restart causeway). On a box without causeway it
-  degrades to direct exec (`command opencode`) after failed probes.
+* **Egress conditions** — the wrapper performs **no launch-time egress probe**.
+  The shell's `proxy-on`/`proxy-off` environment and the V2 service environment
+  are authoritative; `proxy-on` owns causeway gateway recovery. On a box without
+  causeway, run `proxy-off` (or leave the shell env clean) and the wrapper
+  starts `opencode` directly.
 
 **First-launch silent failure to watch for**
 
