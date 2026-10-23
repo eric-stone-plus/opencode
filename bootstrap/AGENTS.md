@@ -158,11 +158,11 @@ Two modes, and the trigger decides which one runs.
   config; when it changes more than 200 lines or more than 10 files; or when the
   normal review finds critical/high or cannot verify. Record the choice and the
   reason in the final report; when in doubt, choose deep. No user phrase is
-  needed. The user phrases "审查"/"review"/"做好代码审查" still force deep
-  review; "深度审计"/"deep-audit" forces deep audit (the full protocol when a
-  sandbox is available). In **Auto** mode, run the deep path only on explicit
+  needed. An explicit review request still forces deep review; an explicit
+  deep-audit request forces deep audit (the full protocol when a sandbox is
+  available). In **Auto** mode, run the deep path only on explicit
   user request; otherwise recommend switching to Goal.
-- **Do not substitute.** Never answer a user-invoked "审查"/"review" with the
+- **Do not substitute.** Never answer an explicit user review request with the
   normal playbook. In Goal mode, the deep path is auto-selected by the criteria
   above; in Auto mode, do not run it automatically — report BLOCKED and
   recommend Goal/deep-audit when the normal gate finds critical/high.
