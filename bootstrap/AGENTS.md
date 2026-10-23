@@ -158,10 +158,10 @@ Two modes, and the trigger decides which one runs.
   config; when it changes more than 200 lines or more than 10 files; or when the
   normal review finds critical/high or cannot verify. Record the choice and the
   reason in the final report; when in doubt, choose deep. No user phrase is
-  needed. An explicit review request still forces deep review; an explicit
-  deep-audit request forces deep audit (the full protocol when a sandbox is
-  available). In **Auto** mode, run the deep path only on explicit
-  user request; otherwise recommend switching to Goal.
+  needed. An explicit request for a code review or a deep audit — in any
+  language — forces the deep review or deep audit path respectively; do not
+  require an English keyword. In **Auto** mode, run the deep path only on
+  explicit user request; otherwise recommend switching to Goal.
 - **Do not substitute.** Never answer an explicit user review request with the
   normal playbook. In Goal mode, the deep path is auto-selected by the criteria
   above; in Auto mode, do not run it automatically — report BLOCKED and

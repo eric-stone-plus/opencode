@@ -141,7 +141,7 @@
     // declare it in one place. Same no-interrupt surface as auto: the swarm
     // playbook must never be blocked by a prompt mid-run.
     "goal": {
-      "description": "Goal mode. Every message steers one session goal to a flawless delivery closure (adversarial swarm playbook + closure checklist); discussion in the user's language and the report in English.",
+      "description": "Goal mode. Every message steers one session goal to a flawless delivery closure (adversarial swarm playbook + closure checklist); discussion follows the user's input language and the report is in English.",
       "mode": "primary",
       "color": "#e06c75",
       "model": "deepseek/deepseek-flash",
