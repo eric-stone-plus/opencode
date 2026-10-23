@@ -127,13 +127,19 @@ export const fffLayer = Layer.effect(
         }),
       catch: (cause) => cause,
     }).pipe(
-      Effect.catch((error) => Effect.logWarning("failed to initialize fff", { error }).pipe(Effect.as(undefined))),
+      Effect.catch((error) =>
+        Effect.logWarning("failed to initialize fff; falling back to ripgrep search", { error }).pipe(Effect.as(undefined)),
+      ),
     )
     if (!result?.ok) {
-      if (result) yield* Effect.logWarning("failed to initialize fff", { error: result.error })
-      return Service.of({
-        find: () => Effect.succeed([]),
-      })
+      if (result) {
+        yield* Effect.logWarning("failed to initialize fff; falling back to ripgrep search", { error: result.error })
+      }
+      // fff is an optimization, never the only search backend: a failed
+      // create used to return empty results for every find, which silently
+      // disabled search for the whole session. Fall back to ripgrep.
+      const context = yield* Layer.build(ripgrepLayer)
+      return Context.get(context, Service)
     }
     yield* Effect.addFinalizer(() => Effect.sync(() => result.value.destroy()))
     return Service.of({

@@ -45,13 +45,16 @@ describe("FileSystemSearch", () => {
       const ref = Location.Ref.make({ directory: AbsolutePath.make(directory) })
       const layer = FileSystemSearch.fffLayer.pipe(
         Layer.provide(
-          Layer.succeed(
-            Location.Service,
-            Location.Service.of(
-              location(ref, {
-                vcs: { type: "git", store: AbsolutePath.make(path.join(directory, ".git")) },
-              }),
+          Layer.merge(
+            Layer.succeed(
+              Location.Service,
+              Location.Service.of(
+                location(ref, {
+                  vcs: { type: "git", store: AbsolutePath.make(path.join(directory, ".git")) },
+                }),
+              ),
             ),
+            ripgrepStub("unused.ts", () => {}),
           ),
         ),
       )
