@@ -160,6 +160,9 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
   const result = await Bun.build({
     entrypoints: ["./src/index.ts"],
     tsconfig: "./tsconfig.json",
+    // The fork's profile cards and standing mode prompts are imported as text; pin the loaders
+    // instead of relying on Bun's implicit defaults so a Bun upgrade cannot turn them into asset URLs.
+    loader: { ".md": "text", ".txt": "text" },
     plugins: [
       appAssetsPlugin,
       solidPlugin,

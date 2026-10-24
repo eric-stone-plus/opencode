@@ -53,12 +53,12 @@ The build bakes the channel in from the checked-out branch (`OPENCODE_CHANNEL` w
 
 ### Modes
 
-`opencode.jsonc` defines two primary agents, cycled with the agent-cycle key (`Tab` in this fork's `cli.json`):
+Two primary profiles ship in the binary itself (`packages/core/src/plugin/fork/profiles.ts`), so a fresh clone starts in **auto** before any seat config exists: the global config is absent on a new machine and project config is closed by the trust gate, which previously left upstream's Build/Plan as the only primaries. `opencode.jsonc` (or the installed global config) layers the full seat definitions on top. Cycle with the agent-cycle key (`Tab` in this fork's `cli.json`):
 
 - **auto** (blue) — the default. Never asks: adopts the recommended option and runs to completion. Its standing card carries the swarm mandate too (`packages/core/src/plugin/fork/mode/auto.txt`), so a new task is worked by parallel subagents — Round-1 axes, then Round-2 attackers — instead of single-threaded.
-- **goal** (red) — every message steers one session goal; runs the adversarial subagent swarm playbook in `AGENTS.goal.md`.
+- **goal** (red) — every message steers one session goal; runs the adversarial subagent swarm playbook in `bootstrap/agent/goal.md`.
 
-Upstream's `build` and `plan` primaries are removed (`"disable": true` in the seat config, so the cycle is exactly auto <-> goal).
+The built-in profiles carry the managed card bodies as their system prompt, so a config-less clone gets the same contract as the seat. Upstream's `build` and `plan` primaries are removed by the same plugin (the seat config spells the removal as `"disable": true`); a config that explicitly declares one restores it, so the default cycle is exactly auto <-> goal.
 
 Subagents keep their own rules: `@general` for multi-step tasks, `explore` for read-only codebase searches. Fan-out is not capped — one server ran 3000 concurrent sessions with zero errors at a ~4.9 GB peak (2026-10-15) — and `@general` may spawn its own subagents (`experimental.subagent_depth: 100`, no practical cap), while `explore` stays read-only and cannot.
 

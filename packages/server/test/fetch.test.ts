@@ -440,7 +440,7 @@ it.live("routes pending requests through the Session's instance", () =>
       )
       return body.data.some(
         (agent) =>
-          agent.id === "build" &&
+          agent.id === "auto" &&
           agent.permissions.some((rule) => rule.action === "shell" && rule.resource === "*" && rule.effect === "ask"),
       )
     }).pipe(

@@ -86,7 +86,7 @@ describe("subagent observer lifetime", () => {
           const llm = yield* TestLLM.Test
           const parent = yield* sessions.create({
             location: { directory: AbsolutePath.make(parentDir.path) },
-            agent: Agent.ID.make("build"),
+            agent: Agent.ID.make("auto"),
             model: Model.Ref.make({ id: Model.ID.make("parent"), providerID: Provider.ID.make("test") }),
           })
           const child = yield* sessions.create({ parentID: parent.id, agent: Agent.ID.make("reviewer") })
@@ -101,6 +101,8 @@ describe("subagent observer lifetime", () => {
           const result = yield* executeTool(registry, {
             sessionID: parent.id,
             ...toolIdentity,
+            // The parent session runs the fork default; the tool context must match it for permissions.
+            agent: Agent.ID.make("auto"),
             call: {
               type: "tool-call",
               id: "call-review",

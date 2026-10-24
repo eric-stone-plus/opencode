@@ -217,9 +217,11 @@ describe("PluginSupervisor", () => {
           Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
         )
         const status = (id: string) => inventory.find((plugin) => plugin.id === id)?.state.status
+        // Both policy and agent config are guarded: removing the agent plugin would drop the
+        // operator's global permission rules, so repository config must not switch it off.
         expect(status("opencode.config.policy")).toBe("active")
+        expect(status("opencode.config.agent")).toBe("active")
         // Removals still apply to everything else, including instance and builtin plugins.
-        expect(status("opencode.config.agent")).toBeUndefined()
         expect(inventory.some((plugin) => plugin.id === id)).toBe(targets[0] !== "*")
       }).pipe(
         Effect.ensuring(

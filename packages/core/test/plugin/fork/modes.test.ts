@@ -8,6 +8,7 @@ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Location } from "@opencode/core/location"
 import { ForkModesPlugin } from "@opencode/core/plugin/fork/modes"
 import { Model } from "@opencode/core/model"
+import { Permission } from "@opencode/core/permission"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
@@ -373,6 +374,31 @@ describe("fork modes: agents", () => {
         Effect.provide(Layer.mock(Session.Service, { revert: unusedRevert })),
       )
       expect((yield* agents.list()).map((agent) => String(agent.id))).toEqual(["auto", "goal", "general", "explore"])
+    }),
+  )
+
+  it.effect("re-asserts the built-in profile rules after a global permission", () =>
+    Effect.gen(function* () {
+      const agents = yield* Agent.Service
+      const config = yield* Config.Test
+      yield* agents.transform((editor) => {
+        editor.update(Agent.ID.make("auto"), (agent) => {
+          agent.mode = "primary"
+          // Simulates ConfigAgentPlugin pushing the operator's global `permission: "allow"` after
+          // ForkProfilesPlugin created the built-in profile.
+          agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+        })
+      })
+      yield* config.setEntries([])
+      yield* ForkModesPlugin.Plugin.effect(
+        host({ agent: agentHost(agents), session: { hook: () => Effect.succeed({ dispose: Effect.void }) } }),
+      ).pipe(Effect.provide(Layer.mock(Session.Service, { revert: unusedRevert })))
+
+      const auto = yield* agents.get(Agent.ID.make("auto"))
+      expect(Permission.evaluate("edit", "/home/someone/.config/opencode/opencode.jsonc", auto?.permissions ?? []).effect).toBe(
+        "deny",
+      )
+      expect(auto?.permissions.some((rule) => rule.action === "question" && rule.effect === "deny")).toBe(true)
     }),
   )
 })

@@ -228,6 +228,7 @@ const pre = [
   VcsGitPlugin.Plugin,
   AgentPlugin.Plugin,
   PlanPlugin.Plugin,
+  ...ForkPlugin.pre,
   CommandPlugin.Plugin,
   SkillPlugin.Plugin,
   VcsHgPlugin.Plugin,
@@ -283,9 +284,11 @@ const post = [
 // the seat opens can carry `plugins: ["-*"]` or `"-<id>"` - and without this set a repository could
 // silently disable, for example, the external block-unsafe-kill / secret-path-guard hooks.
 export const guarded: ReadonlySet<string> = new Set([
+  ConfigAgentPlugin.Plugin.id,
   ConfigPolicyPlugin.Plugin.id,
   DeclaredProvidersPlugin.Plugin.id,
   ForkRuntimePlugin.Plugin.id,
+  ...ForkPlugin.pre.map((plugin) => plugin.id),
   ...ForkPlugin.post.map((plugin) => plugin.id),
   // Safety guards installed from the seat's global config directory (external plugins, not in this tree).
   "block-unsafe-kill",

@@ -9,8 +9,9 @@ import { PluginInternal } from "../../src/plugin/internal"
 // membership.
 describe("guarded plugin ids", () => {
   test("every fork plugin survives repository removals", () => {
-    for (const plugin of ForkPlugin.post) expect(PluginInternal.guarded.has(plugin.id)).toBe(true)
+    for (const plugin of [...ForkPlugin.pre, ...ForkPlugin.post]) expect(PluginInternal.guarded.has(plugin.id)).toBe(true)
     expect(PluginInternal.guarded.has("opencode.fork.runtime")).toBe(true)
+    expect(PluginInternal.guarded.has("opencode.config.agent")).toBe(true)
   })
 
   test("the seat's external safety guards survive repository removals", () => {

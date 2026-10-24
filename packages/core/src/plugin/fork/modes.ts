@@ -12,6 +12,7 @@ import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { ForkCards } from "./cards.js"
 import { ForkFiles } from "./files.js"
+import { PROFILE_RULES } from "./profiles.js"
 import AUTO from "./mode/auto.txt"
 import GOAL from "./mode/goal.txt"
 import GOAL_REMINDER from "./mode/goal-reminder.txt"
@@ -54,12 +55,33 @@ export const Plugin = define({
     const cards = ForkCards.make()
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.agent.reload())
 
-    yield* ctx.agent.transform((editor) =>
-      order(
-        editor,
-        loaded.entries.flatMap((entry) => (entry.type === "document" ? Object.keys(entry.info.agents ?? {}) : [])),
-      ),
-    )
+    yield* ctx.agent.transform((editor) => {
+      const declared = loaded.entries.flatMap((entry) =>
+        entry.type === "document" ? Object.keys(entry.info.agents ?? {}) : [],
+      )
+      order(editor, declared)
+      // Config-declared profiles are created by the config plugin in `post`, after ForkProfilesPlugin
+      // ran. If that config did not set `default_agent`, select auto here, where both the built-in and
+      // the config-created agents are visible; otherwise a config that declares auto but not goal
+      // would fall back to goal because goal was inserted first.
+      if (Config.latest(loaded.entries, "default_agent") === undefined) {
+        const preferred = (["auto", "goal"] as const).find((id) => {
+          const agent = editor.get(id)
+          return agent !== undefined && agent.mode !== "subagent" && !agent.hidden
+        })
+        if (preferred !== undefined) editor.default(preferred)
+      }
+      // The config plugin has already pushed the operator's global permission rules. Re-assert the
+      // built-in profiles' no-interrupt surface after them: a global `permission: "allow"` would
+      // otherwise land last and re-open the question tool for a profile that must never ask.
+      // This is unconditional, even when a document declares its own block: a partial block (say,
+      // only `todowrite`) must not drop the question/seat floors, and the duplicate denies are
+      // harmless because every floor rule denies.
+      for (const id of ["auto", "goal"] as const) {
+        if (!editor.get(id)) continue
+        editor.update(id, (agent) => agent.permissions.push(...PROFILE_RULES))
+      }
+    })
 
     const goal = Effect.fn("ForkModesPlugin.goal")(function* (session: SessionSchema.Info, agent: string) {
       const file = ForkFiles.goal(global, session.id)

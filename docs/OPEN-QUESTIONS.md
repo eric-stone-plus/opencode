@@ -16,7 +16,11 @@ exist, so no project's `opencode.jsonc`, `AGENTS.md` chain, plugins, or MCP serv
 (`bootstrap/README.md` §4 documents the format, the fail-closed parsing, and the `=0|false`
 trust-ALL escape hatch). Declaring roots *widens* trust, so the list is the operator's call. Until
 it exists, a repository that expects its own config is silently ignored — that is the intended
-default, not a bug.
+default, not a bug. The fork's own two profiles no longer depend on that gate: `ForkProfilesPlugin`
+creates `auto`/`goal` as built-in primaries (default `auto`) and removes `build`/`plan` when no
+config document declares them, so a fresh clone without a seat still opens in Auto/Goal. The gate
+still governs repository *overrides* — plugins, MCP servers, project instructions — which is the
+part that needs a human decision.
 
 ### 2. May a subsession run a primary profile?
 
